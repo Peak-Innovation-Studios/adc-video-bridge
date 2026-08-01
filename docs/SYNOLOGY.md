@@ -8,6 +8,8 @@ Clone or copy the repository to the Synology, then create local configuration:
 
 ```bash
 cd /volume1/docker/adc-video-bridge
+mkdir -p secrets
+chmod 700 secrets
 cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 cp config/go2rtc.example.yaml config/go2rtc.yaml

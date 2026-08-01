@@ -10,7 +10,8 @@ config/go2rtc.yaml
 .env
 .env.*
 !.env.example
-secrets/
+secrets/*
+!secrets/.gitkeep
 
 # Logs
 *.log
