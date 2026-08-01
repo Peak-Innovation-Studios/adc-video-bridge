@@ -9,7 +9,7 @@ Clone or copy the repository to the Synology, then create local configuration:
 ```bash
 cd /volume1/docker/adc-video-bridge
 mkdir -p secrets
-chmod 700 secrets
+chmod 700 config secrets
 cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 cp config/go2rtc.example.yaml config/go2rtc.yaml
@@ -21,6 +21,7 @@ In `.env`:
 - Set the Alarm.com login, or create mode-600 files under `secrets/` and set the corresponding paths such as `ADC_USERNAME_FILE=/run/secrets/adc_username`.
 - Generate unique hexadecimal values for the go2rtc API and RTSP passwords.
 - Set `ADC_BRIDGE_BIND_ADDRESS` to the Synology LAN address when Homebridge is not attached to the same Docker network.
+- Set `ADC_BRIDGE_UID` to the output of `id -u` and `ADC_BRIDGE_GID` to the output of `id -g`. This lets the non-root container read the protected mode-600 configuration without relaxing its permissions.
 
 In `config/config.yaml`, add only the selected camera IDs, safe lowercase stream names, and optional Homebridge motion URL. Add the same stream names to `config/go2rtc.yaml`.
 
@@ -36,6 +37,10 @@ sudo /var/packages/ContainerManager/target/usr/bin/docker-compose ps
 ```
 
 The initial build downloads pinned base images and npm packages. No Homebridge configuration is changed by starting the bridge.
+
+Some Synology kernels report that PID limits are unsupported and discard the
+Compose `pids_limit`. This warning is nonfatal; the read-only filesystem,
+dropped capabilities, and `no-new-privileges` controls remain active.
 
 ## Verify before Homebridge
 

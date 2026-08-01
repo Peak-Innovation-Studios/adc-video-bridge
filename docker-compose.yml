@@ -4,6 +4,9 @@ services:
     container_name: adc-video-bridge
     restart: unless-stopped
     init: true
+    # Match the deployment-directory owner so mode-600 configuration and
+    # secret files remain readable without making them world-readable.
+    user: "${ADC_BRIDGE_UID:-1000}:${ADC_BRIDGE_GID:-1000}"
     env_file:
       - ${ADC_BRIDGE_ENV_FILE:-.env}
     environment:
