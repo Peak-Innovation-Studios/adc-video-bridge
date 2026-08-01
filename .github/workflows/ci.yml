@@ -6,9 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -21,3 +25,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - run: npm run audit:prod
+      - run: docker build --tag adc-video-bridge:test .
+      - run: >-
+          docker run --rm --entrypoint sh adc-video-bridge:test -c
+          'test "$(id -u)" -ne 0 && command -v node && command -v go2rtc && command -v ffmpeg && command -v curl'
