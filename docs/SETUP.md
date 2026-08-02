@@ -15,7 +15,7 @@ Use a dedicated Alarm.com login with only camera-viewing permissions when your p
 Clone the repo and run the discovery tool to find your camera IDs:
 
 ```bash
-git clone https://github.com/Omar-L/adc-video-bridge.git
+git clone https://github.com/Peak-Innovation-Studios/adc-video-bridge.git
 cd adc-video-bridge
 npm ci
 
@@ -180,6 +180,8 @@ docker compose -f docker-compose.yml restart
 
 - **Streams not starting**: Check logs for authentication errors. Verify the `ADC_*` values in `.env` or the configured secret files.
 - **Snapshots timing out in Homebridge**: Ensure the still image source includes `-timeout 10000000` before `-i`.
+- **Repeated ffmpeg exits, duplicate `front` publishers, or growing snapshot consumers**: Update to the current `main` branch and rebuild the image. Older builds could let a late exit from an intentionally stopped ffmpeg process clear its healthy replacement and repeatedly restart WebRTC. After rebuilding, go2rtc should settle on one publisher per configured camera.
+- **`git switch main` reports `invalid reference` on Synology**: The checkout likely fetches only an earlier pilot branch. Follow [Migrate an earlier single-branch pilot checkout](SYNOLOGY.md#migrate-an-earlier-single-branch-pilot-checkout) before rebuilding.
 - **Motion not triggering in HomeKit**: Verify `homebridgeName` matches the camera name in homebridge-camera-ffmpeg exactly (case-sensitive). Check that the motion sensor is enabled in the plugin config and notifications are enabled in the Home app.
 - **"Camera not found" in motion webhook logs**: The `homebridgeName` doesn't match. The bridge calls `GET http://<motionUrl>/motion?<homebridgeName>` — the name must be an exact match.
 - **go2rtc web UI not loading**: Ensure port 1984 is bound to the intended address, permitted by the firewall, and opened with the configured API credentials.

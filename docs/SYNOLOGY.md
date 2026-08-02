@@ -4,9 +4,11 @@ This deployment keeps runtime configuration under `/volume1/docker/adc-video-bri
 
 ## Prepare the project
 
-Clone or copy the repository to the Synology, then create local configuration:
+Clone the maintained fork to the Synology, then create local configuration:
 
 ```bash
+git clone https://github.com/Peak-Innovation-Studios/adc-video-bridge.git \
+  /volume1/docker/adc-video-bridge
 cd /volume1/docker/adc-video-bridge
 mkdir -p secrets
 chmod 700 config secrets
@@ -24,6 +26,30 @@ In `.env`:
 - Set `ADC_BRIDGE_UID` to the output of `id -u` and `ADC_BRIDGE_GID` to the output of `id -g`. This lets the non-root container read the protected mode-600 configuration without relaxing its permissions.
 
 In `config/config.yaml`, add only the selected camera IDs, safe lowercase stream names, and optional Homebridge motion URL. Add the same stream names to `config/go2rtc.yaml`.
+
+### Migrate an earlier single-branch pilot checkout
+
+Some pilot installations cloned only `agent/harden-synology-deployment`. In
+that checkout, `git switch main` fails with `fatal: invalid reference: main`
+because the remote fetch rule excludes every other branch.
+
+First confirm `git status --short` prints nothing. Then make the deployment
+track only the merged `main` branch:
+
+```bash
+cd /volume1/docker/adc-video-bridge
+git config remote.origin.fetch \
+  '+refs/heads/main:refs/remotes/origin/main'
+git fetch origin --prune
+git switch -c main --track origin/main
+git status -sb
+git log -1 --oneline
+```
+
+This changes Git metadata and checked-in files only. The ignored `.env`,
+`config/config.yaml`, `config/go2rtc.yaml`, and `secrets/` deployment files
+remain local. Stop if `git status --short` reports changes and reconcile them
+before switching branches.
 
 ## Build and start
 
@@ -59,6 +85,29 @@ Install `@homebridge-plugins/homebridge-camera-ffmpeg`, add one camera, and use 
 After Homebridge restarts, add the new camera accessory to Apple Home if it is running as a child bridge. Confirm live view on the local network before enabling notifications or HomeKit Secure Video.
 
 ## Operations
+
+### Update code and rebuild
+
+Pulling source does not replace the running image. Update the checkout, validate
+the rendered Compose configuration, and rebuild the service:
+
+```bash
+cd /volume1/docker/adc-video-bridge
+git status --short
+git switch main
+git pull --ff-only origin main
+sudo /var/packages/ContainerManager/target/usr/bin/docker-compose config
+sudo /var/packages/ContainerManager/target/usr/bin/docker-compose \
+  up -d --build adc-video-bridge
+sudo /var/packages/ContainerManager/target/usr/bin/docker-compose ps
+```
+
+Wait for the WebRTC session to establish, then repeat the authenticated snapshot
+test and open the camera in Apple Home. A source rebuild also restarts go2rtc,
+clearing consumers left behind by an older failed publisher loop. Homebridge
+normally does not need to be restarted.
+
+### Routine commands
 
 ```bash
 sudo /var/packages/ContainerManager/target/usr/bin/docker-compose logs --tail=200
