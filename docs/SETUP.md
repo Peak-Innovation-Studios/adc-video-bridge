@@ -6,7 +6,9 @@ End-to-end walkthrough for deploying adc-video-bridge on a server and connecting
 
 - A server or machine that can run Docker (Linux, macOS, etc.)
 - An Alarm.com account with cameras that support end-to-end WebRTC streaming (e.g. ADC-V723)
-- [Homebridge](https://homebridge.io) with the [homebridge-camera-ffmpeg](https://github.com/homebridge-plugins/homebridge-camera-ffmpeg) plugin installed
+- [Homebridge](https://homebridge.io) with the maintained [`@homebridge-plugins/homebridge-camera-ffmpeg`](https://github.com/homebridge-plugins/homebridge-camera-ffmpeg) plugin installed
+
+Use a dedicated Alarm.com login with only camera-viewing permissions when your provider supports one.
 
 ## Step 1: Discover your cameras
 
@@ -15,7 +17,7 @@ Clone the repo and run the discovery tool to find your camera IDs:
 ```bash
 git clone https://github.com/Omar-L/adc-video-bridge.git
 cd adc-video-bridge
-npm install
+npm ci
 
 # Set credentials temporarily for discovery
 export ADC_USERNAME="your@email.com"
@@ -31,20 +33,19 @@ This prints a table of cameras on your account and outputs ready-to-paste YAML f
 Copy the example configs:
 
 ```bash
+cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 cp config/go2rtc.example.yaml config/go2rtc.yaml
+chmod 600 .env config/config.yaml config/go2rtc.yaml
 ```
+
+Put the Alarm.com credentials and unique random go2rtc passwords in `.env`. Keep `.env` untracked. Set `ADC_BRIDGE_BIND_ADDRESS` to the bridge server's LAN address only when Homebridge runs outside this container.
 
 ### `config/config.yaml`
 
-Your ADC credentials, cameras, and optional Homebridge motion integration:
+Your cameras and optional Homebridge motion integration:
 
 ```yaml
-alarm:
-  username: "your@email.com"
-  password: "yourpassword"
-  mfaToken: ""  # optional, for 2FA bypass
-
 cameras:
   - id: "100652375-2048"
     name: "driveway"              # go2rtc stream name (lowercase, no spaces)
@@ -83,9 +84,20 @@ streams:
 
 rtsp:
   listen: ":8554"
+  username: "${GO2RTC_RTSP_USERNAME}"
+  password: "${GO2RTC_RTSP_PASSWORD}"
 
 api:
   listen: ":1984"
+  username: "${GO2RTC_API_USERNAME}"
+  password: "${GO2RTC_API_PASSWORD}"
+  local_auth: false
+
+webrtc:
+  listen: ""
+
+srtp:
+  listen: ""
 
 log:
   level: info
@@ -104,15 +116,15 @@ Verify the streams are running:
 docker compose -f docker-compose.yml logs -f
 
 # Open go2rtc web UI to see active streams
-# http://<server-ip>:1984
+# http://<api-user>:<api-password>@<server-ip>:1984
 
 # Test a stream in VLC
-# rtsp://<server-ip>:8554/driveway
+# rtsp://<rtsp-user>:<rtsp-password>@<server-ip>:8554/driveway
 ```
 
 All three cameras should show `"streaming"` in the periodic status log.
 
-## Step 4: Configure homebridge-camera-ffmpeg
+## Step 4: Configure `@homebridge-plugins/homebridge-camera-ffmpeg`
 
 In the Homebridge UI, add a camera to the Camera-ffmpeg platform for each stream. Replace `<server-ip>` with the IP of the machine running adc-video-bridge.
 
@@ -121,8 +133,8 @@ In the Homebridge UI, add a camera to the Camera-ffmpeg platform for each stream
 | Setting | Value |
 |---------|-------|
 | **Name** | `Driveway` (must match `homebridgeName` in config.yaml) |
-| **Video Source** | `-i rtsp://<server-ip>:8554/driveway` |
-| **Still Image Source** | `-timeout 10000000 -i http://<server-ip>:1984/api/frame.jpeg?src=driveway -vframes 1` |
+| **Video Source** | `-i rtsp://<rtsp-user>:<rtsp-password>@<server-ip>:8554/driveway` |
+| **Still Image Source** | `-timeout 10000000 -i http://<api-user>:<api-password>@<server-ip>:1984/api/frame.jpeg?src=driveway -vframes 1` |
 | **Audio** | disabled |
 | **Motion sensor** | enabled |
 | **Motion Timeout** | `0` (the bridge controls the reset via `motionTimeoutMs`) |
@@ -136,6 +148,8 @@ The `-timeout 10000000` (10 seconds) on the still image source prevents ffmpeg f
 | **HTTP Port** | `8080` (must match `motionUrl` port in config.yaml) |
 
 Restart Homebridge after making changes.
+
+Use URL-safe random credentials (hex is simplest) or percent-encode reserved characters before placing them in these URLs.
 
 ## Step 5: Enable motion notifications in HomeKit
 
@@ -164,20 +178,20 @@ docker compose -f docker-compose.yml restart
 
 ## Troubleshooting
 
-- **Streams not starting**: Check logs for authentication errors. Verify credentials in `config.yaml`.
+- **Streams not starting**: Check logs for authentication errors. Verify the `ADC_*` values in `.env` or the configured secret files.
 - **Snapshots timing out in Homebridge**: Ensure the still image source includes `-timeout 10000000` before `-i`.
 - **Motion not triggering in HomeKit**: Verify `homebridgeName` matches the camera name in homebridge-camera-ffmpeg exactly (case-sensitive). Check that the motion sensor is enabled in the plugin config and notifications are enabled in the Home app.
 - **"Camera not found" in motion webhook logs**: The `homebridgeName` doesn't match. The bridge calls `GET http://<motionUrl>/motion?<homebridgeName>` — the name must be an exact match.
-- **go2rtc web UI not loading**: Ensure port 1984 is exposed in docker-compose.yml and not blocked by a firewall.
+- **go2rtc web UI not loading**: Ensure port 1984 is bound to the intended address, permitted by the firewall, and opened with the configured API credentials.
 
 ## Local development
 
 For developing without Docker:
 
 ```bash
-npm install
+npm ci
 cp config/config.example.yaml config/config.yaml
-# Edit config.yaml with your credentials
+# Export ADC_USERNAME and ADC_PASSWORD, then edit camera IDs in config.yaml.
 
 # Requires go2rtc running separately
 npm run dev

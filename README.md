@@ -70,7 +70,7 @@ The `liveVideoHighestResSources` API call triggers the camera to wake up and dia
 - Retry with a fresh token after 15 seconds — the camera is now awake
 - Subsequent retries use 10-second intervals
 
-The bridge refreshes video tokens every 10 minutes, tearing down and re-establishing the WebRTC connection each time. ADC telemetry confirms there is no server-enforced session timeout — the refresh interval is set conservatively to keep signaling credentials fresh. Each rebuild causes a ~1-2 second gap in the RTSP stream.
+The bridge refreshes video tokens every 10 minutes and rebuilds the token-bound WebRTC connection while keeping the RTSP publisher alive. ADC telemetry confirms there is no server-enforced session timeout; the refresh interval is set conservatively to keep signaling credentials fresh.
 
 ## Current status
 
@@ -83,19 +83,18 @@ The bridge refreshes video tokens every 10 minutes, tearing down and re-establis
 - H.264 RTP packet extraction from werift
 - H.264 fmtp passthrough (profile-level-id, sprop-parameter-sets from camera SDP offer)
 - ffmpeg RTSP output to go2rtc
-- Docker container with go2rtc sidecar
+- Hardened Docker container with embedded go2rtc
 - Multi-camera streaming (3 cameras verified, 1920x1080 H.264 @ 10fps)
 - Camera dial-in retry with exponential backoff (up to 12 attempts)
 - Real-time motion detection via ADC WebSocket event stream
 - WebSocket event listener with proactive token refresh and exponential backoff on errors
-- Motion webhook forwarding to homebridge-camera-ffmpeg
+- Motion webhook forwarding to `@homebridge-plugins/homebridge-camera-ffmpeg`
 - HomeKit live view and motion notifications via Homebridge
 - HomeKit Secure Video (HKSV) recording triggered by motion events
 
 **Not yet done:**
 - go2rtc stream auto-configuration (currently manual in `config/go2rtc.yaml`)
 - Audio passthrough
-- Seamless stream handoff (overlap old/new streams during token refresh to eliminate gap)
 
 ## Project structure
 
@@ -134,23 +133,42 @@ See the **[Setup Guide](docs/SETUP.md)** for full end-to-end instructions coveri
 ```bash
 git clone https://github.com/Omar-L/adc-video-bridge.git
 cd adc-video-bridge
+cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 cp config/go2rtc.example.yaml config/go2rtc.yaml
-# Edit both config files with your credentials and camera IDs
+# Put credentials and random go2rtc passwords in .env; put camera IDs in config.yaml.
+chmod 600 .env config/config.yaml config/go2rtc.yaml
 docker compose -f docker-compose.yml up --build -d
 ```
 
 ## Environment variables
 
-Credentials can be provided via config file or environment variables. Env vars are recommended for Docker deployments.
+Credentials should be provided through environment variables or Docker secret files. Environment values take precedence over legacy credentials in `config.yaml`.
 
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `ADC_USERNAME` | Alarm.com account email | Yes |
 | `ADC_PASSWORD` | Alarm.com account password | Yes |
 | `ADC_MFA_TOKEN` | Two-factor authentication token (from trusted device setup) | No |
+| `ADC_USERNAME_FILE` | File containing the Alarm.com username | Alternative to `ADC_USERNAME` |
+| `ADC_PASSWORD_FILE` | File containing the Alarm.com password | Alternative to `ADC_PASSWORD` |
+| `ADC_MFA_TOKEN_FILE` | File containing the optional MFA token | No |
+| `GO2RTC_API_USERNAME` | Username protecting snapshots and the go2rtc API | Docker: yes |
+| `GO2RTC_API_PASSWORD` | Random password protecting snapshots and the go2rtc API | Docker: yes |
+| `GO2RTC_RTSP_USERNAME` | Username protecting RTSP playback | Docker: yes |
+| `GO2RTC_RTSP_PASSWORD` | Random password protecting RTSP playback | Docker: yes |
+| `ADC_BRIDGE_BIND_ADDRESS` | Host address for published ports; defaults to `127.0.0.1` | No |
 
-Config file values take precedence over env vars. See `config/config.example.yaml` for the full configuration reference.
+See `.env.example` and `config/config.example.yaml` for the full configuration reference.
+
+## Security
+
+- Use a dedicated Alarm.com login with only the permissions needed to view the selected cameras.
+- Keep `.env`, real camera configuration, logs, and Homebridge URLs out of source control.
+- The default Compose binding is loopback-only. If Homebridge runs elsewhere, bind to one trusted LAN address and restrict ports 8554 and 1984 at the host firewall.
+- go2rtc requires Basic authentication for remote RTSP and snapshot/API requests. Its unused WebRTC and SRTP listeners are disabled.
+- The container runs without root privileges, drops Linux capabilities, uses a read-only filesystem, and pins its base images by digest.
+- This remains an unofficial cloud integration. Alarm.com can change or restrict the endpoints at any time.
 
 ## Dependencies
 

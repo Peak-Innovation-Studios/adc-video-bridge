@@ -91,7 +91,7 @@ describe('AlarmEventListener reconnection', () => {
 
     expect(auth.get).toHaveBeenCalledTimes(1);
     expect(getInstances()).toHaveLength(1);
-    expect(getInstances()[0].url).toBe('wss://events.alarm.com?auth=ws-token-123');
+    expect(getInstances()[0].url).toBe('wss://events.alarm.com/?auth=ws-token-123');
   });
 
   it('reconnects immediately on code 1008 (token expired)', async () => {
