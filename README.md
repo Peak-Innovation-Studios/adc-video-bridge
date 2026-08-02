@@ -2,6 +2,13 @@
 
 Bridges Alarm.com security camera streams to local RTSP for HomeKit Secure Video (HKSV) via Homebridge.
 
+This repository is the Peak Innovation Studios maintained fork of
+[`Omar-L/adc-video-bridge`](https://github.com/Omar-L/adc-video-bridge). It
+preserves the upstream history while carrying tested container hardening,
+Synology deployment guidance, and stream-lifecycle fixes. Portable fixes can
+still be proposed upstream without mixing this project with the separate
+Alarm.com Homebridge plugin.
+
 ## Problem
 
 Alarm.com cameras cannot be accessed directly via RTSP — ADC re-provisions camera credentials via OpenVPN and randomly generates root passwords. The existing [homebridge-node-alarm-dot-com](https://github.com/node-alarm-dot-com/homebridge-node-alarm-dot-com) plugin handles alarm panel/sensors/locks but has no video support.
@@ -83,6 +90,7 @@ The bridge refreshes video tokens every 10 minutes and rebuilds the token-bound 
 - H.264 RTP packet extraction from werift
 - H.264 fmtp passthrough (profile-level-id, sprop-parameter-sets from camera SDP offer)
 - ffmpeg RTSP output to go2rtc
+- Stable ffmpeg publisher ownership across intentional stops and WebRTC replacements
 - Hardened Docker container with embedded go2rtc
 - Multi-camera streaming (3 cameras verified, 1920x1080 H.264 @ 10fps)
 - Camera dial-in retry with exponential backoff (up to 12 attempts)
@@ -126,12 +134,15 @@ src/
 
 ## Setup
 
-See the **[Setup Guide](docs/SETUP.md)** for full end-to-end instructions covering Docker deployment, camera discovery, configuration, Homebridge integration, and HomeKit motion notifications.
+See the **[Setup Guide](docs/SETUP.md)** for the full end-to-end instructions.
+For Synology Container Manager, use the dedicated
+**[Synology Deployment Guide](docs/SYNOLOGY.md)**, including its safe update and
+rebuild procedure.
 
 **Quick start:**
 
 ```bash
-git clone https://github.com/Omar-L/adc-video-bridge.git
+git clone https://github.com/Peak-Innovation-Studios/adc-video-bridge.git
 cd adc-video-bridge
 cp .env.example .env
 cp config/config.example.yaml config/config.yaml
@@ -140,6 +151,10 @@ cp config/go2rtc.example.yaml config/go2rtc.yaml
 chmod 600 .env config/config.yaml config/go2rtc.yaml
 docker compose -f docker-compose.yml up --build -d
 ```
+
+Pulling source changes does not update an already-built container. After every
+code update, rebuild with `docker compose up -d --build`. Configuration-only
+changes can use `docker compose restart`.
 
 ## Environment variables
 
