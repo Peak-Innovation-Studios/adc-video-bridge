@@ -7,18 +7,20 @@ This is the single live answer to **"what is the current state, and whose turn i
 ## Current handoff
 
 - **Last agent:** Codex
-- **Updated:** 2026-08-02 (live bridge, Homebridge plugin, and child-bridge pilot validated)
-- **Branch / HEAD:** `agent/harden-synology-deployment` at `1392445`; fork PR [Peak-Innovation-Studios/adc-video-bridge#1](https://github.com/Peak-Innovation-Studios/adc-video-bridge/pull/1) remains a draft pending final Apple Home confirmation.
-- **Working tree:** Clean before this baton update. No intentional uncommitted product work is expected.
-- **Validation:** TypeScript build, 9 test files / 114 tests, production audit policy, image build, and non-root runtime smoke passed in GitHub Actions run `30724375024`. Live Kaikoura checks returned an authenticated 1280x720 JPEG, RTSP `200 OK`, and H.264 Main level 3.1 at 10 fps.
-- **Kaikoura:** `/volume1/docker/adc-video-bridge` runs the current branch with protected local configuration. Camera FFmpeg 4.1.0 runs as its own Homebridge child bridge; the Front Camera external accessory and child-bridge listeners are active. Homebridge logs show multiple video sessions starting and stopping cleanly. Motion, doorbell, audio, and HKSV remain disabled.
-- **Whose turn:** David — confirm live video in Apple Home. Codex can then finalize the PR/handoff and decide whether to start a separate motion/HKSV follow-up.
+- **Updated:** 2026-08-02 (live publisher restart-loop fix published for validation)
+- **Branch / HEAD:** `agent/harden-synology-deployment`; latest commit includes the FFmpeg lifecycle fix. Fork PR [Peak-Innovation-Studios/adc-video-bridge#1](https://github.com/Peak-Innovation-Studios/adc-video-bridge/pull/1).
+- **Working tree:** Expected clean after this handoff; no intentional uncommitted work remains.
+- **Diagnosis:** Kaikoura logs showed each exiting FFmpeg reporting about 37 seconds elapsed even though the currently referenced process had started about 20 seconds earlier. A stale child `exit` callback cleared the replacement reference and triggered `onUnexpectedExit`, tearing down a healthy WebRTC session. go2rtc consequently accumulated two publishers and 248 stuck Homebridge consumers.
+- **Fix:** Detach FFmpeg ownership before `SIGTERM` and ignore `exit` events unless the exiting child is still the owned child. Two regression tests cover synchronous intentional-stop exit and late exit after replacement.
+- **Validation:** TypeScript build, 9 test files / 116 tests, focused 26-test camera suite, production audit policy, and `git diff --check` pass. The repository has no lint script. Live Docker validation remains pending.
+- **Kaikoura:** `/volume1/docker/adc-video-bridge` still runs the pre-fix image. Motion, doorbell, audio, and HKSV remain disabled. Alarm event WebSocket 401s are separate from the live-video publisher race.
+- **Whose turn:** David — rebuild Kaikoura and confirm one stable publisher plus successful Home snapshots.
 
 ### What's left (priority order)
 
-1. Confirm the paired Front Camera displays live video in Apple Home.
-2. Keep the live-view-only pilot stable before enabling motion notifications or HKSV.
-3. Mark the fork PR ready and prepare the upstream PR after live confirmation.
+1. Pull/rebuild the Kaikoura container and verify `front` remains on one RTSP publisher.
+2. Confirm snapshots and live video in Apple Home.
+3. Keep the pilot stable before enabling motion/HKSV.
 
 ### Do not touch / gotchas
 
