@@ -11,9 +11,9 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-04 — built the ADC API circuit breaker across all three retry loops
-  (was item 2). Narrative: `Journal.md`, entry 2026-08-04; the outage and upstream-PR context is
-  the 2026-08-03 entry.
+- **Updated:** 2026-08-04 — built the ADC API circuit breaker across all three retry loops and
+  upstreamed it as [#32](https://github.com/Omar-L/adc-video-bridge/pull/32). Narrative:
+  `Journal.md`, entry 2026-08-04; the outage and upstream-PR context is the 2026-08-03 entry.
 - **Branch / HEAD:** Run `git fetch && git status -sb && git log --oneline -1`. `main` is the branch
   to deploy from. **Pushing here does NOT deploy** — Kaikoura is updated by hand, and `src/` changes
   need `docker-compose up -d --build`.
@@ -33,7 +33,7 @@ baton, the baton wins.
 - **Sudo-free diagnosis on Kaikoura:** `node dist/probe.js <cameraId>` and `node dist/discover.js`
   work from the checkout after `set -a; . ./.env; set +a`. Use these instead of `docker exec`, which
   needs David's password. `node_modules`/`dist` there are gitignored.
-- **⬆️ SEVEN upstream PRs + two issues open at Omar-L, all awaiting review** (he asked for help
+- **⬆️ EIGHT upstream PRs + two issues open at Omar-L, all awaiting review** (he asked for help
   making the fork more stable). All branch off `upstream/main` and contain **no internal docs**:
   | PR | branch | note |
   |---|---|---|
@@ -44,11 +44,13 @@ baton, the baton wins.
   | [#29](https://github.com/Omar-L/adc-video-bridge/pull/29) | `upstream-fix/log-redaction` | redaction, log level, shutdown |
   | [#30](https://github.com/Omar-L/adc-video-bridge/pull/30) | `upstream-fix/config-validation` | validation + `ADC_*_FILE` |
   | [#31](https://github.com/Omar-L/adc-video-bridge/pull/31) | `upstream-fix/container-hardening` | non-root, read-only, digest pins |
+  | [#32](https://github.com/Omar-L/adc-video-bridge/pull/32) | `upstream-fix/circuit-breaker` | closes `#9`; verified 108→136 tests on THEIR tree |
   Issues [#25](https://github.com/Omar-L/adc-video-bridge/issues/25) (measured ~1.2s media gap) and
   [#27](https://github.com/Omar-L/adc-video-bridge/issues/27) (7 production advisories), plus comments
   on `#2`, `#9`, `#11`, and a validation report on
   [AlexxIT/go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130).
-  ⚠️ #28 and #23/#24 all touch `camera-stream.ts` — whichever merges last needs a trivial rebase.
+  ⚠️ #28 and #23/#24 all touch `camera-stream.ts`, and #32 touches `alarm-event-listener.ts` and
+  `camera-manager.ts` — whichever merges last needs a trivial rebase.
   ⚠️ **Never let `docs/AGENT_HANDOFF.md`, `Journal.md`, `CLAUDE.md` or `AGENTS.md` into an upstream
   PR.** `8f88c26` and `baa7ab2` touch the baton and need stripping on cherry-pick.
   🔒 **HELD, not forgotten:** branch `upstream-fix/production-audit-policy` is built and committed
@@ -61,6 +63,11 @@ baton, the baton wins.
   upstream `^0.19.7`, and **pristine `upstream/main` does not compile against 0.24** — building
   slices in our tree produced a phantom failure and a wrong claim that had to be amended out of a
   PR message.
+  ✅ **This rule has now caught a real defect, not just a phantom one.** #32's fixtures used
+  `iceServers: []`, which passes here only because our parser has an `Array.isArray` branch;
+  upstream `JSON.parse()`s the field directly, so the array threw and hung five tests until vitest's
+  5s timeout. **The trap is broader than the werift pin: any fixture exercising code our hardening
+  made more tolerant will pass here and fail there.** Fixed on both branches (`e971299`).
 - **Whose turn:** **David** — the camera's WiFi (item 1) is the only thing no code can fix, and it
   gates everything else. Secondary David item: deploying the breaker needs a sudo rebuild (item 2).
 
@@ -73,30 +80,25 @@ baton, the baton wins.
 2. **(David — sudo)** **Deploy the circuit breaker** — `docker-compose up -d --build` on Kaikoura.
    It is committed on `main` but the running image predates it. ⚠️ Sensible to do *after* item 1, so
    the first live exercise of the breaker is not during a known-bad WiFi window.
-3. *(Agent, when David is ready)* **Upstream the breaker to
-   [Omar-L#9](https://github.com/Omar-L/adc-video-bridge/issues/9)** as an eighth PR off
-   `upstream/main`. It is written to be portable — no internal docs, no config surface. 🔴 Verify it
-   against **upstream's** lockfile per the rule below, and expect a conflict with `#23`/`#24`/`#28`
-   in `camera-manager.ts`/`alarm-event-listener.ts` depending on merge order.
-4. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
+3. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
    ⚠️ `chmod` alone will not hold: it is the **volume's default ACL**, and the Homebridge UI rewrites
    the file on every settings change. Durable fix is at the shared-folder/ACL level.
-5. **(David, then agent)** **HKSV is now unblocked** — the event stream delivers for the first time.
+4. **(David, then agent)** **HKSV is now unblocked** — the event stream delivers for the first time.
    Needs `videoConfig.recording: true` + `prebuffer` + `motion` + `porthttp` in Homebridge, the
    bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
    Home app. ⚠️ Not before item 1.
-6. **(Agent — matters most once HKSV is on)** **Make-before-break on token refresh.** Measured
+5. **(Agent — matters most once HKSV is on)** **Make-before-break on token refresh.** Measured
    **~1.2s media gap every 600s**: `reconnect()` closes the old PeerConnection before building the
    new one. The RTSP publisher never drops (ffmpeg spawns once in 30 min), so live view is fine and
    recording is not. Filed upstream as
    [#25](https://github.com/Omar-L/adc-video-bridge/issues/25).
-7. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
+6. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
    `config/config.yaml`. Note `src/discover.ts` already generates both blocks; the job is
    reconciling at startup, not deriving names.
-8. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
+7. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
    subscribed. ⚠️ A camera demoted to Proxy has **no audio at all**, so this only means anything on
    a Direct connection.
-9. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
+8. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
    has no printf width specifiers. Cosmetic; the generated YAML is fine.
 
 ### Do not touch / gotchas

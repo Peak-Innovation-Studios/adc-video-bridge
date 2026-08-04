@@ -80,6 +80,32 @@ and a pure `shouldAttempt()` query would have let both through on one due probe.
 `docker-compose up -d --build` and David's password. The breaker has never executed against the live
 API — every claim above is from tests.
 
+### Upstreamed as `Omar-L#32`, and the lockfile rule earned its keep
+
+Cherry-picked onto `upstream/main` as `upstream-fix/circuit-breaker`. Only `src/index.ts` conflicted
+(upstream has no `statusTimer` — that is ours, in `#29`); everything else auto-merged onto their
+base, which is the useful signal that the breaker really is independent of the hardening.
+
+🔑 **The "verify against UPSTREAM's lockfile" rule caught a real defect this time, not a phantom
+one — and the trap is wider than the werift pin it was written for.** The token-manager fixtures used
+`iceServers: []`. That passes *here* only because our hardening added an `Array.isArray` branch to
+`fetchVideoSource`; **upstream `JSON.parse()`s the field directly**, and `JSON.parse([])` stringifies
+to `""` and throws. So on their tree the fixture threw, `retry()` engaged with real 1s/2s delays the
+fake timers never advanced, and **five tests hung until vitest's 5s timeout**. Verifying in our own
+tree would have shipped a maintainer a test file that hangs.
+
+Generalised: *any* fixture exercising code our hardening made more tolerant will pass here and fail
+there. Recorded in the baton as a broadening of the existing rule.
+
+The fix is also the better fixture on both trees — Alarm.com sends `iceServers` as a JSON **string**,
+which is why upstream parses it at all. This is the `ws-token-123` lesson from 2026-08-03 running in
+reverse: there a *tidy* fixture certified broken code; here a fixture written against the *local*
+parser certified a test that could not run anywhere else. Backported to `main` as `e971299`.
+
+Upstream's baseline is **9 files / 108 tests**; the branch takes it to **11 / 136**. The commit
+message and PR body were rewritten for upstream — no internal dates, no fork-specific context, and
+the four comments that named `2026-08-03` were reworded to stand on their own.
+
 ---
 
 ## 2026-08-03 — A "no video" outage that was poor WiFi, plus measured performance findings
