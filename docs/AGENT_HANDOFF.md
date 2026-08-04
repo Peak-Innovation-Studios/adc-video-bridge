@@ -83,8 +83,15 @@ baton, the baton wins.
    The durable fix is at the **shared-folder permission / ACL level**, or accepting the exposure
    knowingly. Verify with `stat -c "%A %n" <file>` after any change, and re-check following a
    Homebridge settings edit.
-4. **(Agent-doable)** ADC event WebSocket 401s — ~60 failures/hour, reconnecting every 60s. Costs
-   motion events and HKSV triggers. Independent of video; unresolved and undiagnosed.
+4. ✅ **FIXED 2026-08-03 — ADC event WebSocket 401s.** Root cause: **we double-encoded the auth
+   token.** ADC's WebSocket token is ~600 chars of *already*-URL-encoded querystring (`%XX`, `&`,
+   `=`); `connect()` passed it through `URLSearchParams.set()`, re-encoding every `%` to `%25`, so
+   Alarm.com rejected the handshake. Fixed by assigning `wsUrl.search` directly. Verified against
+   the live endpoint: connected, received events, **0 errors** where previously every attempt
+   failed. 🔴 **Requires a container rebuild to take effect** — `src/` changed:
+   `docker-compose up -d --build adc-video-bridge`.
+   ⚠️ The existing tests could not catch this: the fixture token was `ws-token-123`, which is
+   URL-safe, so re-encoding it is a no-op. **Test fixtures that are "clean" hide encoding bugs.**
 5. **(Agent-doable — matters most if HKSV is enabled)** **Make-before-break on token refresh.**
    Measured: a **~1.2 s media gap every 600 s**. `reconnect()` closes the old PeerConnection
    *before* building the new one, so ffmpeg receives nothing during the overlap. The RTSP publisher
