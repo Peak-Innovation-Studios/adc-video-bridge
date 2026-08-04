@@ -142,8 +142,12 @@ export class CameraStream {
     }
 
     if (this.ffmpeg) {
-      this.ffmpeg.kill('SIGTERM');
+      // Detach ownership before signaling the child. The exit event may be
+      // delivered after a replacement ffmpeg has already started; that stale
+      // event must not clear the replacement or trigger stream recovery.
+      const ffmpeg = this.ffmpeg;
       this.ffmpeg = null;
+      ffmpeg.kill('SIGTERM');
     }
 
     if (this.videoSocket) {
@@ -464,13 +468,14 @@ export class CameraStream {
     ];
 
     log.info({ camera: this.cameraName, rtspUrl }, 'Starting ffmpeg');
-    this.ffmpeg = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const ffmpeg = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    this.ffmpeg = ffmpeg;
 
     // Write the SDP to ffmpeg's stdin, then close it
-    this.ffmpeg.stdin?.write(sdp);
-    this.ffmpeg.stdin?.end();
+    ffmpeg.stdin?.write(sdp);
+    ffmpeg.stdin?.end();
 
-    this.ffmpeg.stderr?.on('data', (data: Buffer) => {
+    ffmpeg.stderr?.on('data', (data: Buffer) => {
       const line = data.toString().trim();
       if (!line) return;
       // ffmpeg progress lines are noisy once streaming is established
@@ -482,7 +487,15 @@ export class CameraStream {
       }
     });
 
-    this.ffmpeg.on('exit', (code) => {
+    ffmpeg.on('exit', (code) => {
+      // Ignore an intentionally stopped or superseded child. Without this
+      // identity check, a late exit from the old process can erase the
+      // current process reference and restart an otherwise healthy stream.
+      if (this.ffmpeg !== ffmpeg) {
+        log.debug({ camera: this.cameraName, code }, 'Ignoring stale ffmpeg exit');
+        return;
+      }
+
       log.warn({ camera: this.cameraName, code }, 'ffmpeg exited');
       this.ffmpeg = null;
 

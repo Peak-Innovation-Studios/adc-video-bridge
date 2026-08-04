@@ -436,6 +436,47 @@ describe('CameraStream ffmpeg mid-stream exit recovery', () => {
 
     expect(stream.state).toBe('idle');
   });
+
+  it('ignores a late exit from an intentionally stopped ffmpeg process', async () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+
+    const ffmpeg = (stream as any).ffmpeg;
+    ffmpeg.kill.mockImplementation(() => exitHandler(0));
+
+    await stream.stop();
+
+    expect(ffmpeg.kill).toHaveBeenCalledWith('SIGTERM');
+    expect((stream as any).ffmpeg).toBeNull();
+    expect(stream.state).toBe('idle');
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('does not clear or restart a replacement when an older ffmpeg exits', async () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+    const staleExitHandler = exitHandler;
+
+    const { spawn } = await import('node:child_process');
+    const replacement = {
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn(),
+      kill: vi.fn(),
+    } as any;
+    vi.mocked(spawn).mockReturnValue(replacement);
+
+    (stream as any).ffmpeg = null;
+    (stream as any).startFfmpeg();
+    expect((stream as any).ffmpeg).toBe(replacement);
+
+    staleExitHandler(0);
+
+    expect((stream as any).ffmpeg).toBe(replacement);
+    expect(stream.state).toBe('streaming');
+    expect(callback).not.toHaveBeenCalled();
+  });
 });
 
 describe('CameraStream ffmpeg SDP', () => {
