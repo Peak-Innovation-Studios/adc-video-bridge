@@ -11,124 +11,88 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5), taking over from Codex
-- **Updated:** 2026-08-03 — resolved a live "no video" outage (poor camera WiFi, not our code), and
-  measured the streaming pipeline. **No code changed.** Detail: `Journal.md`, entry 2026-08-03.
-- **Branch / HEAD:** Run `git fetch && git status -sb && git log --oneline -1`. Everything Codex
-  pushed is merged; internal PR
-  [#2](https://github.com/Peak-Innovation-Studios/adc-video-bridge/pull/2) is **MERGED**, CI green.
-  `main` is the branch to deploy from. Pushing here does **not** deploy — Kaikoura is updated by hand.
-- **Working tree:** Run `git status --short`. Only this baton is modified; no other agent has
-  uncommitted work.
-- **Validation (re-run this session on merged `main`):** `npm run build` clean, `npm test`
-  9 files / 116 tests passed, `npm run audit:prod` passed with the documented
-  GHSA-2p57-rm9w-gvfp exception.
-- **Kaikoura — live and streaming.** `/volume1/docker/adc-video-bridge` is on `main`, migrated off
-  the old single-branch checkout, and rebuilt; the FFmpeg-ownership fix has been deployed since the
-  2026-08-02 image. Verified end to end this session: go2rtc serves 84–127 KB JPEGs with distinct
-  md5s across 30s, and shows a real `rtsp+tcp` publisher (H264 Main L40, bytes climbing). Motion,
-  doorbell, audio, and HKSV remain disabled.
-- **Host-side dev environment now exists on Kaikoura** (added this session, with David's
-  approval): `npm ci && npm run build` has been run in the checkout, so `node dist/probe.js
-  <cameraId>` and `node dist/discover.js` work **without sudo** after sourcing `.env`. Both are
-  gitignored. Use this for diagnosis instead of `docker exec`, which needs a password.
-- **⬆️ Upstream contributions are OPEN and awaiting Omar's review** (2026-08-03, at his request —
-  he asked for help making the fork more stable). Both branch off `upstream/main`, touch only
-  `src/camera/camera-stream.ts` + tests, and contain **no** internal docs:
-  - [Omar-L#23](https://github.com/Omar-L/adc-video-bridge/pull/23) — subscribe to the registered
-    WebRTC track, not the placeholder. Branch `upstream-fix/webrtc-track-subscription`.
-  - [Omar-L#24](https://github.com/Omar-L/adc-video-bridge/pull/24) — ignore stale ffmpeg exits.
-    Branch `upstream-fix/stale-ffmpeg-exit`, **stacked on #23** (they conflict standalone; #23
-    landed first and both edit the ffmpeg lifecycle).
-  - Findings filed: new issue [#25](https://github.com/Omar-L/adc-video-bridge/issues/25) (the
-    ~1.2s media gap), plus comments on `#2` (proxy is a demotion fallback, not an "older models"
-    limit), `#9` (circuit-breaker measurements + the null-vs-throw trap), and `#11` (the HKSV
-    spike numbers, and a correction to that issue's re-encoding claim).
-  - Also sent a validation report to **[AlexxIT/go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130)**
-    — independent build/test/pair/record on unrelated hardware, plus two findings: `pin` silently
-    falls back to the documented example value while `device_id`/`device_private` are generated
-    and persisted, and a benign `EOF` logged at `ERR` during pairing.
-  Both `MERGEABLE`; `BLOCKED` = awaiting review. CI has not run — GitHub holds workflows on
-  first-time external contributions until a maintainer approves.
-  ⚠️ **Never let `docs/AGENT_HANDOFF.md`, `Journal.md`, `CLAUDE.md`, or `AGENTS.md` into an
-  upstream PR** — `8f88c26` and `baa7ab2` touch the baton and need stripping on cherry-pick.
-  - [Omar-L#26](https://github.com/Omar-L/adc-video-bridge/pull/26) — CI hardening: pinned action
-    SHAs, `permissions: contents: read`, `timeout-minutes`. Branch `upstream-fix/pin-actions`.
-  - [Omar-L#27](https://github.com/Omar-L/adc-video-bridge/issues/27) — issue reporting **7
-    unaddressed production advisories on their `main`** (6 high), most already covered by their
-    open Dependabot PRs. Filed as an issue **deliberately, not a PR**: our `audit:prod` policy
-    fails on their tree today, so merging it would turn their CI red before those land. The branch
-    `upstream-fix/production-audit-policy` is **built and committed locally but NOT pushed** —
-    send it once their Dependabot PRs merge.
-  ⚠️ **`fd3b3dd` and `3ac3b0a` are NOT independently upstreamable**, despite being ~19 lines
-  between them. `fd3b3dd` adds a `secrets/` directory for `ADC_*_FILE` support **upstream does not
-  have**, and `3ac3b0a` aligns the container UID/GID with a non-root user and mode-600 configs
-  **upstream does not have**. Both are interface changes to a feature that lives in `395d888`;
-  they belong in the container-hardening PR. Diff size does not measure independence.
-  Still portable and un-upstreamed: `baa7ab2` (Synology guide) and `395d888`
-  (hardening — 826/-420 across 30 files, split before offering).
-  🔴 **`395d888` CARRIES A REGRESSION — do not upstream it as-is.** It introduced the event
-  WebSocket double-encoding bug (item 4) while adding the `wss:` check and bounded handshake.
-  **Upstream is NOT affected** — `upstream/main` uses `` `${endpoint}?auth=${token}` `` and is
-  correct, so there is nothing to send for the fix itself. But offering the hardening without
-  commit `6a4f5a4` folded in would export a regression that kills motion events for every user,
-  inside a commit titled "harden". The hardening is still worth contributing (upstream has no
-  `wss:` enforcement, no `handshakeTimeout`, no `maxPayload`) — just never without the fix.
-- **Whose turn:** **David** — decide what to build next (see "What's left"). Nothing is blocked
-  and nothing is broken.
+- **Updated:** 2026-08-03 — resolved a live "no video" outage (poor camera WiFi, **not our code**),
+  measured the pipeline, fixed the event-WebSocket 401s, spiked native HKSV, and split the hardening
+  commit into upstream PRs. Narrative: `Journal.md`, entry 2026-08-03.
+- **Branch / HEAD:** Run `git fetch && git status -sb && git log --oneline -1`. `main` is the branch
+  to deploy from. **Pushing here does NOT deploy** — Kaikoura is updated by hand, and `src/` changes
+  need `docker-compose up -d --build`.
+  💡 "Do I need a rebuild?" is answerable from git alone: the Dockerfile copies only `package*.json`,
+  `tsconfig.json`, `src/` and `entrypoint.sh`, so
+  `git diff --name-only <deployed-commit>..main -- <those paths>` empty ⇒ the image is current.
+- **Working tree:** Run `git status --short`. No agent has uncommitted work.
+- **Validation (this session, on `main`):** `npm run build` clean, `npm test` **9 files / 117 tests**,
+  `npm run audit:prod` passed with the documented GHSA-2p57-rm9w-gvfp exception.
+- **Kaikoura — live, streaming, and current.** On `main`, rebuilt with the 401 fix. Verified: go2rtc
+  serves 84–127 KB JPEGs with distinct md5s, a real `rtsp+tcp` publisher, and **0** WebSocket 401s
+  (was ~60/hour). Motion, doorbell, audio and HKSV remain disabled.
+- **Sudo-free diagnosis on Kaikoura:** `node dist/probe.js <cameraId>` and `node dist/discover.js`
+  work from the checkout after `set -a; . ./.env; set +a`. Use these instead of `docker exec`, which
+  needs David's password. `node_modules`/`dist` there are gitignored.
+- **⬆️ SEVEN upstream PRs + two issues open at Omar-L, all awaiting review** (he asked for help
+  making the fork more stable). All branch off `upstream/main` and contain **no internal docs**:
+  | PR | branch | note |
+  |---|---|---|
+  | [#23](https://github.com/Omar-L/adc-video-bridge/pull/23) | `upstream-fix/webrtc-track-subscription` | placeholder track wins a one-shot guard |
+  | [#24](https://github.com/Omar-L/adc-video-bridge/pull/24) | `upstream-fix/stale-ffmpeg-exit` | **stacked on #23** — conflicts standalone |
+  | [#26](https://github.com/Omar-L/adc-video-bridge/pull/26) | `upstream-fix/pin-actions` | CI hardening |
+  | [#28](https://github.com/Omar-L/adc-video-bridge/pull/28) | `upstream-fix/network-hardening` | 🔴 **carries `6a4f5a4`** — must not ship without it |
+  | [#29](https://github.com/Omar-L/adc-video-bridge/pull/29) | `upstream-fix/log-redaction` | redaction, log level, shutdown |
+  | [#30](https://github.com/Omar-L/adc-video-bridge/pull/30) | `upstream-fix/config-validation` | validation + `ADC_*_FILE` |
+  | [#31](https://github.com/Omar-L/adc-video-bridge/pull/31) | `upstream-fix/container-hardening` | non-root, read-only, digest pins |
+  Issues [#25](https://github.com/Omar-L/adc-video-bridge/issues/25) (measured ~1.2s media gap) and
+  [#27](https://github.com/Omar-L/adc-video-bridge/issues/27) (7 production advisories), plus comments
+  on `#2`, `#9`, `#11`, and a validation report on
+  [AlexxIT/go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130).
+  ⚠️ #28 and #23/#24 all touch `camera-stream.ts` — whichever merges last needs a trivial rebase.
+  ⚠️ **Never let `docs/AGENT_HANDOFF.md`, `Journal.md`, `CLAUDE.md` or `AGENTS.md` into an upstream
+  PR.** `8f88c26` and `baa7ab2` touch the baton and need stripping on cherry-pick.
+  🔒 **HELD, not forgotten:** branch `upstream-fix/production-audit-policy` is built and committed
+  locally but **deliberately unpushed** — the policy fails on upstream's tree today (see #27). Send
+  it once their Dependabot PRs merge.
+  ✅ `395d888` is now fully split and upstreamed via #28–#31; only `baa7ab2` (Synology guide) remains
+  portable and unsent.
+- **🔴 Verify upstream slices against UPSTREAM's lockfile, not ours.** A clean clone with `npm ci`
+  from their `package-lock.json` lives in the session scratchpad. Our fork pins `werift ^0.24.2`,
+  upstream `^0.19.7`, and **pristine `upstream/main` does not compile against 0.24** — building
+  slices in our tree produced a phantom failure and a wrong claim that had to be amended out of a
+  PR message.
+- **Whose turn:** **David** — the camera's WiFi (item 1) is the only thing no code can fix, and it
+  gates everything else. Agent work is queued and unblocked: the circuit breaker (item 2).
 
 ### What's left (priority order)
 
-1. **(David — physical, and the real fix)** **Camera WiFi signal is poor.** That caused today's
-   outage and will cause it again. A power-cycle clears the symptom, not the cause. Wired
-   Ethernet if the camera supports it; otherwise relocate the camera or add an AP.
-   ⚠️ This matters more here than for normal use: Alarm.com designs for *on-demand* viewing,
-   while this bridge holds a **perpetual** session. A marginal link that is fine for a 30-second
-   app session is structurally unstable for 24/7.
-2. **(Agent-doable — now the highest-value code change)** **Add a circuit breaker for ADC API
-   calls** — upstream [Omar-L#9](https://github.com/Omar-L/adc-video-bridge/issues/9), still open.
-   There is exponential backoff but nothing ever *gives up*. **Measured during this outage:** ~60
-   failures/hour from the event WebSocket (backoff caps at 60s) and ~6/hour from the token poller
-   (`VIDEO_TOKEN_REFRESH_MS = 600s`, one camera configured). Against an API whose own docs warn
-   about aggressive polling, that is how a transient fault becomes self-sustaining.
-   📖 **Design decisions are already made — see `Journal.md` before re-litigating them.** Scope is
-   all three retry loops; open behavior is pause + self-healing escalating cooldown; and critically
-   the failure predicate must be *"did not produce a usable result"*, **not** *"threw"* — a
-   breaker counting exceptions would not have tripped once during this outage.
-3. **(David — security, and `chmod` alone will NOT fix it)** `/volume1/homebridge/config.json` is
-   mode **0777** and holds HomeKit pairing data. ⚠️ Do not treat this as a one-off slip: **every
-   git-created file under `/volume1/docker/adc-video-bridge` is also `0777`** (README, CLAUDE.md,
-   the baton) while explicitly-chmod'd files (`.env`, `config/*.yaml`) stay `600`. So `0777` is
-   this **volume's default ACL/umask**, not something anyone did. Since the Homebridge UI rewrites
-   `config.json` on every settings change, a `chmod 600` gets reverted by the next rewrite.
-   The durable fix is at the **shared-folder permission / ACL level**, or accepting the exposure
-   knowingly. Verify with `stat -c "%A %n" <file>` after any change, and re-check following a
-   Homebridge settings edit.
-4. ✅ **FIXED 2026-08-03 — ADC event WebSocket 401s.** Root cause: **we double-encoded the auth
-   token.** ADC's WebSocket token is ~600 chars of *already*-URL-encoded querystring (`%XX`, `&`,
-   `=`); `connect()` passed it through `URLSearchParams.set()`, re-encoding every `%` to `%25`, so
-   Alarm.com rejected the handshake. Fixed by assigning `wsUrl.search` directly. Verified against
-   the live endpoint, then **DEPLOYED AND VERIFIED IN THE CONTAINER 2026-08-03**: `401` count
-   **0** (was ~60/hour), `WebSocket connected to wss://webskt.alarm.com:8443`, no reconnect storm,
-   full video pipeline healthy alongside it. Motion events not yet observed only because nothing
-   has moved in front of the camera.
-   ⚠️ The existing tests could not catch this: the fixture token was `ws-token-123`, which is
-   URL-safe, so re-encoding it is a no-op. **Test fixtures that are "clean" hide encoding bugs.**
-5. **(Agent-doable — matters most if HKSV is enabled)** **Make-before-break on token refresh.**
-   Measured: a **~1.2 s media gap every 600 s**. `reconnect()` closes the old PeerConnection
-   *before* building the new one, so ffmpeg receives nothing during the overlap. The RTSP publisher
-   itself never drops (`Starting ffmpeg` fires exactly once in 30 min — the seamless-handoff design
-   works at the transport layer), but media continuity breaks. Fix: establish the new connection,
-   wait for RTP on it, then tear down the old. Invisible to live viewing; recording will notice.
-6. *(Agent-doable, low priority)* go2rtc stream auto-configuration. `config/go2rtc.yaml` stream
-   entries are hand-maintained and must be kept in sync with `config/config.yaml`. Note
-   `src/discover.ts` **already generates both blocks** from the camera list, so the job is
-   reconciling at startup, not inventing name derivation.
-7. *(Agent-doable)* Audio passthrough. The peer connection already negotiates Opus/PCMU/PCMA, but
-   only the video track is subscribed and the ffmpeg SDP is video-only. ⚠️ Note a demoted camera
-   on a Proxy connection carries **no audio at all** (`supportsAudio: false`), so this is only
-   meaningful while the camera holds a Direct connection.
-8. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`,
-   which has no printf width specifiers. Cosmetic; the generated YAML is unaffected.
+1. 🔴 **(David — physical, gates everything)** **The camera's WiFi signal is poor.** It caused this
+   session's outage and will again; a power-cycle clears the symptom, not the cause. Wired Ethernet
+   if the camera supports it, else relocate it or add an AP. Matters more here than for normal use:
+   Alarm.com designs for *on-demand* viewing, this bridge holds a **perpetual** session.
+2. **(Agent — designed, not started)** **ADC API circuit breaker**, upstream
+   [Omar-L#9](https://github.com/Omar-L/adc-video-bridge/issues/9). Backoff exists; nothing ever
+   gives up. Measured during the outage: ~60 failures/hour from the event socket, ~6/hour from the
+   token poller. 📖 **Design decisions are already made — read `Journal.md` before re-litigating.**
+   Scope = all three loops; open = pause + escalating cooldown, self-healing; and critically the
+   failure predicate is *"produced no usable result"*, **not** *"threw"* — a breaker counting
+   exceptions would not have tripped once during this outage.
+3. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
+   ⚠️ `chmod` alone will not hold: it is the **volume's default ACL**, and the Homebridge UI rewrites
+   the file on every settings change. Durable fix is at the shared-folder/ACL level.
+4. **(David, then agent)** **HKSV is now unblocked** — the event stream delivers for the first time.
+   Needs `videoConfig.recording: true` + `prebuffer` + `motion` + `porthttp` in Homebridge, the
+   bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
+   Home app. ⚠️ Not before item 1.
+5. **(Agent — matters most once HKSV is on)** **Make-before-break on token refresh.** Measured
+   **~1.2s media gap every 600s**: `reconnect()` closes the old PeerConnection before building the
+   new one. The RTSP publisher never drops (ffmpeg spawns once in 30 min), so live view is fine and
+   recording is not. Filed upstream as
+   [#25](https://github.com/Omar-L/adc-video-bridge/issues/25).
+6. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
+   `config/config.yaml`. Note `src/discover.ts` already generates both blocks; the job is
+   reconciling at startup, not deriving names.
+7. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
+   subscribed. ⚠️ A camera demoted to Proxy has **no audio at all**, so this only means anything on
+   a Direct connection.
+8. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
+   has no printf width specifiers. Cosmetic; the generated YAML is fine.
 
 ### Do not touch / gotchas
 

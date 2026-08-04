@@ -188,6 +188,46 @@ trap.
 Deliberately **not** upstreamed yet: the hardening commit (`395d888`, 826/-420 across 30 files)
 needs splitting into reviewable pieces first. Everything else portable is small and can follow.
 
+### Splitting `395d888` into reviewable upstream PRs
+
+The hardening commit was 826/-420 across 30 files — unreviewable as one change, and the reason its
+`URLSearchParams` regression shipped unnoticed in the first place. Split into four PRs off
+`upstream/main`, each verified independently:
+
+| PR | slice |
+|---|---|
+| [#28](https://github.com/Omar-L/adc-video-bridge/pull/28) | network hardening — WSS enforcement, handshake/payload bounds, HTTP timeouts, payload redaction. **Carries `6a4f5a4`** |
+| [#29](https://github.com/Omar-L/adc-video-bridge/pull/29) | log redaction, configurable level, clean shutdown, bounded webhook |
+| [#30](https://github.com/Omar-L/adc-video-bridge/pull/30) | config validation at load time + `ADC_*_FILE` secrets |
+| [#31](https://github.com/Omar-L/adc-video-bridge/pull/31) | container hardening — non-root, read-only, `cap_drop`, digest pins |
+
+Slice E (the `audit:prod` policy) stays **held** until their Dependabot PRs merge — see the earlier
+entry on `Omar-L#27`.
+
+🔴 **The verification method was wrong for the first two slices, and it produced a false failure and
+a false explanation.** Checking "does this slice build standalone" ran `tsc` against **our**
+`node_modules` — werift **0.24.2** — while the branches are based on upstream, which pins
+**^0.19.7**. Pristine `upstream/main` does not compile against 0.24 either, so the failures had
+nothing to do with the slices.
+
+Two consequences. A phantom error on the logging slice sent me looking for a dependency that was not
+there. And I wrote into `#28`'s commit message that a `camera-stream.ts` null guard was required
+"once the logging is narrowed" — it is not; **werift 0.24 made the ICE candidate callback nullable**.
+That had to be amended.
+
+**Fix: verify against a clean `git clone` of upstream with `npm ci` from THEIR lockfile.** Every slice
+was then re-checked there. Worth keeping that clone around for future upstream work.
+
+That mistake produced the single most useful line in the whole series, though: since upstream's own
+Dependabot **#17** proposes the werift bump, **merging #17 without `#28`'s guard breaks their build.**
+An incidental line became the reason to take the PR.
+
+⚠️ Also learned: **diff size does not measure independence.** `fd3b3dd` and `3ac3b0a` are ~19 lines
+between them and read as trivially portable. They are not — one adds a `secrets/` directory for
+`ADC_*_FILE` support upstream lacks, the other aligns container UID/GID with a non-root user and
+mode-600 configs upstream lacks. Both are interface changes to a feature living in `395d888`, and
+both were folded into `#31` where they belong.
+
 ### The event WebSocket 401s were self-inflicted, and nearly exported
 
 Fixed the ~60/hour `401` failures on the ADC event stream. **Root cause: we double-encoded our own
