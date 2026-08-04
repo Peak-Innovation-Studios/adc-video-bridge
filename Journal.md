@@ -188,6 +188,45 @@ trap.
 Deliberately **not** upstreamed yet: the hardening commit (`395d888`, 826/-420 across 30 files)
 needs splitting into reviewable pieces first. Everything else portable is small and can follow.
 
+### The event WebSocket 401s were self-inflicted, and nearly exported
+
+Fixed the ~60/hour `401` failures on the ADC event stream. **Root cause: we double-encoded our own
+auth token.**
+
+Alarm.com's WebSocket token is not an opaque blob — it is ~600 characters of *already*
+URL-encoded querystring (`%XX` escapes, `&` separators, `=` assignments). `connect()` passed it
+through `URLSearchParams.set()`, which encoded it a second time: every `%` became `%25`, every `&`
+became `%26`, producing a URL 45 characters longer than it should be. Alarm.com could not decode
+it and rejected the handshake.
+
+Nothing was wrong with the credentials, the session, or the token — which is why the logs showed
+`WebSocket error` and never `Failed to connect`. `auth.get()` returned a valid token every time.
+
+**The differential test that found it:** `src/ws-probe.ts` builds the URL by raw string
+concatenation and `alarm-event-listener.ts` used `searchParams`. Running the probe against the live
+endpoint **connected and received events** at the same moment the listener was 401ing. Same
+account, same token endpoint, same minute — the only difference was the encoding.
+
+Fixed by assigning `wsUrl.search` directly, which leaves `%`, `&` and `=` untouched while keeping
+`new URL()` for the `wss:` check and preserving the normalised form. Verified end to end against
+the live endpoint: connected, received events, **0 errors**.
+
+⚠️ **Why 116 passing tests missed it:** the fixture token was `'ws-token-123'` — clean, readable,
+and **URL-safe**, so re-encoding it is a no-op. The test asserted precisely the behaviour that
+breaks in production. A tidy fixture did not merely fail to catch the bug, it *certified* the
+broken code. **For anything encoded, escaped, quoted or serialised, the fixture must be hostile.**
+
+🔴 **The uncomfortable part: the bug was ours, and it was queued to be exported.** `git log -S`
+traced it to `395d888 "Harden bridge and Synology deployment"`, which added the `wss:` check and
+the bounded handshake — and switched to `new URL()` + `searchParams.set()` in the same breath.
+`upstream/main` still uses `` `${endpoint}?auth=${token}` `` and is **not affected**.
+
+`395d888` was on the "portable, un-upstreamed" list. Upstreaming it as-is would have handed the
+maintainer a regression that kills motion events for every user, inside a commit titled "harden".
+The change *reads* as a security improvement, which is exactly why it was reviewed, merged and
+deployed without anyone noticing. **Precondition recorded in the baton: never offer `395d888`
+without `6a4f5a4` folded in.**
+
 ### Deferred to a future session
 
 The **ADC API circuit breaker** (upstream `Omar-L#9`) was scoped but deliberately not started.

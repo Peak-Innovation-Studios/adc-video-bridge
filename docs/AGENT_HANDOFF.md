@@ -53,6 +53,13 @@ baton, the baton wins.
   upstream PR** — `8f88c26` and `baa7ab2` touch the baton and need stripping on cherry-pick.
   Still portable and un-upstreamed: `3319d75`, `fd3b3dd`, `3ac3b0a`, `baa7ab2`, and `395d888`
   (hardening — 826/-420 across 30 files, split before offering).
+  🔴 **`395d888` CARRIES A REGRESSION — do not upstream it as-is.** It introduced the event
+  WebSocket double-encoding bug (item 4) while adding the `wss:` check and bounded handshake.
+  **Upstream is NOT affected** — `upstream/main` uses `` `${endpoint}?auth=${token}` `` and is
+  correct, so there is nothing to send for the fix itself. But offering the hardening without
+  commit `6a4f5a4` folded in would export a regression that kills motion events for every user,
+  inside a commit titled "harden". The hardening is still worth contributing (upstream has no
+  `wss:` enforcement, no `handshakeTimeout`, no `maxPayload`) — just never without the fix.
 - **Whose turn:** **David** — decide what to build next (see "What's left"). Nothing is blocked
   and nothing is broken.
 
