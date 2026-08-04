@@ -76,7 +76,65 @@ Untested and deliberately deferred: `-reorder_queue_size 0` disables RTP reorder
 right on a clean LAN and possibly wrong over a weak wireless link. Worth an A/B **after** the
 signal problem is fixed, not before.
 
-### Native HKSV via go2rtc — assessed, and declined for now
+### Native HKSV via go2rtc — SPIKED AND MEASURED, and the initial assessment was wrong
+
+**Correcting the section below.** It argued against native HKSV partly on "we already do not
+re-encode, because `vcodec: \"copy\"`". That reasoning was **wrong**: `vcodec` governs the
+**live-view** path, not HKSV *recording*, which is a separate path in `camera-ffmpeg` with much
+harder constraints (fragmented MP4, GOP alignment, strict profile/level) — exactly the constraints
+that normally force a transcode. Generalising from one config key to a feature it does not govern
+nearly talked us out of a real improvement.
+
+So we spiked it. Findings, measured on Kaikoura against the live camera:
+
+| | idle | live view | **HKSV recording** |
+|---|---|---|---|
+| go2rtc CPU | 0.4% | 0.4% | **0.7%** |
+| RSS | 23 MB | 22 MB | **21–22 MB** |
+| ffmpeg processes | 0 | 0 | **0** |
+
+**Native HKSV recording does not re-encode.** The debug log shows `[hksv] flush fragment
+fragSize≈67000` once per second with sequential `seq` numbers (≈536 kbps, consistent with 1080p10
+H.264 straight through), and a third consumer appears with `format_name: "hksv"` alongside the
+live `homekit` one, both fed from a single `rtsp` producer. It muxes rather than encodes, as
+`pkg/hksv`'s README claims — now verified on our hardware.
+
+Also learned: HomeKit negotiated 1280x720@30 while the source is 1920x1080@10, and **accepted the
+mismatch** without transcoding. The same tolerance explains why the Homebridge path works despite
+`maxWidth`/`maxHeight` being inert under `vcodec: "copy"`.
+
+**How the spike was run** (repeat this way — it was cheap and completely isolated): go2rtc is a
+single static Go binary and cross-compiles trivially, so there was **no Docker image, no sudo, and
+no change to the deployment**. Built `skrashevich/go2rtc@hksv` with
+`CGO_ENABLED=0 GOOS=linux GOARCH=amd64`, copied the 19 MB binary to the NAS, ran it as `dpeak` on
+spare ports (1985/8555) pulling the RTSP stream the production go2rtc already publishes. Running
+on the host rather than in a container also made HomeKit's mDNS advertisement work for free —
+the awkward part of running HAP in Docker. Teardown was `kill` + `rm -rf`. `pkg/hksv` and
+`internal/homekit` unit tests pass.
+
+⚠️ Gotchas hit while spiking, worth not rediscovering:
+- `pkg/hksv` hardcodes the pairing pin to **`27041991`** when unset — publicly documented, so
+  always set a random `pin:`.
+- `pkg/hksv/hksv.go:293` logs `ERR ... error=EOF` on an aborted pair-setup attempt even when
+  pairing then succeeds. Log noise, not a fault.
+- `pkill -f "go2rtc -config ..."` **matches its own ssh command line** and kills the session
+  before doing anything. Resolve the PID with `ps` and kill that instead.
+- `scp` resolves `kaikoura` differently than `ssh` does (the `Match exec` block in
+  `~/.ssh/config`); pipe over `ssh 'cat > file'` instead.
+
+**What is still unmeasured:** what HKSV *recording* costs on the Homebridge path. It was never
+enabled there (`videoConfig.recording` defaults to `false`, and that camera has no `motion` key),
+and measuring it would have required a production config edit plus a Homebridge restart that
+interrupts unrelated accessories. Deliberately skipped: the direction of the result does not change
+the decision, only its margin.
+
+**Revised position:** the benefit is now **established rather than speculative**, but the *costs*
+are unchanged — [go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130) is still unmerged and
+unreleased, so adopting it in production means self-building from a branch and giving up the
+Dockerfile's by-digest pin. Track it; adopt when it merges and ships. The reasoning in the
+superseded section below is retained only to show what the wrong argument looked like.
+
+### Native HKSV via go2rtc — the original (superseded) assessment
 
 [go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130) is **still open** (not merged, not
 draft, 8,399 additions across 35 files, last updated 2026-07-27), and go2rtc's latest release is

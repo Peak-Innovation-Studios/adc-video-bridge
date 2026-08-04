@@ -42,13 +42,12 @@ baton, the baton wins.
   - Findings filed: new issue [#25](https://github.com/Omar-L/adc-video-bridge/issues/25) (the
     ~1.2s media gap), plus comments on `#2` (proxy is a demotion fallback, not an "older models"
     limit) and `#9` (circuit-breaker measurements + the null-vs-throw trap).
-  Both are `MERGEABLE`; `BLOCKED` just means awaiting review. CI has not run — GitHub holds
-  workflows on first-time external contributions until a maintainer approves them.
+  Both `MERGEABLE`; `BLOCKED` = awaiting review. CI has not run — GitHub holds workflows on
+  first-time external contributions until a maintainer approves.
   ⚠️ **Never let `docs/AGENT_HANDOFF.md`, `Journal.md`, `CLAUDE.md`, or `AGENTS.md` into an
-  upstream PR.** `8f88c26` and `baa7ab2` both touch the baton and must be stripped on cherry-pick.
-  Still un-upstreamed and portable: `3319d75` (CI pinning), `fd3b3dd`/`3ac3b0a` (secrets dir,
-  container UID/GID), `395d888` (hardening — 826/-420 across 30 files, needs splitting first),
-  `baa7ab2` (Synology guide).
+  upstream PR** — `8f88c26` and `baa7ab2` touch the baton and need stripping on cherry-pick.
+  Still portable and un-upstreamed: `3319d75`, `fd3b3dd`, `3ac3b0a`, `baa7ab2`, and `395d888`
+  (hardening — 826/-420 across 30 files, split before offering).
 - **Whose turn:** **David** — decide what to build next (see "What's left"). Nothing is blocked
   and nothing is broken.
 
@@ -124,8 +123,12 @@ baton, the baton wins.
 
 - Whether to enable Alarm.com motion webhooks and HKSV after the live-view pilot is stable.
   ⚠️ Not until the camera's signal problem is addressed — see item 1.
-- **Native HKSV via go2rtc — assessed 2026-08-03 and DECLINED for now. Track, do not build.**
-  [go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130) is still open and unreleased, so
-  adopting it means self-building from an unmerged branch and giving up the Dockerfile's
-  by-digest pin. Both benefits upstream claims already fail for this deployment. Revisit after it
-  merges and ships in an official release. Full analysis: `Journal.md` 2026-08-03.
+- **Native HKSV via go2rtc — SPIKED AND MEASURED 2026-08-03. Verdict: track, adopt when it ships.**
+  HKSV **recording does not re-encode**: 0.7% CPU, ~22 MB RSS, **zero ffmpeg**, muxing fMP4
+  in-process. ⚠️ Do **not** repeat the earlier argument that `vcodec: "copy"` makes this
+  pointless — `vcodec` governs *live view*, not HKSV recording. Costs unchanged
+  ([go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130) unmerged/unreleased → self-build,
+  lose the by-digest pin), but the benefit is now established rather than speculative. Spike
+  method, gotchas, and what stayed unmeasured: `Journal.md` 2026-08-03.
+  🧹 Spike fully torn down; production untouched. Delete any leftover **"HKSV Spike"** accessory
+  from the Home app.
