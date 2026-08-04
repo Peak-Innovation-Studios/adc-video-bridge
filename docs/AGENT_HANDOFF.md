@@ -41,7 +41,12 @@ baton, the baton wins.
     landed first and both edit the ffmpeg lifecycle).
   - Findings filed: new issue [#25](https://github.com/Omar-L/adc-video-bridge/issues/25) (the
     ~1.2s media gap), plus comments on `#2` (proxy is a demotion fallback, not an "older models"
-    limit) and `#9` (circuit-breaker measurements + the null-vs-throw trap).
+    limit), `#9` (circuit-breaker measurements + the null-vs-throw trap), and `#11` (the HKSV
+    spike numbers, and a correction to that issue's re-encoding claim).
+  - Also sent a validation report to **[AlexxIT/go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130)**
+    — independent build/test/pair/record on unrelated hardware, plus two findings: `pin` silently
+    falls back to the documented example value while `device_id`/`device_private` are generated
+    and persisted, and a benign `EOF` logged at `ERR` during pairing.
   Both `MERGEABLE`; `BLOCKED` = awaiting review. CI has not run — GitHub holds workflows on
   first-time external contributions until a maintainer approves.
   ⚠️ **Never let `docs/AGENT_HANDOFF.md`, `Journal.md`, `CLAUDE.md`, or `AGENTS.md` into an
