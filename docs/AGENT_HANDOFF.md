@@ -74,9 +74,15 @@ baton, the baton wins.
    all three retry loops; open behavior is pause + self-healing escalating cooldown; and critically
    the failure predicate must be *"did not produce a usable result"*, **not** *"threw"* — a
    breaker counting exceptions would not have tripped once during this outage.
-3. **(David — 1 minute, security)** `/volume1/homebridge/config.json` is mode **0777**. This baton
-   previously recorded it as 600; it is not. It holds HomeKit pairing data. `chmod 600` — but
-   confirm Homebridge still reads it as its own user afterwards.
+3. **(David — security, and `chmod` alone will NOT fix it)** `/volume1/homebridge/config.json` is
+   mode **0777** and holds HomeKit pairing data. ⚠️ Do not treat this as a one-off slip: **every
+   git-created file under `/volume1/docker/adc-video-bridge` is also `0777`** (README, CLAUDE.md,
+   the baton) while explicitly-chmod'd files (`.env`, `config/*.yaml`) stay `600`. So `0777` is
+   this **volume's default ACL/umask**, not something anyone did. Since the Homebridge UI rewrites
+   `config.json` on every settings change, a `chmod 600` gets reverted by the next rewrite.
+   The durable fix is at the **shared-folder permission / ACL level**, or accepting the exposure
+   knowingly. Verify with `stat -c "%A %n" <file>` after any change, and re-check following a
+   Homebridge settings edit.
 4. **(Agent-doable)** ADC event WebSocket 401s — ~60 failures/hour, reconnecting every 60s. Costs
    motion events and HKSV triggers. Independent of video; unresolved and undiagnosed.
 5. **(Agent-doable — matters most if HKSV is enabled)** **Make-before-break on token refresh.**
