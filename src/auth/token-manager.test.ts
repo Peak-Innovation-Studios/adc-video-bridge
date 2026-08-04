@@ -23,7 +23,11 @@ const RETRY_LADDER_MS = 3_000;
  */
 function noWebrtcResponse() {
   return {
-    data: { attributes: { iceServers: [] } },
+    // `iceServers` arrives as a JSON *string*, not an array — the shape the
+    // parser actually has to cope with. An array fixture passes here only
+    // because this fork added an Array.isArray branch; upstream's parser
+    // JSON.parse()s it and throws.
+    data: { attributes: { iceServers: '[]' } },
     included: [
       { type: 'video/videoSources/proxyWebrtcConnectionInfo', attributes: { proxyStreamTimeoutTime: 180 } },
     ],
@@ -32,7 +36,7 @@ function noWebrtcResponse() {
 
 function usableResponse() {
   return {
-    data: { attributes: { iceServers: [] } },
+    data: { attributes: { iceServers: '[]' } },
     included: [
       {
         type: 'video/videoSources/endToEndWebrtcConnectionInfo',
