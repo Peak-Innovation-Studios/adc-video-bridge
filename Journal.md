@@ -128,6 +128,20 @@ and measuring it would have required a production config edit plus a Homebridge 
 interrupts unrelated accessories. Deliberately skipped: the direction of the result does not change
 the decision, only its margin.
 
+🔴 **The spike was easy partly BECAUSE it was not containerised — production adoption does not get
+that.** HomeKit pairing requires mDNS advertisement on the real LAN. A host process does that
+natively (it coexisted with Synology's Bonjour with no fiddling). **Docker's bridge network does
+not forward multicast**, so a containerised HKSV go2rtc needs `network_mode: host`, a `macvlan`
+network, or an mDNS reflector — and `network_mode: host` conflicts directly with the network
+isolation `SECURITY_AUDIT.md` documents (no port mapping, no `ADC_BRIDGE_BIND_ADDRESS`
+confinement). Note the scope precisely: host networking costs **only** the network-namespace
+control. Read-only rootfs, `cap_drop: ALL`, `no-new-privileges`, non-root, and digest pinning all
+survive it. So this is one specific trade, not abandoning the audit.
+⚠️ Compounding it: go2rtc is currently **fused into the bridge image** — the Dockerfile uses
+`alexxit/go2rtc` as its runtime base and `entrypoint.sh` starts go2rtc then Node. So a naive
+adoption would put the **ADC-credential-holding bridge** on host networking too. Splitting go2rtc
+into its own container is what scopes the compromise to the HomeKit-facing component alone.
+
 **Revised position:** the benefit is now **established rather than speculative**, but the *costs*
 are unchanged — [go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130) is still unmerged and
 unreleased, so adopting it in production means self-building from a branch and giving up the

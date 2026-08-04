@@ -139,7 +139,15 @@ baton, the baton wins.
   in-process. ⚠️ Do **not** repeat the earlier argument that `vcodec: "copy"` makes this
   pointless — `vcodec` governs *live view*, not HKSV recording. Costs unchanged
   ([go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130) unmerged/unreleased → self-build,
-  lose the by-digest pin), but the benefit is now established rather than speculative. Spike
-  method, gotchas, and what stayed unmeasured: `Journal.md` 2026-08-03.
+  lose the by-digest pin), but the benefit is now established rather than speculative.
+  🔴 **Adoption is not a swap — the spike ran on the HOST, not in Docker, which is why it was
+  easy.** HomeKit needs mDNS on the real LAN and Docker bridge networking does not forward
+  multicast, so a containerised HKSV go2rtc needs `network_mode: host`, `macvlan`, or an mDNS
+  reflector. Host networking costs **only** the network-namespace control — read-only rootfs,
+  `cap_drop: ALL`, `no-new-privileges`, non-root and digest pinning all survive it. But go2rtc is
+  currently **fused into the bridge image** (`alexxit/go2rtc` is the runtime base and
+  `entrypoint.sh` starts it), so adopting naively would put the ADC-credential-holding bridge on
+  host networking too. **Split go2rtc into its own container first.**
+  Spike method, gotchas, and what stayed unmeasured: `Journal.md` 2026-08-03.
   🧹 Spike fully torn down; production untouched. Delete any leftover **"HKSV Spike"** accessory
   from the Home app.
