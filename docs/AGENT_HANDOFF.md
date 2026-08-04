@@ -94,9 +94,10 @@ baton, the baton wins.
    token.** ADC's WebSocket token is ~600 chars of *already*-URL-encoded querystring (`%XX`, `&`,
    `=`); `connect()` passed it through `URLSearchParams.set()`, re-encoding every `%` to `%25`, so
    Alarm.com rejected the handshake. Fixed by assigning `wsUrl.search` directly. Verified against
-   the live endpoint: connected, received events, **0 errors** where previously every attempt
-   failed. 🔴 **Requires a container rebuild to take effect** — `src/` changed:
-   `docker-compose up -d --build adc-video-bridge`.
+   the live endpoint, then **DEPLOYED AND VERIFIED IN THE CONTAINER 2026-08-03**: `401` count
+   **0** (was ~60/hour), `WebSocket connected to wss://webskt.alarm.com:8443`, no reconnect storm,
+   full video pipeline healthy alongside it. Motion events not yet observed only because nothing
+   has moved in front of the camera.
    ⚠️ The existing tests could not catch this: the fixture token was `ws-token-123`, which is
    URL-safe, so re-encoding it is a no-op. **Test fixtures that are "clean" hide encoding bugs.**
 5. **(Agent-doable — matters most if HKSV is enabled)** **Make-before-break on token refresh.**
