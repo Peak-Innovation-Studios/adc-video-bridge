@@ -94,6 +94,22 @@ describe('AlarmEventListener reconnection', () => {
     expect(getInstances()[0].url).toBe('wss://events.alarm.com/?auth=ws-token-123');
   });
 
+  it('sends a querystring-shaped token verbatim, without re-encoding it', async () => {
+    // Real Alarm.com WebSocket tokens are not opaque blobs: they are ~600 chars
+    // of already-URL-encoded querystring, containing %XX escapes, & separators
+    // and = assignments. Encoding them a second time turns every % into %25 and
+    // every & into %26, and the server rejects the handshake with HTTP 401.
+    const encodedToken = 'ln%3Dus%40example.net&sig=Zm9v%2Fbar%3D&t=1234';
+    auth.get.mockResolvedValue({
+      value: encodedToken,
+      metaData: { endpoint: 'wss://events.alarm.com' },
+    });
+
+    await listener.start();
+
+    expect(getInstances()[0].url).toBe(`wss://events.alarm.com/?auth=${encodedToken}`);
+  });
+
   it('reconnects immediately on code 1008 (token expired)', async () => {
     await listener.start();
     const ws1 = openLatestWs();

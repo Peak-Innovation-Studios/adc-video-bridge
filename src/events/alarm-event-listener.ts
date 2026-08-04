@@ -87,7 +87,11 @@ export class AlarmEventListener extends EventEmitter {
       if (wsUrl.protocol !== 'wss:') {
         throw new Error('Alarm.com event endpoint must use an encrypted WSS connection');
       }
-      wsUrl.searchParams.set('auth', token);
+      // Assign the raw query rather than using searchParams.set(). The token is
+      // already a URL-encoded querystring (~600 chars of %XX escapes, & and =),
+      // so encoding it a second time turns every % into %25 and Alarm.com
+      // rejects the handshake with HTTP 401.
+      wsUrl.search = `auth=${token}`;
       this.ws = new WebSocket(wsUrl.toString(), {
         handshakeTimeout: 30_000,
         maxPayload: 1024 * 1024,
