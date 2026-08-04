@@ -8,6 +8,80 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-04 — The ADC API circuit breaker, and four things the tests found
+
+**Claude Code (Opus 5).**
+
+Built the breaker deferred from 2026-08-03 (upstream `Omar-L#9`). The decisions recorded at the end
+of that entry all survived contact with the code — scope all three loops, pause with an escalating
+probe, self-heal, and key the failure on *"produced no usable result"* rather than *"threw"*. What
+follows is only what was **learned by building it**; the rationale is in the previous entry and is
+not repeated.
+
+### The shape that fell out: a passive gate, not a scheduler
+
+`utils/circuit-breaker.ts` owns **no timers**. Each loop already had its own `setTimeout` /
+`setInterval` and cleared them in `stop()`; a breaker with its own timer would have added a fourth
+thing to clear and a fourth way to leak one. Instead each loop asks `retryAfterMs()` when it
+schedules its next attempt, and the clock is injectable so the state machine is testable without
+fake timers at all.
+
+One non-obvious consequence: `tryAttempt()` **consumes** the probe slot rather than merely
+answering a question. Two callers can reach the same breaker at the same instant — the 600 s
+refresh timer and the stream retry ladder both call `fetchVideoTokenSilent` for the same camera —
+and a pure `shouldAttempt()` query would have let both through on one due probe.
+
+### Four things found while writing the tests
+
+1. 🔑 **Threshold = ladder length makes the ladder's last rung dead code.** With
+   `STREAM_FAILURE_THRESHOLD = BACKOFF_STEPS_MS.length`, the failure that would have used the
+   600 s rung is the same failure that opens the circuit, so the 10-minute cap is never the delay
+   actually used. Fixed by `length + 1`; the ladder now saturates once before the circuit opens
+   (~18 min). The existing "caps delay at 10 minutes" regression test is what surfaced it, by
+   failing for a reason that was not the reason it was written for.
+
+2. **The event listener's threshold lands exactly where a test asserted the old cap.** Five
+   consecutive failures is the 5s/10s/30s/60s ladder plus one, so the assertion "failure 5 → still
+   60s (capped)" became false the moment the breaker went in. That test was **rewritten, not
+   deleted** — it now asserts the circuit opens there. Worth flagging in review: this is the one
+   place where the change is visible as a *changed* expectation rather than a new one.
+
+3. ⚠️ **The camera-manager gate is narrower than it looks, and that is fine.** `activeStarts`
+   already suppresses concurrent starts, and the retry timer fires at precisely the moment the next
+   probe becomes due — so the gate almost never denies anything on the ladder path. Its real value
+   is elsewhere: it bounds **`handleUnexpectedExit`, which refetches immediately with no backoff of
+   any kind**, and it makes the independent 600 s refresh path respect the circuit. The test is
+   written against those two, because a test of the ladder path would have been asserting a
+   coincidence.
+
+4. **No deadlock, and it is worth knowing why.** The camera's recovery chain is *timer → fetch →
+   emit → start → new timer*, and a suppressed fetch emits nothing, so the chain dies. What saves it
+   is that `TokenManager`'s 600 s `setInterval` is unconditional and never stops ticking — it is the
+   backstop, and the first probe that succeeds re-emits and restarts everything. Any future change
+   that makes that interval conditional on circuit state would turn an open token circuit into a
+   permanent one.
+
+### Also worth carrying forward
+
+- **`camera-stream`'s dial-in loop shares the token breaker** and can call it up to 12 times in a
+  single start attempt, so the token circuit can open in ~40 s rather than over three 600 s polls.
+  Intended — they are the same API call — but it means the threshold is not simply "three polls".
+  A suppressed refetch returns `null` and the dial-in loop reuses its existing config, which it
+  already handled (`if (fresh) currentConfig = fresh`).
+- **A socket that opened and later dropped is not a circuit failure.** Only one that never reached
+  `open` is. So a flapping event stream does not pause a loop that Alarm.com is plainly answering —
+  flapping is a different fault from an outage, and conflating them would pause the wrong thing.
+- **Thresholds and cooldowns are deliberately not configurable.** They are module constants, exported
+  for tests. Adding config surface means validation, docs, and more for a reviewer to argue with;
+  nothing yet suggests a deployment needs different numbers.
+- `npm test` is now **11 files / 145 tests** (was 9 / 117). Build and `audit:prod` clean.
+
+🔴 **Committed, not deployed.** Kaikoura still runs the previous image; `src/` changed, so it needs
+`docker-compose up -d --build` and David's password. The breaker has never executed against the live
+API — every claim above is from tests.
+
+---
+
 ## 2026-08-03 — A "no video" outage that was poor WiFi, plus measured performance findings
 
 **Claude Code (Opus 5), taking over from Codex.**

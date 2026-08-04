@@ -10,10 +10,10 @@ baton, the baton wins.
 
 ## Current handoff
 
-- **Last agent:** Claude Code (Opus 5), taking over from Codex
-- **Updated:** 2026-08-03 — resolved a live "no video" outage (poor camera WiFi, **not our code**),
-  measured the pipeline, fixed the event-WebSocket 401s, spiked native HKSV, and split the hardening
-  commit into upstream PRs. Narrative: `Journal.md`, entry 2026-08-03.
+- **Last agent:** Claude Code (Opus 5)
+- **Updated:** 2026-08-04 — built the ADC API circuit breaker across all three retry loops
+  (was item 2). Narrative: `Journal.md`, entry 2026-08-04; the outage and upstream-PR context is
+  the 2026-08-03 entry.
 - **Branch / HEAD:** Run `git fetch && git status -sb && git log --oneline -1`. `main` is the branch
   to deploy from. **Pushing here does NOT deploy** — Kaikoura is updated by hand, and `src/` changes
   need `docker-compose up -d --build`.
@@ -21,11 +21,15 @@ baton, the baton wins.
   `tsconfig.json`, `src/` and `entrypoint.sh`, so
   `git diff --name-only <deployed-commit>..main -- <those paths>` empty ⇒ the image is current.
 - **Working tree:** Run `git status --short`. No agent has uncommitted work.
-- **Validation (this session, on `main`):** `npm run build` clean, `npm test` **9 files / 117 tests**,
+- **Validation (this session, on `main`):** `npm run build` clean, `npm test` **11 files / 145 tests**,
   `npm run audit:prod` passed with the documented GHSA-2p57-rm9w-gvfp exception.
-- **Kaikoura — live, streaming, and current.** On `main`, rebuilt with the 401 fix. Verified: go2rtc
-  serves 84–127 KB JPEGs with distinct md5s, a real `rtsp+tcp` publisher, and **0** WebSocket 401s
-  (was ~60/hour). Motion, doorbell, audio and HKSV remain disabled.
+- **🔴 Kaikoura is live and streaming, but is NOT running the circuit breaker.** It runs the
+  previous image. The breaker touched `src/`, so deploying it needs
+  `docker-compose up -d --build` and **David's sudo password**. Nothing about it has executed
+  against the live API — its behaviour is asserted by tests only.
+  Otherwise unchanged and healthy: go2rtc serves 84–127 KB JPEGs with distinct md5s, a real
+  `rtsp+tcp` publisher, and **0** WebSocket 401s (was ~60/hour). Motion, doorbell, audio and HKSV
+  remain disabled.
 - **Sudo-free diagnosis on Kaikoura:** `node dist/probe.js <cameraId>` and `node dist/discover.js`
   work from the checkout after `set -a; . ./.env; set +a`. Use these instead of `docker exec`, which
   needs David's password. `node_modules`/`dist` there are gitignored.
@@ -58,40 +62,41 @@ baton, the baton wins.
   slices in our tree produced a phantom failure and a wrong claim that had to be amended out of a
   PR message.
 - **Whose turn:** **David** — the camera's WiFi (item 1) is the only thing no code can fix, and it
-  gates everything else. Agent work is queued and unblocked: the circuit breaker (item 2).
+  gates everything else. Secondary David item: deploying the breaker needs a sudo rebuild (item 2).
 
 ### What's left (priority order)
 
-1. 🔴 **(David — physical, gates everything)** **The camera's WiFi signal is poor.** It caused this
-   session's outage and will again; a power-cycle clears the symptom, not the cause. Wired Ethernet
+1. 🔴 **(David — physical, gates everything)** **The camera's WiFi signal is poor.** It caused the
+   2026-08-03 outage and will again; a power-cycle clears the symptom, not the cause. Wired Ethernet
    if the camera supports it, else relocate it or add an AP. Matters more here than for normal use:
    Alarm.com designs for *on-demand* viewing, this bridge holds a **perpetual** session.
-2. **(Agent — designed, not started)** **ADC API circuit breaker**, upstream
-   [Omar-L#9](https://github.com/Omar-L/adc-video-bridge/issues/9). Backoff exists; nothing ever
-   gives up. Measured during the outage: ~60 failures/hour from the event socket, ~6/hour from the
-   token poller. 📖 **Design decisions are already made — read `Journal.md` before re-litigating.**
-   Scope = all three loops; open = pause + escalating cooldown, self-healing; and critically the
-   failure predicate is *"produced no usable result"*, **not** *"threw"* — a breaker counting
-   exceptions would not have tripped once during this outage.
-3. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
+2. **(David — sudo)** **Deploy the circuit breaker** — `docker-compose up -d --build` on Kaikoura.
+   It is committed on `main` but the running image predates it. ⚠️ Sensible to do *after* item 1, so
+   the first live exercise of the breaker is not during a known-bad WiFi window.
+3. *(Agent, when David is ready)* **Upstream the breaker to
+   [Omar-L#9](https://github.com/Omar-L/adc-video-bridge/issues/9)** as an eighth PR off
+   `upstream/main`. It is written to be portable — no internal docs, no config surface. 🔴 Verify it
+   against **upstream's** lockfile per the rule below, and expect a conflict with `#23`/`#24`/`#28`
+   in `camera-manager.ts`/`alarm-event-listener.ts` depending on merge order.
+4. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
    ⚠️ `chmod` alone will not hold: it is the **volume's default ACL**, and the Homebridge UI rewrites
    the file on every settings change. Durable fix is at the shared-folder/ACL level.
-4. **(David, then agent)** **HKSV is now unblocked** — the event stream delivers for the first time.
+5. **(David, then agent)** **HKSV is now unblocked** — the event stream delivers for the first time.
    Needs `videoConfig.recording: true` + `prebuffer` + `motion` + `porthttp` in Homebridge, the
    bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
    Home app. ⚠️ Not before item 1.
-5. **(Agent — matters most once HKSV is on)** **Make-before-break on token refresh.** Measured
+6. **(Agent — matters most once HKSV is on)** **Make-before-break on token refresh.** Measured
    **~1.2s media gap every 600s**: `reconnect()` closes the old PeerConnection before building the
    new one. The RTSP publisher never drops (ffmpeg spawns once in 30 min), so live view is fine and
    recording is not. Filed upstream as
    [#25](https://github.com/Omar-L/adc-video-bridge/issues/25).
-6. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
+7. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
    `config/config.yaml`. Note `src/discover.ts` already generates both blocks; the job is
    reconciling at startup, not deriving names.
-7. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
+8. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
    subscribed. ⚠️ A camera demoted to Proxy has **no audio at all**, so this only means anything on
    a Direct connection.
-8. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
+9. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
    has no printf width specifiers. Cosmetic; the generated YAML is fine.
 
 ### Do not touch / gotchas
@@ -99,7 +104,7 @@ baton, the baton wins.
 - Never commit `.env`, `secrets/`, real camera configuration, logs, tokens, camera IDs/names, or
   captured frames. **This applies to this file too.**
 - 🧭 **"No video" — diagnose in THIS order. Cheapest and most decisive first.** A full session was
-  spent today reaching a confident, well-evidenced, *wrong* conclusion by starting at step 3:
+  spent on 2026-08-03 reaching a confident, well-evidenced, *wrong* conclusion by starting at step 3:
   1. **Can Alarm.com's own web player AND phone app stream the camera?** If neither can, stop —
      it is not our code. **If they disagree with each other, suspect the network path**, because
      two first-party clients differing cannot be explained by any server-side or protocol theory.
@@ -115,6 +120,17 @@ baton, the baton wins.
   callback cleared the *replacement* child's reference. Two halves must both survive any
   refactor — `stop()` detaches ownership *before* `SIGTERM`, and the `exit` handler ignores the
   event unless the exiting child is still the owned child. Two regression tests cover it.
+- 🔑 **Do not "simplify" the circuit breaker to count exceptions.** Its failure predicate is
+  *"produced no usable result"* — `token-manager.ts` records a failure on the branch where
+  Alarm.com returns HTTP 200 with no WebRTC block, which does **not** throw and does **not** emit
+  `error`. That branch is the entire point; a breaker keyed on `catch` sleeps through the outage it
+  was built for. Reasoning: `Journal.md` 2026-08-03 and 2026-08-04.
+- ⚠️ **Breaker thresholds are coupled to the ladders next to them, and one is deliberately off by
+  one.** `STREAM_FAILURE_THRESHOLD` is `BACKOFF_STEPS_MS.length + 1` so the ladder's 10-minute cap
+  is used once before the circuit opens; setting it equal to the length makes that rung dead code.
+  `TokenManager`'s 600 s `setInterval` must stay **unconditional** — it is the backstop that
+  restarts the camera recovery chain after a suppressed fetch, and gating it on circuit state would
+  make an open token circuit permanent.
 - The documented npm audit exception is limited to GHSA-2p57-rm9w-gvfp and is guarded by a check that werift does not call `ip.isPublic()`.
 - Homebridge 2 uses the maintained scoped camera package, not the stale unscoped npm package.
 - Use the normal Homebridge UI login to install the plugin. Do not mint or reuse internal UI tokens to bypass authentication.
