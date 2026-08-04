@@ -93,6 +93,29 @@ HomeKit accessory holding pairing keys — trades that guarantee away.
 HKSV already works through the current stack, so this is an optimization of a working path, not an
 enabler. **Decision: track it; revisit after it merges and ships in an official release.**
 
+### Upstream contribution — Omar asked, so we shipped what we had
+
+Omar (upstream maintainer) reached out asking how the fork was going, *"especially if you can make
+it run more stable."* The fork was **12 commits ahead, 0 behind** — a clean superset — and two of
+those commits were exactly that.
+
+Opened `Omar-L#23` (track subscription) and `Omar-L#24` (stale ffmpeg exit, stacked on #23).
+They had to stack: cherry-picking the ffmpeg fix alone onto `upstream/main` conflicts, because
+both edit the ffmpeg lifecycle and the track fix landed first.
+
+**Both bugs are the same shape**, which is worth carrying forward as a review lens: *a reference
+held without asking which instance it points to.* One is a placeholder track winning a one-shot
+guard the real track needed; the other is a dead process's callback mutating state belonging to
+its replacement. Object-lifecycle identity confusion, twice.
+
+Also filed `#25` (the ~1.2s media gap, with measurements) and commented on `#2` and `#9` rather
+than opening duplicates — `#2`'s "older camera models" framing needed the correction that any
+camera can be demoted into proxy, and `#9` needed the failure-rate data plus the null-vs-throw
+trap.
+
+Deliberately **not** upstreamed yet: the hardening commit (`395d888`, 826/-420 across 30 files)
+needs splitting into reviewable pieces first. Everything else portable is small and can follow.
+
 ### Deferred to a future session
 
 The **ADC API circuit breaker** (upstream `Omar-L#9`) was scoped but deliberately not started.

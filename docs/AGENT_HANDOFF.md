@@ -31,6 +31,24 @@ baton, the baton wins.
   approval): `npm ci && npm run build` has been run in the checkout, so `node dist/probe.js
   <cameraId>` and `node dist/discover.js` work **without sudo** after sourcing `.env`. Both are
   gitignored. Use this for diagnosis instead of `docker exec`, which needs a password.
+- **⬆️ Upstream contributions are OPEN and awaiting Omar's review** (2026-08-03, at his request —
+  he asked for help making the fork more stable). Both branch off `upstream/main`, touch only
+  `src/camera/camera-stream.ts` + tests, and contain **no** internal docs:
+  - [Omar-L#23](https://github.com/Omar-L/adc-video-bridge/pull/23) — subscribe to the registered
+    WebRTC track, not the placeholder. Branch `upstream-fix/webrtc-track-subscription`.
+  - [Omar-L#24](https://github.com/Omar-L/adc-video-bridge/pull/24) — ignore stale ffmpeg exits.
+    Branch `upstream-fix/stale-ffmpeg-exit`, **stacked on #23** (they conflict standalone; #23
+    landed first and both edit the ffmpeg lifecycle).
+  - Findings filed: new issue [#25](https://github.com/Omar-L/adc-video-bridge/issues/25) (the
+    ~1.2s media gap), plus comments on `#2` (proxy is a demotion fallback, not an "older models"
+    limit) and `#9` (circuit-breaker measurements + the null-vs-throw trap).
+  Both are `MERGEABLE`; `BLOCKED` just means awaiting review. CI has not run — GitHub holds
+  workflows on first-time external contributions until a maintainer approves them.
+  ⚠️ **Never let `docs/AGENT_HANDOFF.md`, `Journal.md`, `CLAUDE.md`, or `AGENTS.md` into an
+  upstream PR.** `8f88c26` and `baa7ab2` both touch the baton and must be stripped on cherry-pick.
+  Still un-upstreamed and portable: `3319d75` (CI pinning), `fd3b3dd`/`3ac3b0a` (secrets dir,
+  container UID/GID), `395d888` (hardening — 826/-420 across 30 files, needs splitting first),
+  `baa7ab2` (Synology guide).
 - **Whose turn:** **David** — decide what to build next (see "What's left"). Nothing is blocked
   and nothing is broken.
 
