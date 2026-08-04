@@ -51,7 +51,20 @@ baton, the baton wins.
   first-time external contributions until a maintainer approves.
   ⚠️ **Never let `docs/AGENT_HANDOFF.md`, `Journal.md`, `CLAUDE.md`, or `AGENTS.md` into an
   upstream PR** — `8f88c26` and `baa7ab2` touch the baton and need stripping on cherry-pick.
-  Still portable and un-upstreamed: `3319d75`, `fd3b3dd`, `3ac3b0a`, `baa7ab2`, and `395d888`
+  - [Omar-L#26](https://github.com/Omar-L/adc-video-bridge/pull/26) — CI hardening: pinned action
+    SHAs, `permissions: contents: read`, `timeout-minutes`. Branch `upstream-fix/pin-actions`.
+  - [Omar-L#27](https://github.com/Omar-L/adc-video-bridge/issues/27) — issue reporting **7
+    unaddressed production advisories on their `main`** (6 high), most already covered by their
+    open Dependabot PRs. Filed as an issue **deliberately, not a PR**: our `audit:prod` policy
+    fails on their tree today, so merging it would turn their CI red before those land. The branch
+    `upstream-fix/production-audit-policy` is **built and committed locally but NOT pushed** —
+    send it once their Dependabot PRs merge.
+  ⚠️ **`fd3b3dd` and `3ac3b0a` are NOT independently upstreamable**, despite being ~19 lines
+  between them. `fd3b3dd` adds a `secrets/` directory for `ADC_*_FILE` support **upstream does not
+  have**, and `3ac3b0a` aligns the container UID/GID with a non-root user and mode-600 configs
+  **upstream does not have**. Both are interface changes to a feature that lives in `395d888`;
+  they belong in the container-hardening PR. Diff size does not measure independence.
+  Still portable and un-upstreamed: `baa7ab2` (Synology guide) and `395d888`
   (hardening — 826/-420 across 30 files, split before offering).
   🔴 **`395d888` CARRIES A REGRESSION — do not upstream it as-is.** It introduced the event
   WebSocket double-encoding bug (item 4) while adding the `wss:` check and bounded handshake.
