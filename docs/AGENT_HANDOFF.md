@@ -16,9 +16,9 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-04 (later) — **merged `make-before-break` into `main`** (12 commits), closing
-  the ~1.2s media gap; then split this baton into the two files above. Narrative: `Journal.md`,
-  entry "2026-08-04 (later)".
+- **Updated:** 2026-08-04 (later still) — **merged native-HKSV Phase 0** (14 commits): go2rtc split
+  into its own container, bridge authenticated against it. Narrative: `Journal.md`, entry
+  "2026-08-04 (later still)". Earlier the same day: make-before-break merged, and this baton split.
 - **Branch / HEAD:** Run `git fetch && git status -sb && git log --oneline -1`. `main` is the branch
   to deploy from. **Pushing here does NOT deploy** — Kaikoura is updated by hand, and `src/` changes
   need `docker-compose up -d --build`.
@@ -35,7 +35,7 @@ baton, the baton wins.
   compare content rather than trusting `git apply --check --reverse`, which is context-tolerant:
   `diff <(git show stash@{0}:<path>) <(git show HEAD:<path>)`.
 - **Validation (as of the commit this baton describes — re-run before trusting it):**
-  `npm run build` clean, `npx vitest run` **12 files / 180 tests**, `npm run audit:prod` passed with
+  `npm run build` clean, `npx vitest run` **14 files / 213 tests**, `npm run audit:prod` passed with
   the documented GHSA-2p57-rm9w-gvfp exception.
   ✅ **Agent worktrees no longer double-count the suite.** They live under `.claude/worktrees/`
   *inside* the repo, so their copy of `src/` used to match vitest's include glob and every run
@@ -117,6 +117,28 @@ Second concurrent session refused|Overlap did not complete|died mid-overlap"
   change and a deploy — and the deploy was the one that got blamed. When two changes overlap, the
   first question is which one the evidence actually names; here the logs named neither until they
   were read, and they named the camera.
+- 🆕 **Native HKSV Phase 0 is MERGED but NOT DEPLOYED.** `main` now carries the two-container split
+  (`Dockerfile.go2rtc`, a two-service `docker-compose.yml`, an authenticated bridge). **The running
+  image does not have any of it** — Kaikoura is still the single fused container. HKSV itself is
+  **not enabled**: no `hksv:` block, no pairing. That is Phase 2.
+  🔴 **TWO RESIDUALS MUST LAND BEFORE PHASE 1 DEPLOY.** Both are one-line fixes, both parked because
+  the review workflow permits a single fix wave and it was spent:
+  1. **`ADC_BRIDGE_BIND_ADDRESS` is the last required variable still fail-open** —
+     `${VAR:-127.0.0.1}` at `docker-compose.yml`, while the docs now call it required. ⚠️ And
+     `local_auth: true` **removed the accident that used to catch it**: previously a missing bind
+     address failed the health gate loudly (200 ≠ 401); now the loopback probe returns 401, so
+     go2rtc reports **healthy while bound where nothing can reach it** and every stream fails
+     silently. Fix: `${ADC_BRIDGE_BIND_ADDRESS:?ADC_BRIDGE_BIND_ADDRESS must be the host's LAN address}`.
+  2. **A factually wrong claim in the security record.** `README.md` and `docs/SECURITY_AUDIT.md`
+     now say Basic auth covers every RTSP request "loopback included (`local_auth: true`)". False —
+     `local_auth` governs the **API module only**; go2rtc's `internal/rtsp/rtsp.go` skips auth for
+     loopback unconditionally and there is no `local_auth` under `rtsp:`. The **pre-branch** wording
+     was correct. Not exploitable as shipped (LAN-bound), but a wrong claim in a security document
+     is worse than none.
+  Also parked, non-blocking: CI's 20-minute timeout now also covers a Go-from-source build (it will
+  report itself on the first run); `SECURITY_AUDIT.md`'s "Last reviewed" date is stale; and an
+  absent `config/config.yaml` makes Docker create a *directory* at the single-file bind mount
+  (caught as a fatal `EISDIR`, so fail-fast but not self-explanatory).
 - **Whose turn:** **David — PHYSICAL.** The camera flaps offline in Alarm.com's own app; that is
   the root cause and no code can fix it. Chase link STABILITY, not signal strength. The bridge
   self-recovers each time the camera returns, so no restarts are needed while diagnosing.

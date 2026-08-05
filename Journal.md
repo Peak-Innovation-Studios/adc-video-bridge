@@ -8,6 +8,89 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-04 (later still) — Native HKSV Phase 0: splitting go2rtc out, and nine defects the reviews caught
+
+**Claude Code (Opus 5).** Merged as 14 commits. Phase 0 only — **nothing is deployed and HKSV is
+not enabled**. This makes the bridge able to talk to a go2rtc in a *different container*, which is
+the prerequisite the 2026-08-03 spike identified: HomeKit needs mDNS multicast, so go2rtc must run
+on `network_mode: host`, and the container holding the Alarm.com credentials must not follow it
+there.
+
+### The thing that made this expensive was invisible in the design
+
+The spec and the plan both said "split the containers." Neither noticed that **the split breaks
+authentication in three places at once**. `Go2rtcApi` sent no credentials; the RTSP push URL carried
+none; the compose healthcheck curled `127.0.0.1` unauthenticated. All three worked only because the
+two processes shared a container and **go2rtc exempts loopback from auth**. Move go2rtc one
+namespace away and every one of them 401s.
+
+That was found while *writing the plan*, not while designing — which is the argument for writing
+plans in enough detail to be wrong in.
+
+### Nine defects, and where they were caught
+
+| Caught by | Defect |
+|---|---|
+| Implementer | `golang:1.23-alpine` too old — `go.mod` at the pinned commit needs `go 1.24.0` |
+| Implementer | `./cmd/go2rtc` does not exist at that commit; `main.go` is at the module root |
+| Implementer | ffmpeg's **own stderr** prints the credentialed URL, logged as `{ffmpeg: line}` |
+| Task review | No `ffmpeg.on('error')` — an uncaught exception's `err.spawnargs` leaks the argv |
+| Task review | `GO2RTC_BIND` injected and consumed **nowhere** — bound all interfaces |
+| Final review | CI smoke-tested `command -v go2rtc` **inside the bridge image**, which no longer has it |
+| Final review | The deleted `entrypoint.sh` credential guards were never re-homed |
+| Final review | Healthcheck deadlocks on the shipped default (loopback returns 200, not 401) |
+| Re-review | The bridge's `apiUrl` pointed at its own container loopback post-split |
+
+Two were build failures that would only have surfaced on the NAS. Four were mine, in the plan.
+
+### 🔑 The worst one, and why it is worth writing down
+
+Task 4 deleted `entrypoint.sh`'s four `: "${GO2RTC_*:?}"` guards. My stated justification was that
+`loadConfig()` validates those credentials. **It does not** — `validateConfig()` checks `rtspPort`,
+`apiUrl`, log level, cameras and Homebridge, and nothing about go2rtc's credentials. And go2rtc
+installs its auth middleware only `if cfg.Mod.Username != ""`.
+
+So empty credentials would have produced an **unauthenticated go2rtc API, web UI, snapshot endpoint
+and RTSP** — LAN-bound, with compose `ports:` no longer confining anything because host networking
+ignores it. The single-container version refused to start in that state. Fixed with compose
+`${VAR:?...}`, which errors on empty as well as unset.
+
+**The general shape: deleting a guard is safe only if you verify the thing you claim replaced it
+actually does.** I asserted the replacement existed instead of grepping for it.
+
+### Three defects were the same defect
+
+`GO2RTC_BIND`, the bridge's `apiUrl`, and `.env.example`'s comment were all places where **the split
+changed what an address must be**, written when one container was the whole world. None lived in
+code — they were config, examples and comments, where no test and no type-checker reaches. A suite
+at 213 passing tests has exactly zero power over any of them.
+
+### What a specified-but-unowned constraint looks like
+
+The plan's Global Constraints said, prominently: *"`listen:` must be an explicit address, never
+`:1984`."* Every task passed its own review. No task implemented it. Per-task review asks "does this
+meet its brief?" and never "does some task own this constraint?" — so a headline requirement can be
+stated clearly, reviewed against, and land nowhere. The final review found a second instance
+(`.github/workflows/ci.yml`) by being told to hunt for one.
+
+### Method notes worth keeping
+
+- **Every new test was falsified by reverting its own fix.** That is what makes 194→213 mean
+  something; an untested redaction hook passes just as green as a working one.
+- The final reviewer verified three load-bearing claims **against the pinned go2rtc source** rather
+  than the fixer's summary: that `--version` exits before `initConfig`, that compose `:?` errors on
+  empty, and that `local_auth: true` makes the 401 hold on loopback. Two of my own assumptions were
+  wrong elsewhere in this session; that habit is why this one shipped.
+
+### ⚠️ Two residuals were parked, not fixed — see the baton
+
+The workflow allows one fix wave and it was spent. Both are one-line fixes and both should land
+before Phase 1: `ADC_BRIDGE_BIND_ADDRESS` is now the last required variable still fail-open, and a
+claim in `SECURITY_AUDIT.md`/`README.md` about RTSP loopback auth is **factually wrong** — the
+pre-branch wording was correct.
+
+---
+
 ## 2026-08-04 (later) — Make-before-break, and a parked "one-line fix" that wasn't
 
 **Claude Code (Opus 5).** Merged to `main` as a 12-commit branch. Closes the ~1.2s media gap
