@@ -25,9 +25,15 @@ baton, the baton wins.
   💡 "Do I need a rebuild?" is answerable from git alone: the Dockerfile copies only `package*.json`,
   `tsconfig.json`, `src/` and `entrypoint.sh`, so
   `git diff --name-only <deployed-commit>..main -- <those paths>` empty ⇒ the image is current.
-- **Working tree:** Run `git status --short`. No agent has uncommitted work. The
-  `make-before-break` worktree and branch are **merged and deleted** — `git worktree list` should
-  show only the main checkout.
+- **Working tree:** Run `git status --short` **and `git stash list`**. Both are empty as of this
+  handoff, and the `make-before-break` worktree and branch are **merged and deleted** —
+  `git worktree list` should show only the main checkout.
+  ⚠️ **Check the stash every session; a clean `git status` actively hides it.** A stash from
+  2026-08-03 (`upstream-fix/log-redaction`, `src/utils/logger.ts`) survived two days and a branch
+  merge unnoticed for exactly that reason. It was verified **byte-identical** to `HEAD` and dropped
+  2026-08-04 (`ebe41f5`, recoverable from the reflog for ~90 days). 🔑 Before dropping any stash,
+  compare content rather than trusting `git apply --check --reverse`, which is context-tolerant:
+  `diff <(git show stash@{0}:<path>) <(git show HEAD:<path>)`.
 - **Validation (as of the commit this baton describes — re-run before trusting it):**
   `npm run build` clean, `npx vitest run` **12 files / 180 tests**, `npm run audit:prod` passed with
   the documented GHSA-2p57-rm9w-gvfp exception.
