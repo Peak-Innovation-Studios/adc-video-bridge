@@ -42,6 +42,21 @@ rebuild was blamed first and was innocent. If an SSID, band, AP or passphrase ch
 must be **re-provisioned onto the new network**; many of these cameras are 2.4 GHz-only and will
 silently fail to join a 5 GHz or band-steered SSID.
 
+### 🔴 "It works in the Brinks/Alarm.com app" does NOT mean the camera is dialed in for US
+
+Measured 2026-08-04: the app streamed the camera fine while the bridge — restarted fresh, new token,
+no backoff — was still refused with `"has not yet dialed in"` on every attempt.
+
+The two are not the same request. The app is an **on-demand** client: it asks, the camera wakes for
+that request, it streams, everything sleeps again. It can also fall back to Alarm.com's **proxy**
+path, which does not need the camera to hold a direct registration at all. This bridge is a
+**perpetual** client and needs the camera dialed in *continuously*, including when nobody is
+watching — a property the app never exercises and therefore never demonstrates.
+
+So the app is still the right **step 1** (it separates "camera totally dead" from "something else"),
+but a passing app check does **not** clear the camera. Only the bridge reaching `sessionStarted`
+does.
+
 ### 🔴 `probe.js` returning a Direct config does NOT prove the camera is online
 
 This one cost a wrong conclusion on 2026-08-04. `probe.js` can log in, enumerate the camera's video
