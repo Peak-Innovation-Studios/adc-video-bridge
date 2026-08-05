@@ -42,12 +42,30 @@ baton, the baton wins.
   counted twice (12/180 → 24/360). `vitest.config.ts` now excludes `**/.claude/**`. ⚠️ If you ever
   edit that `exclude`, **spread `defaultExclude`** — setting it replaces the defaults, and in
   vitest 4 those are only `node_modules` and `.git`.
-- 🔴 **Kaikoura does NOT have make-before-break yet.** 🔑 **The running image was built from
-  `2e98710`** — the fact git cannot tell you, and the one the rebuild test needs. The deployment
-  checkout at `/volume1/docker/adc-video-bridge` is clean and sits at that same commit. `src/`
-  has changed since, so a `docker-compose up -d --build` is genuinely required.
-  ✅ **No longer gated** — the link that would have confounded the result was improved 2026-08-04.
-  This is now the critical path (item 2).
+- 🔴🔴 **PRODUCTION IS NOT STREAMING RIGHT NOW.** David rebuilt Kaikoura onto make-before-break
+  2026-08-04 (**image now built from `34f1338`**; checkout clean at that commit). Since the rebuild,
+  **no video**. Rollback target is the previous image, `2e98710`.
+  **Measured sudo-free, post-rebuild:**
+  | Signal | Value | Reading |
+  |---|---|---|
+  | `frame.jpeg` | **0 bytes** | was 84–127 KB before |
+  | go2rtc `bytes_recv` | **0**, flat over 60 s+ | no media reaching go2rtc |
+  | go2rtc producers / receivers | 1 / **0** | publisher entry, no RTP |
+  | `ffmpeg` on host | **absent** for 45 s straight | not running, and not restart-looping |
+  | ports 8554 / 1984 | accepting | go2rtc itself is up |
+  | unauthenticated `frame.jpeg` | **401** | auth still enforced |
+  **The Alarm.com side looks healthy:** `probe.js` logs in, enumerates the camera (HD 1920x1080 /
+  SD 640x360), `errorEnum: 0`, and **`endToEndWebrtcConnectionInfo` is present and NOT null** — so
+  Direct is being offered, not demoted to Proxy.
+  ⚠️ **Do not read the Janus fields as demotion.** `janusGatewayUrl`, `proxyUrl` and
+  `proxyStreamTimeoutTime: 180` are in the payload **always**, as fallback config. Demotion is
+  specifically `endToEndWebrtcConnectionInfo: null` — see [`INVARIANTS.md`](INVARIANTS.md). This
+  session briefly mis-read exactly that and had to correct it.
+  🔎 **Not yet distinguished, and it is the whole question:** a regression in the just-deployed
+  refactor, versus the camera itself being unreachable. Both produce this signature. Cheapest
+  discriminator is **step 1 of the `INVARIANTS.md` "no video" order** — can Alarm.com's own web
+  player and phone app stream it? That needs David; it is 30 seconds and it decides which half to
+  investigate. Only after that do container logs (sudo) mean anything.
 - 🔴 **An agent CANNOT do the rebuild — do not plan around it.** `sudo` on Kaikoura requires David's
   password (verified 2026-08-04: `sudo -n` fails, and `docker` needs privileges), and every compose
   command in [`SYNOLOGY.md`](SYNOLOGY.md) is sudo-prefixed. SSH itself works fine as `dpeak`, so
@@ -55,12 +73,13 @@ baton, the baton wins.
   ⚠️ Do not run the `git pull` half on its own to "get ahead": pulling source does not replace the
   running image, and it desyncs the checkout from the image, which silently invalidates the rebuild
   test above. Run the documented sequence intact, or not at all.
-- **What Kaikoura IS running is live, streaming and healthy** — verified sudo-free (go2rtc answers
-  `401` on its bound address; distinct-md5 JPEGs; a real `rtsp+tcp` publisher; **0** WebSocket 401s,
-  was ~60/hour). Motion, doorbell, audio and HKSV remain disabled.
-  ⚠️ **Still unverified: whether the breaker has actually opened or probed in anger.** Needs
-  `docker-compose logs` (sudo) — grep `Circuit OPEN`, `probing`, `Circuit closed`. Until the
-  camera's WiFi is fixed, expect it to open.
+- 📋 **BASELINE — what "healthy" looked like on the OLD image (`2e98710`), for comparison.** This is
+  history now, not current state: go2rtc answered `401` unauthenticated, served **84–127 KB**
+  distinct-md5 JPEGs, had a real `rtsp+tcp` publisher, and **0** WebSocket 401s (was ~60/hour).
+  Use it as the bar the rollback or the fix must clear. Motion, doorbell, audio and HKSV are
+  disabled in both images.
+  ⚠️ **Never confirmed even on that image: whether the breaker actually opened or probed in anger.**
+  Needs `docker-compose logs` (sudo) — grep `Circuit OPEN`, `probing`, `Circuit closed`.
 - **Sudo-free diagnosis on Kaikoura:** `node dist/probe.js <cameraId>` and `node dist/discover.js`
   work from the checkout after `set -a; . ./.env; set +a`. Use these instead of `docker exec`, which
   needs David's password. `node_modules`/`dist` there are gitignored.
@@ -72,10 +91,10 @@ baton, the baton wins.
   link far harder than Alarm.com's own on-demand clients do. Confirm before trusting it: re-probe
   (`node dist/probe.js <cameraId>`), and check whether the breaker still opens
   (`docker-compose logs`, sudo — grep `Circuit OPEN`).
-- **Whose turn:** **David** — item 2 (the rebuild) is a hand deploy over SSH and needs his password.
-  Once Kaikoura is on the new image, **agent work is unblocked for the first time in two sessions**:
-  the `-reorder_queue_size 0` A/B (item 4) and the HKSV follow-through (item 3) both become
-  measurable rather than confounded by the link.
+- **Whose turn:** **David** — **production is not streaming (item 2), and nothing else matters until
+  it is.** Two things only he can do: the 30-second Alarm.com app/web check, which decides whether
+  our code is even a suspect, and the container logs, which need his password. Everything below
+  item 2 is parked, including the agent work the WiFi fix had just unblocked.
 
 ### What's left (priority order)
 
@@ -85,14 +104,22 @@ baton, the baton wins.
    it far harder than Alarm.com's own on-demand clients. If the outage recurs, the cause was not
    fully addressed: a power-cycle clears the symptom, not the cause, and the durable fixes are wired
    Ethernet, relocation, or an added AP.
-2. 🔴 **(David — deploy, now the critical path)** **Rebuild Kaikoura to pick up make-before-break.**
-   `docker-compose up -d --build`, since `src/` changed. Then confirm the gap is gone — the old
-   signature is a ~1.2s media stall every 600s at token refresh.
-   💡 Grep the logs for `Second concurrent session refused by Alarm.com` — that line is how
-   production tells us whether ADC permits two sessions per camera at all, which is the assumption
-   the whole overlap rests on. 💡 Now that the link is better, a *failed* overlap is much more
-   likely to be a real Alarm.com refusal than a WiFi artefact — so this reading finally means
-   something.
+2. 🔴🔴 **(David, then agent — PRODUCTION IS DOWN, everything else waits)** The rebuild landed and
+   **video stopped.** Evidence table is in the handoff block above. In order, cheapest first:
+   1. **(David, 30 s)** Can Alarm.com's **own web player and phone app** stream the camera? This
+      decides whether to investigate our code at all. If neither can, it is not our code; if they
+      disagree with each other, suspect the network path.
+   2. **(David, sudo)** `sudo /var/packages/ContainerManager/target/usr/bin/docker-compose logs
+      --tail=300 adc-video-bridge` — grep `Circuit OPEN`, `sessionStarted`, `onTrackReady`,
+      `Second concurrent session refused by Alarm.com`, and any ffmpeg exit line. Agents cannot
+      read these.
+   3. **Rollback is cheap and reversible** if the logs implicate the new code:
+      `git checkout 2e98710 && sudo .../docker-compose up -d --build adc-video-bridge`.
+      ⚠️ Rolling back loses the ~1.2s-gap fix but restores video; do it if diagnosis will not be
+      quick. `main` is unaffected either way — the rollback is a checkout on the NAS, not a revert.
+   💡 Once video is back: `Second concurrent session refused by Alarm.com` is still the line worth
+   grepping — it is how production tells us whether ADC permits two sessions per camera at all,
+   which is the assumption the whole overlap rests on.
 3. **(David, then agent)** **HKSV is unblocked** — the event stream delivers for the first time.
    Needs `videoConfig.recording: true` + `prebuffer` + `motion` + `porthttp` in Homebridge, the
    bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
