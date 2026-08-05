@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createSocket, type Socket } from 'node:dgram';
-import { createChildLogger } from '../utils/logger.js';
+import { createChildLogger, scrubRtspCredentials } from '../utils/logger.js';
 import { sleep } from '../utils/retry.js';
 import { PeerSession, type PeerSessionCallbacks } from './peer-session.js';
 import type { EndToEndWebrtcConfig } from '../types.js';
@@ -438,8 +438,14 @@ export class CameraStream {
     ffmpeg.stdin?.end();
 
     ffmpeg.stderr?.on('data', (data: Buffer) => {
-      const line = data.toString().trim();
-      if (!line) return;
+      const rawLine = data.toString().trim();
+      if (!rawLine) return;
+      // ffmpeg's own startup dump (`Output #0, rtsp, to 'rtsp://user:pass@...'`)
+      // echoes the credentialed push URL verbatim at -loglevel info. It lands
+      // here as an object value, not a message string, so neither the pino
+      // logMethod hook nor the `rtspUrl`/`rtspBaseUrl` redact.paths entries
+      // see it — scrub it explicitly.
+      const line = scrubRtspCredentials(rawLine);
       // ffmpeg progress lines are noisy once streaming is established
       const isProgress = line.startsWith('frame=') || line.startsWith('size=');
       if (isProgress) {

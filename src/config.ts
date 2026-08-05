@@ -192,5 +192,11 @@ export function loadConfig(): AppConfig {
  */
 export function go2rtcRtspBaseUrl(config: AppConfig): string {
   const host = new URL(config.go2rtc.apiUrl).hostname;
-  return `rtsp://${host}:${config.go2rtc.rtspPort}`;
+  const { rtspUsername, rtspPassword } = config.go2rtc;
+  // encodeURIComponent so a password containing / : @ cannot break the URL.
+  const auth =
+    rtspUsername && rtspPassword
+      ? `${encodeURIComponent(rtspUsername)}:${encodeURIComponent(rtspPassword)}@`
+      : '';
+  return `rtsp://${auth}${host}:${config.go2rtc.rtspPort}`;
 }

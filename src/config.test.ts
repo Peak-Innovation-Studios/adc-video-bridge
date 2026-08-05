@@ -222,4 +222,16 @@ homebridge:
     expect(config.go2rtc.apiUrl).toBe('http://127.0.0.1:1984');
     expect(go2rtcRtspBaseUrl(config)).toBe('rtsp://127.0.0.1:8554');
   });
+
+  it('embeds RTSP credentials in the base URL when configured', () => {
+    existsSync.mockReturnValue(false);
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+    process.env.GO2RTC_RTSP_USERNAME = 'rtspuser';
+    process.env.GO2RTC_RTSP_PASSWORD = 'rtsp pass/word';
+
+    const config = loadConfig();
+
+    expect(go2rtcRtspBaseUrl(config)).toBe('rtsp://rtspuser:rtsp%20pass%2Fword@127.0.0.1:8554');
+  });
 });
