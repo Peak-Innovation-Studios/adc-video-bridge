@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createSocket, type Socket } from 'node:dgram';
-import { createChildLogger } from '../utils/logger.js';
+import { createChildLogger, scrubRtspCredentials } from '../utils/logger.js';
 import { sleep } from '../utils/retry.js';
 import { PeerSession, type PeerSessionCallbacks } from './peer-session.js';
 import type { EndToEndWebrtcConfig } from '../types.js';
@@ -438,8 +438,14 @@ export class CameraStream {
     ffmpeg.stdin?.end();
 
     ffmpeg.stderr?.on('data', (data: Buffer) => {
-      const line = data.toString().trim();
-      if (!line) return;
+      const rawLine = data.toString().trim();
+      if (!rawLine) return;
+      // ffmpeg's own startup dump (`Output #0, rtsp, to 'rtsp://user:pass@...'`)
+      // echoes the credentialed push URL verbatim at -loglevel info. It lands
+      // here as an object value, not a message string, so neither the pino
+      // logMethod hook nor the `rtspUrl`/`rtspBaseUrl` redact.paths entries
+      // see it — scrub it explicitly.
+      const line = scrubRtspCredentials(rawLine);
       // ffmpeg progress lines are noisy once streaming is established
       const isProgress = line.startsWith('frame=') || line.startsWith('size=');
       if (isProgress) {
@@ -464,6 +470,36 @@ export class CameraStream {
       if (this._state === 'streaming') {
         this._state = 'error';
         log.error({ camera: this.cameraName, code }, 'ffmpeg exited unexpectedly while streaming');
+        this.onUnexpectedExit?.();
+      }
+    });
+
+    // Without this listener, Node treats an unhandled child-process 'error'
+    // (spawn failed: binary missing, PATH problem, permission error, ...) as
+    // an uncaught exception and prints it straight to stderr — bypassing
+    // pino entirely, so none of redact.paths, the logMethod hook, or the
+    // stderr scrub above ever sees it. That default-handler dump includes
+    // `err.spawnargs`, the full argv, which now contains the credentialed
+    // rtspUrl. Log only a scrubbed err.message — never pass the raw Error
+    // to the logger: pino's default error serializer surfaces `err.spawnargs`
+    // itself if a raw Error is ever logged under an `err` key.
+    ffmpeg.on('error', (err) => {
+      // Same identity check as the exit handler above: a stale or superseded
+      // child's error must not clear the current child's reference or
+      // resurrect a stream that's already been torn down.
+      if (this.ffmpeg !== ffmpeg) {
+        log.debug({ camera: this.cameraName }, 'Ignoring stale ffmpeg error');
+        return;
+      }
+
+      log.error(
+        { camera: this.cameraName, message: scrubRtspCredentials(err.message) },
+        'ffmpeg failed to start',
+      );
+      this.ffmpeg = null;
+
+      if (this._state === 'streaming') {
+        this._state = 'error';
         this.onUnexpectedExit?.();
       }
     });

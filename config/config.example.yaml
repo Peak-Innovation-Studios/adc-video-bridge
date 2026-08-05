@@ -12,8 +12,14 @@ cameras:
   #   homebridgeName: "Backyard"
   #   quality: "hd"
 
+# go2rtc runs in its own container on network_mode: host; this bridge stays
+# on the default Docker network, so "localhost" here means the bridge's own
+# container, not the host go2rtc listens on. Use the host's real LAN
+# address instead - the same address set for ADC_BRIDGE_BIND_ADDRESS in
+# .env. That variable's 127.0.0.1 default will not work here either: a
+# bridge-network container cannot reach the host's loopback.
 go2rtc:
-  apiUrl: "http://localhost:1984"
+  apiUrl: "http://192.168.1.10:1984"
   rtspPort: 8554
 
 # Optional: send motion events to homebridge-camera-ffmpeg

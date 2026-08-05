@@ -39,7 +39,9 @@ cp config/go2rtc.example.yaml config/go2rtc.yaml
 chmod 600 .env config/config.yaml config/go2rtc.yaml
 ```
 
-Put the Alarm.com credentials and unique random go2rtc passwords in `.env`. Keep `.env` untracked. Set `ADC_BRIDGE_BIND_ADDRESS` to the bridge server's LAN address only when Homebridge runs outside this container.
+Put the Alarm.com credentials and unique random go2rtc passwords in `.env`. Keep `.env` untracked.
+
+`ADC_BRIDGE_BIND_ADDRESS` must be set to the host's real LAN address — the `127.0.0.1` default does not work with this deployment's container split. go2rtc runs on `network_mode: host` and binds to `${GO2RTC_BIND}` (fed from this variable); the bridge itself stays on the default Docker network, so its own `localhost` is a private per-container loopback that cannot reach the host's `127.0.0.1` either. Set this to the host's LAN address regardless of where Homebridge runs, and use that same address for `go2rtc.apiUrl` in `config.yaml` below.
 
 ### `config/config.yaml`
 
@@ -57,7 +59,7 @@ cameras:
     quality: "hd"
 
 go2rtc:
-  apiUrl: "http://localhost:1984"
+  apiUrl: "http://<server-ip>:1984"
   rtspPort: 8554
 
 # Optional: forward motion events to homebridge-camera-ffmpeg
@@ -71,6 +73,7 @@ logging:
 
 - `name` is the go2rtc stream identifier — keep it lowercase with no spaces.
 - `homebridgeName` must exactly match the camera name you set in homebridge-camera-ffmpeg.
+- `go2rtc.apiUrl` must be the host's LAN address — the same one set for `ADC_BRIDGE_BIND_ADDRESS` — not `localhost`. go2rtc runs in its own container on `network_mode: host`; this bridge container runs on the default Docker network and cannot reach go2rtc through its own loopback. The bridge also derives the RTSP push URL from this address, so both the API calls and the video stream break if it points at `localhost`.
 - `homebridge.motionUrl` is the base URL of the homebridge-camera-ffmpeg HTTP server. Leave the entire `homebridge` section out to disable motion webhooks.
 
 ### `config/go2rtc.yaml`
@@ -82,16 +85,24 @@ streams:
   driveway: ""
   backyard: ""
 
+# Under network_mode: host (see docker-compose.yml), `ports:` is ignored —
+# these `listen:` values are the ONLY thing keeping go2rtc off every
+# interface. A bare `:8554`/`:1984` binds ALL interfaces and fails silently.
+# ${GO2RTC_BIND} comes from ADC_BRIDGE_BIND_ADDRESS in .env, which must be
+# the host's real LAN address (see above) — the compose fallback of
+# 127.0.0.1 is unreachable from the bridge container.
 rtsp:
-  listen: ":8554"
+  listen: "${GO2RTC_BIND}:8554"
   username: "${GO2RTC_RTSP_USERNAME}"
   password: "${GO2RTC_RTSP_PASSWORD}"
 
 api:
-  listen: ":1984"
+  listen: "${GO2RTC_BIND}:1984"
   username: "${GO2RTC_API_USERNAME}"
   password: "${GO2RTC_API_PASSWORD}"
-  local_auth: false
+  # true, not false: nothing legitimate reaches go2rtc over loopback after
+  # the container split, and the compose healthcheck expects a 401.
+  local_auth: true
 
 webrtc:
   listen: ""
@@ -185,6 +196,7 @@ docker compose -f docker-compose.yml restart
 - **Motion not triggering in HomeKit**: Verify `homebridgeName` matches the camera name in homebridge-camera-ffmpeg exactly (case-sensitive). Check that the motion sensor is enabled in the plugin config and notifications are enabled in the Home app.
 - **"Camera not found" in motion webhook logs**: The `homebridgeName` doesn't match. The bridge calls `GET http://<motionUrl>/motion?<homebridgeName>` — the name must be an exact match.
 - **go2rtc web UI not loading**: Ensure port 1984 is bound to the intended address, permitted by the firewall, and opened with the configured API credentials.
+- **Bridge can't reach go2rtc / RTSP push never starts**: `config.yaml`'s `go2rtc.apiUrl` must be the host's LAN address, not `localhost` — the bridge and go2rtc run in separate containers on separate networks after the split. Set it (and `ADC_BRIDGE_BIND_ADDRESS` in `.env`) to the same real LAN address; the `127.0.0.1` default does not work for this topology.
 
 ## Local development
 

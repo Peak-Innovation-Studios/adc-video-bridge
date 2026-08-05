@@ -1,0 +1,33 @@
+# HKSV is not in an official go2rtc release yet (AlexxIT/go2rtc#2130 is open),
+# so go2rtc is built from the PR branch. The upstream digest pin is replaced by
+# pinning what is underneath: the toolchain by digest, the source by commit SHA.
+# 🔴 REVERT TRIGGER: when #2130 ships, delete this build stage and return to the
+# official digest-pinned alexxit/go2rtc image.
+#
+# Digests resolved via the Docker Hub registry API (no local Docker daemon
+# available in this environment):
+#   golang:1.24.13-alpine3.22 -> sha256:3641e0d9b931dc4f2f185dcd669c4679670e9277c8166a838ddb98a2d4389cb5
+#   alpine:3.22                -> sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+# Both are the multi-arch OCI image index digest (not a single-platform manifest),
+# matching what `FROM ...@sha256:` normally pins and what a non-amd64 NAS needs.
+#
+# go.mod at the pinned commit requires `go 1.24.0` — golang:1.23-alpine (as
+# originally sketched) is too old and would fail the build; 1.24.13-alpine3.22
+# is used instead, paired with the alpine:3.22 runtime base below.
+FROM golang:1.24.13-alpine3.22@sha256:3641e0d9b931dc4f2f185dcd669c4679670e9277c8166a838ddb98a2d4389cb5 AS build
+ARG GO2RTC_REF=506cfa7df508058b0d46a3457130a9cd3a647ae8
+RUN apk add --no-cache git && \
+    git clone https://github.com/skrashevich/go2rtc /src && \
+    git -C /src checkout "$GO2RTC_REF"
+# This fork's module root (main.go) is the build target, not ./cmd/go2rtc —
+# that path doesn't exist at this commit.
+RUN cd /src && CGO_ENABLED=0 GOOS=linux go build -trimpath -o /go2rtc .
+
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+# ffmpeg is for the snapshot provider (api/frame.jpeg), NOT for HKSV —
+# HKSV muxes fMP4 in-process with zero ffmpeg.
+RUN apk add --no-cache ffmpeg curl && \
+    addgroup -S app && adduser -S app -G app
+COPY --from=build /go2rtc /usr/local/bin/go2rtc
+USER app
+ENTRYPOINT ["go2rtc", "-config", "/app/config/go2rtc.yaml"]

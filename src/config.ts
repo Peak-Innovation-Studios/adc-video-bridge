@@ -28,6 +28,10 @@ export interface AppConfig {
   go2rtc: {
     apiUrl: string;
     rtspPort: number;
+    apiUsername?: string;
+    apiPassword?: string;
+    rtspUsername?: string;
+    rtspPassword?: string;
   };
   homebridge?: HomebridgeConfig;
   logging: {
@@ -38,7 +42,9 @@ export interface AppConfig {
 const DEFAULT_CONFIG: Omit<AppConfig, 'alarm'> = {
   cameras: [],
   go2rtc: {
-    apiUrl: 'http://localhost:1984',
+    // Explicit loopback, not `localhost`: `localhost` can resolve to `::1`,
+    // which ffmpeg treats differently than the IPv4 loopback address.
+    apiUrl: 'http://127.0.0.1:1984',
     rtspPort: 8554,
   },
   logging: {
@@ -161,7 +167,14 @@ export function loadConfig(): AppConfig {
   return validateConfig({
     alarm,
     cameras: Array.isArray(fileConfig.cameras) ? fileConfig.cameras : DEFAULT_CONFIG.cameras,
-    go2rtc: { ...DEFAULT_CONFIG.go2rtc, ...fileConfig.go2rtc },
+    go2rtc: {
+      ...DEFAULT_CONFIG.go2rtc,
+      ...fileConfig.go2rtc,
+      apiUsername: readEnvironmentSecret('GO2RTC_API_USERNAME') ?? fileConfig.go2rtc?.apiUsername,
+      apiPassword: readEnvironmentSecret('GO2RTC_API_PASSWORD') ?? fileConfig.go2rtc?.apiPassword,
+      rtspUsername: readEnvironmentSecret('GO2RTC_RTSP_USERNAME') ?? fileConfig.go2rtc?.rtspUsername,
+      rtspPassword: readEnvironmentSecret('GO2RTC_RTSP_PASSWORD') ?? fileConfig.go2rtc?.rtspPassword,
+    },
     homebridge: fileConfig.homebridge
       ? {
           motionUrl: fileConfig.homebridge.motionUrl,
@@ -170,4 +183,20 @@ export function loadConfig(): AppConfig {
       : undefined,
     logging: { ...DEFAULT_CONFIG.logging, ...fileConfig.logging },
   });
+}
+
+/**
+ * The RTSP base URL ffmpeg publishes to. Derived from `apiUrl` rather than
+ * configured separately: both address the same go2rtc, and two keys could
+ * drift apart silently after the container split.
+ */
+export function go2rtcRtspBaseUrl(config: AppConfig): string {
+  const host = new URL(config.go2rtc.apiUrl).hostname;
+  const { rtspUsername, rtspPassword } = config.go2rtc;
+  // encodeURIComponent so a password containing / : @ cannot break the URL.
+  const auth =
+    rtspUsername && rtspPassword
+      ? `${encodeURIComponent(rtspUsername)}:${encodeURIComponent(rtspPassword)}@`
+      : '';
+  return `rtsp://${auth}${host}:${config.go2rtc.rtspPort}`;
 }

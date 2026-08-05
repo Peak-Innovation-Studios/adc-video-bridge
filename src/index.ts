@@ -1,4 +1,4 @@
-import { loadConfig } from './config.js';
+import { loadConfig, go2rtcRtspBaseUrl } from './config.js';
 import { createChildLogger, setLogLevel } from './utils/logger.js';
 import { AlarmAuth } from './auth/alarm-auth.js';
 import { TokenManager } from './auth/token-manager.js';
@@ -24,7 +24,12 @@ async function main(): Promise<void> {
   log.info({ cameraCount: config.cameras.length }, 'Config loaded');
 
   // Wait for go2rtc
-  const go2rtc = new Go2rtcApi(config.go2rtc.apiUrl);
+  const go2rtc = new Go2rtcApi(
+    config.go2rtc.apiUrl,
+    config.go2rtc.apiUsername && config.go2rtc.apiPassword
+      ? { username: config.go2rtc.apiUsername, password: config.go2rtc.apiPassword }
+      : undefined,
+  );
   try {
     await go2rtc.waitReady();
   } catch {
@@ -40,7 +45,7 @@ async function main(): Promise<void> {
 
   // Initialize token manager and camera manager
   const tokenManager = new TokenManager(auth);
-  const rtspBaseUrl = `rtsp://127.0.0.1:${config.go2rtc.rtspPort}`;
+  const rtspBaseUrl = go2rtcRtspBaseUrl(config);
   const cameraManager = new CameraManager(tokenManager, rtspBaseUrl);
 
   // Initialize WebSocket event listener

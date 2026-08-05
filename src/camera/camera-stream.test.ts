@@ -40,9 +40,17 @@ vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
 }));
 
-vi.mock('../utils/logger.js', () => ({
-  createChildLogger: () => logSpy,
-}));
+vi.mock('../utils/logger.js', async () => {
+  // Keep the real scrubRtspCredentials rather than stubbing it — tests below
+  // assert on its actual redaction behaviour (e.g. that a spawn error's
+  // message survives scrubbing intact when it holds no credentials, and
+  // that camera-stream.ts never bypasses it with a raw string).
+  const actual = await vi.importActual<typeof import('../utils/logger.js')>('../utils/logger.js');
+  return {
+    createChildLogger: () => logSpy,
+    scrubRtspCredentials: actual.scrubRtspCredentials,
+  };
+});
 
 vi.mock('../utils/retry.js', () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
@@ -1056,6 +1064,127 @@ describe('CameraStream ffmpeg mid-stream exit recovery', () => {
   });
 });
 
+describe('CameraStream ffmpeg spawn error', () => {
+  // Without an 'error' listener on the child process, Node treats a spawn
+  // failure (binary missing, PATH problem, permission error, ...) as an
+  // uncaught exception and dumps it straight to stderr — including
+  // err.spawnargs, the full argv, which now carries the credentialed
+  // rtspUrl. This suite proves the listener exists, never lets a raw Error
+  // reach the logger, and follows the same ownership gating as the 'exit'
+  // handler above.
+  let stream: CameraStream;
+  let errorHandler: (err: Error) => void;
+
+  beforeEach(async () => {
+    stream = new CameraStream('cam-123', 'test-camera', 'rtsp://rtspuser:s3cret@127.0.0.1:8554');
+
+    (stream as any).videoPort = 12345;
+    (stream as any)._state = 'streaming';
+
+    const { spawn } = await import('node:child_process');
+    vi.mocked(spawn).mockReturnValue({
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn((event: string, handler: any) => {
+        if (event === 'error') errorHandler = handler;
+      }),
+      kill: vi.fn(),
+    } as any);
+
+    (stream as any).startFfmpeg({ h264Fmtp: null });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('registers an error handler on the spawned child', () => {
+    expect(errorHandler).toBeTypeOf('function');
+  });
+
+  it('never logs the raw Error object, only a string message', () => {
+    // spawnargs (containing the credentialed URL) lives only on the Error
+    // instance itself. If any log.* call in the error handler passed the
+    // raw error — e.g. `log.error({ err }, ...)` — pino's default error
+    // serializer would re-surface spawnargs regardless of any scrubbing
+    // done elsewhere. Assert every field of every logged object is a
+    // primitive, never the Error instance.
+    const err = Object.assign(new Error('spawn ffmpeg ENOENT'), {
+      spawnargs: ['ffmpeg', '-i', 'rtsp://rtspuser:s3cret@127.0.0.1:8554/test-camera'],
+    });
+
+    errorHandler(err);
+
+    const allCalls = [...logSpy.error.mock.calls, ...logSpy.warn.mock.calls, ...logSpy.info.mock.calls, ...logSpy.debug.mock.calls];
+    expect(allCalls.length).toBeGreaterThan(0);
+    for (const [fields] of allCalls) {
+      for (const value of Object.values(fields)) {
+        expect(value).not.toBeInstanceOf(Error);
+        expect(JSON.stringify(value)).not.toContain('spawnargs');
+      }
+    }
+  });
+
+  it('does not leak credentials from the error message into the log', () => {
+    const err = new Error("spawn ffmpeg failed for rtsp://rtspuser:s3cret@127.0.0.1:8554/test-camera");
+
+    errorHandler(err);
+
+    const loggedText = JSON.stringify(logSpy.error.mock.calls);
+    expect(loggedText).not.toContain('s3cret');
+    expect(loggedText).toContain('[REDACTED]');
+  });
+
+  it('sets state to error and clears the ffmpeg reference when streaming', () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+
+    errorHandler(new Error('spawn ffmpeg ENOENT'));
+
+    expect(stream.state).toBe('error');
+    expect((stream as any).ffmpeg).toBeNull();
+    expect(callback).toHaveBeenCalledOnce();
+  });
+
+  it('does not invoke onUnexpectedExit when not streaming', () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+    (stream as any)._state = 'connecting';
+
+    errorHandler(new Error('spawn ffmpeg ENOENT'));
+
+    expect(callback).not.toHaveBeenCalled();
+    expect((stream as any).ffmpeg).toBeNull();
+  });
+
+  it('ignores a late error from an intentionally stopped or superseded ffmpeg process', async () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+    const staleErrorHandler = errorHandler;
+
+    const { spawn } = await import('node:child_process');
+    const replacement = {
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn(),
+      kill: vi.fn(),
+    } as any;
+    vi.mocked(spawn).mockReturnValue(replacement);
+
+    (stream as any).ffmpeg = null;
+    (stream as any).startFfmpeg({ h264Fmtp: null });
+    expect((stream as any).ffmpeg).toBe(replacement);
+
+    staleErrorHandler(new Error('spawn ffmpeg ENOENT'));
+
+    expect((stream as any).ffmpeg).toBe(replacement);
+    expect(stream.state).toBe('streaming');
+    expect(callback).not.toHaveBeenCalled();
+  });
+});
+
 describe('CameraStream ffmpeg SDP', () => {
   let stream: CameraStream;
   let stdinWrite: ReturnType<typeof vi.fn>;
@@ -1109,5 +1238,109 @@ describe('CameraStream ffmpeg SDP', () => {
     expect(stdinWrite).toHaveBeenCalledWith(
       expect.stringContaining('a=fmtp:96 packetization-mode=1;profile-level-id=4d001f'),
     );
+  });
+});
+
+describe('CameraStream ffmpeg stderr scrubbing', () => {
+  // ffmpeg echoes its own output URL back on stderr at -loglevel info
+  // (`Output #0, rtsp, to 'rtsp://user:pass@...'`). It arrives as an object
+  // VALUE under the `ffmpeg` key, so neither the pino logMethod hook (which
+  // only maps message-string args) nor the `rtspUrl`/`rtspBaseUrl` entries in
+  // redact.paths can reach it. The explicit scrub in the stderr handler is the
+  // only thing standing between the go2rtc RTSP password and the log file.
+  let stream: CameraStream;
+  let stderrHandler: (data: Buffer) => void;
+
+  beforeEach(async () => {
+    stream = new CameraStream('cam-123', 'test-camera', 'rtsp://rtspuser:s3cret@127.0.0.1:8554');
+
+    (stream as any).videoPort = 12345;
+    (stream as any)._state = 'streaming';
+
+    const { spawn } = await import('node:child_process');
+    vi.mocked(spawn).mockReturnValue({
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: {
+        on: vi.fn((event: string, handler: any) => {
+          if (event === 'data') stderrHandler = handler;
+        }),
+      },
+      on: vi.fn(),
+      kill: vi.fn(),
+    } as any);
+
+    (stream as any).startFfmpeg({ h264Fmtp: null });
+
+    // startFfmpeg itself logs `{ rtspUrl }` on the way in. That field is
+    // covered by pino's redact.paths in production, but this suite mocks the
+    // logger, so drop those calls and assert only on what the stderr handler
+    // logs.
+    logSpy.info.mockClear();
+    logSpy.debug.mockClear();
+    logSpy.warn.mockClear();
+    logSpy.error.mockClear();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('registers a data handler on the child stderr stream', () => {
+    expect(stderrHandler).toBeTypeOf('function');
+  });
+
+  it('never logs the RTSP password from ffmpeg stderr', () => {
+    stderrHandler(
+      Buffer.from(
+        "Output #0, rtsp, to 'rtsp://rtspuser:s3cret@127.0.0.1:8554/test-camera':\n",
+      ),
+    );
+
+    const allCalls = [
+      ...logSpy.info.mock.calls,
+      ...logSpy.debug.mock.calls,
+      ...logSpy.warn.mock.calls,
+      ...logSpy.error.mock.calls,
+    ];
+    expect(allCalls.length).toBeGreaterThan(0);
+
+    const loggedText = JSON.stringify(allCalls);
+    expect(loggedText).not.toContain('s3cret');
+    expect(loggedText).not.toContain('rtspuser');
+    expect(loggedText).toContain('[REDACTED]');
+    // The line is still useful — only the userinfo is removed.
+    expect(loggedText).toContain('127.0.0.1:8554/test-camera');
+  });
+
+  it('scrubs credentials on the debug (progress-line) path too', () => {
+    // Contrived: a progress line would not normally carry a URL. The point is
+    // that the scrub happens before the info/debug branch, so neither path can
+    // grow a leak independently of the other.
+    stderrHandler(
+      Buffer.from('frame= 42 fps=10 rtsp://rtspuser:s3cret@127.0.0.1:8554/test-camera'),
+    );
+
+    const loggedText = JSON.stringify(logSpy.debug.mock.calls);
+    expect(logSpy.debug).toHaveBeenCalled();
+    expect(logSpy.info).not.toHaveBeenCalled();
+    expect(loggedText).not.toContain('s3cret');
+    expect(loggedText).toContain('[REDACTED]');
+  });
+
+  it('leaves a credential-free line intact', () => {
+    stderrHandler(Buffer.from('  Stream #0:0: Video: h264, yuv420p, 1920x1080  \n'));
+
+    expect(logSpy.info).toHaveBeenCalledWith(
+      { camera: 'test-camera', ffmpeg: 'Stream #0:0: Video: h264, yuv420p, 1920x1080' },
+      'ffmpeg',
+    );
+  });
+
+  it('ignores an empty chunk', () => {
+    stderrHandler(Buffer.from('   \n'));
+
+    expect(logSpy.info).not.toHaveBeenCalled();
+    expect(logSpy.debug).not.toHaveBeenCalled();
   });
 });

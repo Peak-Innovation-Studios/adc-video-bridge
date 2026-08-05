@@ -1,14 +1,30 @@
+# Under `docker-compose.yml`'s `network_mode: host`, compose `ports:` is
+# IGNORED — these `listen:` values are the ONLY thing keeping go2rtc off
+# every interface on the host. A bare `:8554`/`:1984` (no host part) binds
+# ALL interfaces and fails SILENTLY — go2rtc starts fine, there is no error,
+# and the authenticated-but-unencrypted RTSP/API surface is reachable from
+# the whole LAN. ${GO2RTC_BIND} is set by docker-compose.yml from
+# ADC_BRIDGE_BIND_ADDRESS, which must be the host's real LAN address — the
+# compose fallback of 127.0.0.1 is a last-resort default, not a working
+# configuration, because the bridge container cannot reach the host's
+# loopback from the default Docker network. go2rtc substitutes the value
+# into the raw config before parsing, falling back to the container's OS
+# environment when no default is given.
 rtsp:
-  listen: ":8554"
+  listen: "${GO2RTC_BIND}:8554"
   username: "${GO2RTC_RTSP_USERNAME}"
   password: "${GO2RTC_RTSP_PASSWORD}"
 
 api:
-  listen: ":1984"
+  listen: "${GO2RTC_BIND}:1984"
   username: "${GO2RTC_API_USERNAME}"
   password: "${GO2RTC_API_PASSWORD}"
-  # Local bridge health/API calls bypass auth; remote clients must authenticate.
-  local_auth: false
+  # Every request authenticates, loopback included. After the container split
+  # nothing legitimate arrives on loopback — the bridge reaches go2rtc across
+  # the LAN address and sends Basic auth — so the loopback exemption would only
+  # weaken the surface. It also keeps the compose healthcheck's expected 401
+  # independent of which address go2rtc is bound to.
+  local_auth: true
 
 # These listeners are not used by the bridge. Disabling them reduces the
 # container's network surface.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadConfig } from './config.js';
+import { loadConfig, go2rtcRtspBaseUrl } from './config.js';
 
 vi.mock('node:fs', () => ({
   readFileSync: vi.fn(),
@@ -86,8 +86,56 @@ alarm:
     process.env.ADC_USERNAME = 'u';
     process.env.ADC_PASSWORD = 'p';
     const config = loadConfig();
-    expect(config.go2rtc.apiUrl).toBe('http://localhost:1984');
+    expect(config.go2rtc.apiUrl).toBe('http://127.0.0.1:1984');
     expect(config.go2rtc.rtspPort).toBe(8554);
+  });
+
+  it('reads the go2rtc API credentials from the environment', () => {
+    // These are what index.ts hands to Go2rtcApi. Nothing else validates
+    // them — loadConfig() checks ports, URLs, log level, cameras and
+    // Homebridge, but never these — so if they fail to arrive, the bridge
+    // simply makes unauthenticated calls and waitReady() 401s forever.
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+    process.env.GO2RTC_API_USERNAME = 'apiuser';
+    process.env.GO2RTC_API_PASSWORD = 'apipass';
+
+    const config = loadConfig();
+
+    expect(config.go2rtc.apiUsername).toBe('apiuser');
+    expect(config.go2rtc.apiPassword).toBe('apipass');
+  });
+
+  it('prefers environment go2rtc API credentials over the config file', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(
+      'go2rtc:\n  apiUsername: "fileuser"\n  apiPassword: "filepass"\n',
+    );
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+    process.env.GO2RTC_API_USERNAME = 'apiuser';
+    process.env.GO2RTC_API_PASSWORD = 'apipass';
+
+    const config = loadConfig();
+
+    expect(config.go2rtc.apiUsername).toBe('apiuser');
+    expect(config.go2rtc.apiPassword).toBe('apipass');
+  });
+
+  it('falls back to config-file go2rtc API credentials when the environment has none', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(
+      'go2rtc:\n  apiUsername: "fileuser"\n  apiPassword: "filepass"\n',
+    );
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+    delete process.env.GO2RTC_API_USERNAME;
+    delete process.env.GO2RTC_API_PASSWORD;
+
+    const config = loadConfig();
+
+    expect(config.go2rtc.apiUsername).toBe('fileuser');
+    expect(config.go2rtc.apiPassword).toBe('filepass');
   });
 
   it('applies logging defaults when not in config', () => {
@@ -199,5 +247,39 @@ homebridge:
     process.env.ADC_PASSWORD = 'p';
 
     expect(() => loadConfig()).toThrow('homebridge.motionUrl must use HTTP or HTTPS');
+  });
+
+  it('derives the RTSP base URL from the go2rtc API URL host', () => {
+    existsSync.mockReturnValue(true);
+    readFileSync.mockReturnValue('go2rtc:\n  apiUrl: "http://192.168.7.42:1984"\n  rtspPort: 8554\n');
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+
+    const config = loadConfig();
+
+    expect(go2rtcRtspBaseUrl(config)).toBe('rtsp://192.168.7.42:8554');
+  });
+
+  it('defaults the RTSP base URL to loopback, matching pre-split behaviour', () => {
+    existsSync.mockReturnValue(false);
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+
+    const config = loadConfig();
+
+    expect(config.go2rtc.apiUrl).toBe('http://127.0.0.1:1984');
+    expect(go2rtcRtspBaseUrl(config)).toBe('rtsp://127.0.0.1:8554');
+  });
+
+  it('embeds RTSP credentials in the base URL when configured', () => {
+    existsSync.mockReturnValue(false);
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+    process.env.GO2RTC_RTSP_USERNAME = 'rtspuser';
+    process.env.GO2RTC_RTSP_PASSWORD = 'rtsp pass/word';
+
+    const config = loadConfig();
+
+    expect(go2rtcRtspBaseUrl(config)).toBe('rtsp://rtspuser:rtsp%20pass%2Fword@127.0.0.1:8554');
   });
 });

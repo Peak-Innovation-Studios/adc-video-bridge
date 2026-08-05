@@ -91,4 +91,86 @@ describe('Go2rtcApi', () => {
       await expect(promise).rejects.toThrow();
     });
   });
+
+  describe('authentication', () => {
+    it('sends HTTP Basic credentials when configured', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+      globalThis.fetch = fetchMock;
+
+      const authedApi = new Go2rtcApi('http://192.168.7.42:1984', { username: 'u', password: 'p' });
+      await authedApi.getStreams();
+
+      const init = fetchMock.mock.calls[0][1];
+      expect(init.headers.Authorization).toBe(`Basic ${Buffer.from('u:p').toString('base64')}`);
+    });
+
+    it('sends no Authorization header when no credentials are configured', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+      globalThis.fetch = fetchMock;
+
+      await api.getStreams();
+
+      const init = fetchMock.mock.calls[0][1];
+      expect(init.headers?.Authorization).toBeUndefined();
+    });
+
+    it('sends the same credentials on isHealthy', async () => {
+      // isHealthy is the request waitReady() makes at startup, before any
+      // stream exists. With `local_auth: true` in config/go2rtc.yaml every
+      // request authenticates, so an unauthenticated probe here would 401 and
+      // the bridge would never get past waitReady().
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+      globalThis.fetch = fetchMock;
+
+      const authedApi = new Go2rtcApi('http://192.168.7.42:1984', { username: 'u', password: 'p' });
+      expect(await authedApi.isHealthy()).toBe(true);
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('http://192.168.7.42:1984/api/streams');
+      expect(init.headers.Authorization).toBe(`Basic ${Buffer.from('u:p').toString('base64')}`);
+    });
+
+    it('sends credentials on every waitReady poll, not just the first', async () => {
+      vi.useFakeTimers();
+      let callCount = 0;
+      const fetchMock = vi.fn().mockImplementation(() => {
+        callCount++;
+        return Promise.resolve({ ok: callCount >= 3 });
+      });
+      globalThis.fetch = fetchMock;
+
+      const authedApi = new Go2rtcApi('http://192.168.7.42:1984', { username: 'u', password: 'p' });
+      const promise = authedApi.waitReady(10_000);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(promise).resolves.toBeUndefined();
+
+      const expected = `Basic ${Buffer.from('u:p').toString('base64')}`;
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+      for (const [, init] of fetchMock.mock.calls) {
+        expect(init.headers.Authorization).toBe(expected);
+      }
+    });
+
+    it('encodes a password containing a colon without truncating it', async () => {
+      // HTTP Basic splits on the FIRST colon, so a colon in the password is
+      // safe; one in the username would not be. Pin the encoding so a future
+      // refactor cannot silently mangle a generated password.
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+      globalThis.fetch = fetchMock;
+
+      const authedApi = new Go2rtcApi('http://192.168.7.42:1984', {
+        username: 'adcbridge',
+        password: 'a:b/c@d',
+      });
+      await authedApi.getStreams();
+
+      const init = fetchMock.mock.calls[0][1];
+      const decoded = Buffer.from(
+        init.headers.Authorization.replace('Basic ', ''),
+        'base64',
+      ).toString();
+      expect(decoded).toBe('adcbridge:a:b/c@d');
+    });
+  });
 });
