@@ -82,13 +82,18 @@ streams:
   driveway: ""
   backyard: ""
 
+# Under network_mode: host (see docker-compose.yml), `ports:` is ignored —
+# these `listen:` values are the ONLY thing keeping go2rtc off every
+# interface. A bare `:8554`/`:1984` binds ALL interfaces and fails silently.
+# ${GO2RTC_BIND} comes from ADC_BRIDGE_BIND_ADDRESS in .env (default
+# 127.0.0.1/loopback).
 rtsp:
-  listen: ":8554"
+  listen: "${GO2RTC_BIND}:8554"
   username: "${GO2RTC_RTSP_USERNAME}"
   password: "${GO2RTC_RTSP_PASSWORD}"
 
 api:
-  listen: ":1984"
+  listen: "${GO2RTC_BIND}:1984"
   username: "${GO2RTC_API_USERNAME}"
   password: "${GO2RTC_API_PASSWORD}"
   local_auth: false

@@ -613,15 +613,28 @@ services:
 Run: `docker compose config >/dev/null && echo VALID`
 Expected: `VALID`.
 
-Then confirm the credential separation holds:
+Then confirm the credential separation holds. Index the `go2rtc` service directly
+from `docker compose config`'s JSON output rather than slicing the YAML text —
+`docker compose config` alphabetizes services, so `adc-video-bridge:` sorts
+*before* `go2rtc:` and never recurs after it; a text-range check like
+`awk '/^  go2rtc:/,/^  adc-video-bridge:/'` degrades to "go2rtc: to EOF" and
+only happens to still be correct because nothing after go2rtc in the output
+contains a false positive:
 
 ```bash
-docker compose config | awk '/^  go2rtc:/,/^  adc-video-bridge:/' \
-  | grep -cE 'ADC_USERNAME|ADC_PASSWORD|ADC_MFA_TOKEN'
+docker compose config --format json \
+  | jq '.services.go2rtc.environment // {} | keys
+        | map(select(. == "ADC_USERNAME" or . == "ADC_PASSWORD" or . == "ADC_MFA_TOKEN"))
+        | length'
 ```
 Expected: `0`. Any non-zero result means Alarm.com credentials reached the host-networked container — stop and fix.
 
 ⚠️ Match the **secret names specifically**, not the `ADC_` prefix: `ADC_BRIDGE_UID`, `ADC_BRIDGE_GID` and `ADC_BRIDGE_BIND_ADDRESS` are all legitimately used by the go2rtc service, so a prefix grep reports a false positive and trains you to ignore the check.
+
+Sanity-check the check itself before trusting a `0`: temporarily add
+`ADC_USERNAME: ${ADC_USERNAME}` to the go2rtc service's `environment:` block in a
+scratch copy of the compose file, confirm the same command reports `1`, then
+discard the scratch copy.
 
 - [ ] **Step 3: Commit**
 
