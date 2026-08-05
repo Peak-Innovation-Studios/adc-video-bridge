@@ -244,9 +244,9 @@ describe('CameraStream.reconnect', () => {
     expect(mockSocket.close).not.toHaveBeenCalled();
   });
 
-  it('closes old PC during reconnect', async () => {
-    const mockPcClose = vi.fn().mockResolvedValue(undefined);
-    (stream as any).active = { close: mockPcClose };
+  it('closes the old session only after cutover, never before', async () => {
+    const oldClose = vi.fn().mockResolvedValue(undefined);
+    (stream as any).active = { id: 1, close: oldClose };
     (stream as any).ffmpeg = { kill: vi.fn(), on: vi.fn() };
     (stream as any).videoSocket = { close: vi.fn(), send: vi.fn() };
     (stream as any).videoPort = 12345;
@@ -255,12 +255,17 @@ describe('CameraStream.reconnect', () => {
     setupReconnectMocks();
     mockSignalingToSucceed();
 
+    // negotiatePending() resolves once signaling reports SESSION_STARTED —
+    // well before any RTP, and therefore well before cutover. The old
+    // session must still be untouched at that point.
     await stream.reconnect(makeConfig());
+    expect(oldClose).not.toHaveBeenCalled();
 
-    expect(mockPcClose).toHaveBeenCalled();
+    (stream as any).handleRtp((stream as any).pending, Buffer.from([1]));
+    expect(oldClose).toHaveBeenCalledTimes(1);
   });
 
-  it('sets state to connecting during reconnect', async () => {
+  it('keeps state streaming throughout the overlap', async () => {
     (stream as any).ffmpeg = { kill: vi.fn(), on: vi.fn() };
     (stream as any).videoSocket = { close: vi.fn(), send: vi.fn() };
     (stream as any).videoPort = 12345;
@@ -288,14 +293,20 @@ describe('CameraStream.reconnect', () => {
 
     await stream.reconnect(makeConfig());
 
-    expect(capturedState).toBe('connecting');
+    // Never 'connecting' — the old session is still live and feeding
+    // ffmpeg for the whole negotiation, so nothing about the stream state
+    // changes until cutover.
+    expect(capturedState).toBe('streaming');
+    expect(stream.state).toBe('streaming');
   });
 
-  it('throws when signaling fails during reconnect', async () => {
+  it('rejects but leaves the still-live active session and state alone when negotiation fails', async () => {
     (stream as any).ffmpeg = { kill: vi.fn(), on: vi.fn() };
     (stream as any).videoSocket = { close: vi.fn(), send: vi.fn() };
     (stream as any).videoPort = 12345;
     (stream as any)._state = 'streaming';
+    const activeClose = vi.fn().mockResolvedValue(undefined);
+    (stream as any).active = { id: 1, close: activeClose };
 
     setupReconnectMocks();
 
@@ -312,8 +323,64 @@ describe('CameraStream.reconnect', () => {
       } as any;
     });
 
+    // A failed pending negotiation does not touch the still-good active
+    // session: media is still flowing, so there is nothing to error out.
     await expect(stream.reconnect(makeConfig())).rejects.toThrow('signaling failed');
-    expect(stream.state).toBe('error');
+    expect(stream.state).toBe('streaming');
+    expect(activeClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('CameraStream make-before-break', () => {
+  let stream: CameraStream;
+  beforeEach(() => {
+    stream = new CameraStream('cam-123', 'test-camera', 'rtsp://localhost:8554');
+    (stream as any).ffmpeg = { kill: vi.fn(), on: vi.fn() };
+    (stream as any).videoSocket = { send: vi.fn(), close: vi.fn() };
+    (stream as any).videoPort = 12345;
+    (stream as any)._state = 'streaming';
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it('does not forward pending RTP before cutover', () => {
+    const socket = (stream as any).videoSocket;
+    const active: any = { id: 1 };
+    const pending: any = { id: 2 };
+    (stream as any).active = active;
+    (stream as any).pending = pending;
+
+    (stream as any).handleRtp(pending, Buffer.from([7]));
+
+    // The cutover consumes this very packet, so exactly one send occurs and
+    // the two sessions are never both forwarding.
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    expect((stream as any).active).toBe(pending);
+  });
+
+  it('closes the old session only after cutover, never before', async () => {
+    const oldClose = vi.fn().mockResolvedValue(undefined);
+    const active: any = { id: 1, close: oldClose };
+    const pending: any = { id: 2, close: vi.fn() };
+    (stream as any).active = active;
+    (stream as any).pending = pending;
+
+    expect(oldClose).not.toHaveBeenCalled();
+    (stream as any).cutOver(pending);
+    expect(oldClose).toHaveBeenCalledTimes(1);
+    expect((stream as any).pending).toBeNull();
+    // The whole point: the RTSP publisher is never disturbed.
+    expect((stream as any).ffmpeg.kill).not.toHaveBeenCalled();
+    expect((stream as any).videoSocket.close).not.toHaveBeenCalled();
+  });
+
+  it('keeps state streaming throughout the overlap', async () => {
+    const active: any = { id: 1, close: vi.fn().mockResolvedValue(undefined) };
+    (stream as any).active = active;
+    vi.spyOn(stream as any, 'negotiatePending').mockImplementation(async () => {
+      expect(stream.state).toBe('streaming'); // never 'connecting'
+    });
+    await stream.reconnect(makeConfig()).catch(() => {});
+    expect(stream.state).toBe('streaming');
   });
 });
 

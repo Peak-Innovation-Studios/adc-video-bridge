@@ -15,15 +15,23 @@ export type StreamState = 'idle' | 'connecting' | 'streaming' | 'error';
 
 export type TokenFetcher = () => Promise<EndToEndWebrtcConfig | null>;
 
+/** How an overlap between the active and pending sessions was resolved. */
+export type OverlapOutcome = 'cutover' | 'kept' | 'fallback';
+
 /**
  * Manages a single camera's WebRTC-to-RTSP pipeline:
  * ADC signaling → werift PeerConnection → RTP → ffmpeg → RTSP push to go2rtc
  */
 export class CameraStream {
   private active: PeerSession | null = null;
-  // Reserved for the overlapping "make before break" session (later tasks);
-  // stays null here so the identity gate has nothing extra to admit yet.
+  // The overlapping "make before break" session being negotiated during a
+  // reconnect. RTP from it is never forwarded — see handleRtp's gate — until
+  // its first packet proves media flows and cutOver() promotes it to active.
   private pending: PeerSession | null = null;
+  // Armed in Task 4 to bound how long an overlap may run before falling back.
+  private overlapTimer: ReturnType<typeof setTimeout> | null = null;
+  // Assigned in Task 4 by the reconnect() caller awaiting the overlap outcome.
+  private overlapSettle: ((outcome: OverlapOutcome) => void) | null = null;
   private ffmpeg: ChildProcess | null = null;
   private videoSocket: Socket | null = null;
   private videoPort = 0;
@@ -103,30 +111,22 @@ export class CameraStream {
 
   /**
    * Reconnect WebRTC with a fresh token while keeping ffmpeg and the UDP
-   * socket alive.  Only the signaling WebSocket and RTCPeerConnection are
-   * rebuilt — the RTSP push to go2rtc is never interrupted.
+   * socket alive. The old session is left running and keeps feeding ffmpeg
+   * while the new one negotiates in parallel — state stays 'streaming' for
+   * the whole overlap, since media never stops. cutOver() (triggered by the
+   * new session's first RTP packet, in handleRtp) is what actually retires
+   * the old session; this method only sets the overlap in motion.
    */
   async reconnect(config: EndToEndWebrtcConfig): Promise<void> {
     if (this._state !== 'streaming') {
       throw new Error(`Cannot reconnect: expected 'streaming', got '${this._state}'`);
     }
 
-    log.info({ camera: this.cameraName }, 'Reconnecting WebRTC (keeping ffmpeg alive)...');
+    log.info({ camera: this.cameraName }, 'Reconnecting WebRTC (old session stays live during overlap)...');
 
-    // Tear down token-bound resources only
-    await this.active?.close();
+    await this.negotiatePending(config);
 
-    this.active = new PeerSession(this.cameraName, this.sessionCallbacks);
-    this._state = 'connecting';
-
-    try {
-      await this.active.connect(config);
-    } catch (err) {
-      this._state = 'error';
-      throw err;
-    }
-
-    log.info({ camera: this.cameraName }, 'Reconnect complete, waiting for SDP offer...');
+    log.info({ camera: this.cameraName }, 'Pending session connected, waiting for first RTP to cut over...');
   }
 
   /** Tear down the entire pipeline. */
@@ -173,6 +173,9 @@ export class CameraStream {
 
   /** Forward RTP from the active session to ffmpeg over the loopback UDP socket. */
   private handleRtp(session: PeerSession, packet: Buffer): void {
+    // The first packet from pending is the proof that media flows on the new
+    // session. Cut over here, then forward this same packet — nothing is lost.
+    if (session === this.pending) this.cutOver(session);
     if (session !== this.active) return;
     if (!this.videoSocket || !this.videoPort) return;
 
@@ -183,6 +186,43 @@ export class CameraStream {
     } else if (this.rtpCount % 1000 === 0) {
       log.debug({ camera: this.cameraName, rtpCount: this.rtpCount, bytes: packet.length }, 'RTP packets sent to ffmpeg');
     }
+  }
+
+  /** Promote pending to active now that it has proven media flows. */
+  private cutOver(session: PeerSession): void {
+    const previous = this.active;
+    this.active = session;
+    this.pending = null;
+    this.clearOverlapTimer();
+    this._state = 'streaming';
+    log.info(
+      { camera: this.cameraName, from: previous?.id, to: session.id },
+      'Cut over to the new session without a media gap',
+    );
+    void previous?.close?.().catch(() => {});
+    this.settleOverlap('cutover');
+  }
+
+  /** Resolve whoever is awaiting the current overlap. No-op once already settled. */
+  private settleOverlap(outcome: OverlapOutcome): void {
+    const settle = this.overlapSettle;
+    this.overlapSettle = null;
+    settle?.(outcome);
+  }
+
+  /** Guard for the (Task 4) budget timer; a no-op while overlapTimer is null. */
+  private clearOverlapTimer(): void {
+    if (this.overlapTimer) {
+      clearTimeout(this.overlapTimer);
+      this.overlapTimer = null;
+    }
+  }
+
+  /** Build a PeerSession for `config` and await SESSION_STARTED. Rejects if ADC refuses. */
+  private async negotiatePending(config: EndToEndWebrtcConfig): Promise<void> {
+    const session = new PeerSession(this.cameraName, this.sessionCallbacks);
+    this.pending = session;
+    await session.connect(config);
   }
 
   private handleSessionFailed(session: PeerSession): void {
