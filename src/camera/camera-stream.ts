@@ -146,7 +146,6 @@ export class CameraStream {
       this.overlapSettle = resolve;
       this.overlapTimer = setTimeout(() => {
         void this.discardPending('no RTP within the overlap budget');
-        this.settleOverlap('kept');
       }, OVERLAP_BUDGET_MS);
     });
 
@@ -155,10 +154,10 @@ export class CameraStream {
       log.info({ camera: this.cameraName }, 'Pending session connected, waiting for first RTP to cut over...');
     } catch (err) {
       // negotiatePending() already discarded the session that failed; this
-      // just clears the budget timer and settles the outcome.
+      // just clears the budget timer and settles the outcome (discardPending
+      // settles internally now — see its own comment).
       const msg = err instanceof Error ? err.message : String(err);
       await this.discardPending(msg);
-      this.settleOverlap('kept');
     }
 
     const result = await outcome;
@@ -264,14 +263,21 @@ export class CameraStream {
   }
 
   /**
-   * Detach and close any in-flight pending overlap session, and clear the
-   * overlap budget timer along with it — the two always end together.
-   * Idempotent: safe to call with no pending in flight.
+   * Detach and close any in-flight pending overlap session, clear the
+   * overlap budget timer, and settle the outcome — the three always end
+   * together. This is the only path that ends an overlap from OUTSIDE
+   * reconnect() (stop(), tryConnect(), a superseding reconnect()), so it
+   * must never leave reconnect()'s `await outcome` unresolved: settling here
+   * (rather than leaving it to the timeout/cutover/catch alone) is what
+   * guarantees reconnect() always returns. settleOverlap() is idempotent, so
+   * this is harmless when nothing was awaiting an outcome. Idempotent
+   * overall: safe to call with no pending in flight.
    */
   private async discardPending(reason: string): Promise<void> {
     const pending = this.pending;
     this.pending = null;
     this.clearOverlapTimer();
+    this.settleOverlap('kept');
     if (!pending) return;
     log.warn({ camera: this.cameraName, session: pending.id, reason }, 'Discarding pending session');
     await pending.close().catch(() => {});
@@ -304,7 +310,11 @@ export class CameraStream {
       // the RTCPeerConnection and signaling WebSocket live. Nothing else
       // owns this session, so a leak here is silent and per-reconnect.
       if (this.pending === session) this.pending = null;
-      await session.close().catch(() => {});
+      // A late rejection can race a cutover that already promoted this same
+      // session to active — its first RTP packet can arrive before
+      // connect()'s own promise settles. Closing it here would tear down
+      // the stream that reconnect() is about to report as a cutover.
+      if (this.active !== session) await session.close().catch(() => {});
       throw err;
     }
   }
