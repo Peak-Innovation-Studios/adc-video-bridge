@@ -88,8 +88,9 @@ streams:
 # Under network_mode: host (see docker-compose.yml), `ports:` is ignored —
 # these `listen:` values are the ONLY thing keeping go2rtc off every
 # interface. A bare `:8554`/`:1984` binds ALL interfaces and fails silently.
-# ${GO2RTC_BIND} comes from ADC_BRIDGE_BIND_ADDRESS in .env (default
-# 127.0.0.1/loopback).
+# ${GO2RTC_BIND} comes from ADC_BRIDGE_BIND_ADDRESS in .env, which must be
+# the host's real LAN address (see above) — the compose fallback of
+# 127.0.0.1 is unreachable from the bridge container.
 rtsp:
   listen: "${GO2RTC_BIND}:8554"
   username: "${GO2RTC_RTSP_USERNAME}"
@@ -99,7 +100,9 @@ api:
   listen: "${GO2RTC_BIND}:1984"
   username: "${GO2RTC_API_USERNAME}"
   password: "${GO2RTC_API_PASSWORD}"
-  local_auth: false
+  # true, not false: nothing legitimate reaches go2rtc over loopback after
+  # the container split, and the compose healthcheck expects a 401.
+  local_auth: true
 
 webrtc:
   listen: ""

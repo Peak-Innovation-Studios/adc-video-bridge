@@ -21,9 +21,15 @@ The approach was proven by [kjjohnsen/HomeAssistantADCCameraIntegration](https:/
 
 ## Architecture
 
+Two containers: the bridge holds the Alarm.com credentials and stays on the
+default Docker bridge network; go2rtc runs on `network_mode: host` because
+HomeKit needs mDNS multicast, which bridge networking does not forward. They
+address each other over the host's LAN address (`ADC_BRIDGE_BIND_ADDRESS`),
+never `localhost`.
+
 ```
 ┌───────────────────────────────────────────────────────────┐
-│                 adc-video-bridge (Node.js)                │
+│         adc-video-bridge container (Node.js)              │
 │                                                           │
 │  [AlarmAuth] ──→ [TokenManager]                           │
 │       │               │                                   │
@@ -45,12 +51,12 @@ The approach was proven by [kjjohnsen/HomeAssistantADCCameraIntegration](https:/
 │       │                                              │    │
 └───────┼──────────────────────────────────────────────┼────┘
         │ motion webhook                    RTSP push  │
-        │                                ┌─────▼─────┐
-        │                                │  go2rtc    │ (same container)
-        │                                │  RTSP in   │
-        │                                │  RTSP out  │
-        │                                └─────┬─────┘
-        │                                      │ rtsp://localhost:8554/<cam>
+        │                                ┌─────▼────────────────┐
+        │                                │ go2rtc container     │
+        │                                │ (network_mode: host) │
+        │                                │ RTSP in / RTSP out   │
+        │                                └─────┬────────────────┘
+        │                                      │ rtsp://<lan-ip>:8554/<cam>
         │                            ┌─────────▼──────────┐
         └───────────────────────────→│ homebridge-camera-  │
                                      │ ffmpeg (HKSV)       │
@@ -91,7 +97,7 @@ The bridge refreshes video tokens every 10 minutes and rebuilds the token-bound 
 - H.264 fmtp passthrough (profile-level-id, sprop-parameter-sets from camera SDP offer)
 - ffmpeg RTSP output to go2rtc
 - Stable ffmpeg publisher ownership across intentional stops and WebRTC replacements
-- Hardened Docker container with embedded go2rtc
+- Hardened Docker containers: the credential-holding bridge and go2rtc are separate images and separate network namespaces
 - Multi-camera streaming (3 cameras verified, 1920x1080 H.264 @ 10fps)
 - Camera dial-in retry with exponential backoff (up to 12 attempts)
 - Circuit breakers on all three Alarm.com retry loops (see [Retry limits](#retry-limits))
@@ -174,7 +180,7 @@ Credentials should be provided through environment variables or Docker secret fi
 | `GO2RTC_API_PASSWORD` | Random password protecting snapshots and the go2rtc API | Docker: yes |
 | `GO2RTC_RTSP_USERNAME` | Username protecting RTSP playback | Docker: yes |
 | `GO2RTC_RTSP_PASSWORD` | Random password protecting RTSP playback | Docker: yes |
-| `ADC_BRIDGE_BIND_ADDRESS` | Host address for published ports; defaults to `127.0.0.1` | No |
+| `ADC_BRIDGE_BIND_ADDRESS` | Host LAN address go2rtc binds its RTSP and API listeners to, and the address the bridge uses to reach it. Must be the server's real LAN address (e.g. `192.168.1.10`); the `127.0.0.1` fallback does not work with the two-container split. | Docker: yes |
 
 See `.env.example` and `config/config.example.yaml` for the full configuration reference.
 
@@ -182,9 +188,9 @@ See `.env.example` and `config/config.example.yaml` for the full configuration r
 
 - Use a dedicated Alarm.com login with only the permissions needed to view the selected cameras.
 - Keep `.env`, real camera configuration, logs, and Homebridge URLs out of source control.
-- The default Compose binding is loopback-only. If Homebridge runs elsewhere, bind to one trusted LAN address and restrict ports 8554 and 1984 at the host firewall.
-- go2rtc requires Basic authentication for remote RTSP and snapshot/API requests. Its unused WebRTC and SRTP listeners are disabled.
-- The container runs without root privileges, drops Linux capabilities, uses a read-only filesystem, and pins its base images by digest.
+- go2rtc runs on `network_mode: host`, where Compose `ports:` is ignored — the `listen:` addresses in `config/go2rtc.yaml` are the only thing keeping ports 8554 and 1984 off every interface. Set `ADC_BRIDGE_BIND_ADDRESS` to one trusted LAN address and restrict both ports at the host firewall.
+- go2rtc requires Basic authentication for every RTSP and snapshot/API request, loopback included (`local_auth: true`). Its unused WebRTC and SRTP listeners are disabled.
+- Both containers run without root privileges, drop Linux capabilities, and use a read-only filesystem. The bridge image is pinned to a base-image digest; the go2rtc image is built from source (HKSV is unreleased) with its toolchain pinned by digest and its source pinned to a commit SHA — see `docs/SECURITY_AUDIT.md`.
 - This remains an unofficial cloud integration. Alarm.com can change or restrict the endpoints at any time.
 
 ## Dependencies

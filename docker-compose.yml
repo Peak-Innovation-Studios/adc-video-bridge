@@ -10,11 +10,20 @@ services:
     # the ONLY thing binding these services to one address.
     network_mode: host
     # NOT env_file: .env — that holds the Alarm.com credentials.
+    #
+    # `:?` on all four, not plain interpolation: go2rtc installs its auth
+    # middleware only when the username is non-empty, so an empty value here
+    # yields an UNAUTHENTICATED API, web UI, snapshot endpoint and RTSP — and
+    # under `network_mode: host` there is no `ports:` left to confine it.
+    # Nothing downstream catches this: `loadConfig()` validates ports, URLs,
+    # log level, cameras and Homebridge, but nothing about these credentials.
+    # Compose's `:?` errors on empty as well as unset, which is the case that
+    # matters — `.env.example` ships these keys present but blank.
     environment:
-      GO2RTC_API_USERNAME: ${GO2RTC_API_USERNAME}
-      GO2RTC_API_PASSWORD: ${GO2RTC_API_PASSWORD}
-      GO2RTC_RTSP_USERNAME: ${GO2RTC_RTSP_USERNAME}
-      GO2RTC_RTSP_PASSWORD: ${GO2RTC_RTSP_PASSWORD}
+      GO2RTC_API_USERNAME: ${GO2RTC_API_USERNAME:?GO2RTC_API_USERNAME is required}
+      GO2RTC_API_PASSWORD: ${GO2RTC_API_PASSWORD:?GO2RTC_API_PASSWORD is required}
+      GO2RTC_RTSP_USERNAME: ${GO2RTC_RTSP_USERNAME:?GO2RTC_RTSP_USERNAME is required}
+      GO2RTC_RTSP_PASSWORD: ${GO2RTC_RTSP_PASSWORD:?GO2RTC_RTSP_PASSWORD is required}
       GO2RTC_BIND: ${ADC_BRIDGE_BIND_ADDRESS:-127.0.0.1}
     volumes:
       # Writable: go2rtc persists HomeKit pairings, device_id and
@@ -27,9 +36,11 @@ services:
     pids_limit: 256
     stop_grace_period: 30s
     healthcheck:
-      # Deliberately UNauthenticated, expecting 401. Embedding credentials here
-      # would expose them in `docker inspect`. A 401 proves both that go2rtc is
-      # up AND that auth is still enforced — a stronger check than a 200.
+      # Deliberately UNauthenticated, expecting 401: that proves both that
+      # go2rtc is up AND that auth is still enforced — a stronger check than
+      # a 200. It depends on `local_auth: true` in config/go2rtc.yaml; with
+      # `local_auth: false` go2rtc waves through loopback requests with a 200
+      # and this check can never pass.
       test: ["CMD-SHELL",
              "test \"$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://${ADC_BRIDGE_BIND_ADDRESS:-127.0.0.1}:1984/api/streams)\" = 401"]
       interval: 30s
@@ -52,7 +63,13 @@ services:
     environment:
       NODE_ENV: production
     volumes:
-      - ./config:/app/config:ro
+      # Only config.yaml, not the whole ./config directory: go2rtc.yaml is a
+      # secret (it holds the HomeKit device_private from Phase 2 on), and the
+      # container holding the Alarm.com credentials has no reason to read it.
+      # A single-file bind mount requires the file to exist first — Docker
+      # silently creates a DIRECTORY in its place otherwise. Every setup path
+      # copies config.example.yaml into place before the first `up`.
+      - ./config/config.yaml:/app/config/config.yaml:ro
       - ./secrets:/run/secrets:ro
     # No ports: the bridge listens on nothing after the split.
     read_only: true

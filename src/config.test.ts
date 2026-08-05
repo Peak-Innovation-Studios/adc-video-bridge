@@ -90,6 +90,54 @@ alarm:
     expect(config.go2rtc.rtspPort).toBe(8554);
   });
 
+  it('reads the go2rtc API credentials from the environment', () => {
+    // These are what index.ts hands to Go2rtcApi. Nothing else validates
+    // them — loadConfig() checks ports, URLs, log level, cameras and
+    // Homebridge, but never these — so if they fail to arrive, the bridge
+    // simply makes unauthenticated calls and waitReady() 401s forever.
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+    process.env.GO2RTC_API_USERNAME = 'apiuser';
+    process.env.GO2RTC_API_PASSWORD = 'apipass';
+
+    const config = loadConfig();
+
+    expect(config.go2rtc.apiUsername).toBe('apiuser');
+    expect(config.go2rtc.apiPassword).toBe('apipass');
+  });
+
+  it('prefers environment go2rtc API credentials over the config file', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(
+      'go2rtc:\n  apiUsername: "fileuser"\n  apiPassword: "filepass"\n',
+    );
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+    process.env.GO2RTC_API_USERNAME = 'apiuser';
+    process.env.GO2RTC_API_PASSWORD = 'apipass';
+
+    const config = loadConfig();
+
+    expect(config.go2rtc.apiUsername).toBe('apiuser');
+    expect(config.go2rtc.apiPassword).toBe('apipass');
+  });
+
+  it('falls back to config-file go2rtc API credentials when the environment has none', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(
+      'go2rtc:\n  apiUsername: "fileuser"\n  apiPassword: "filepass"\n',
+    );
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+    delete process.env.GO2RTC_API_USERNAME;
+    delete process.env.GO2RTC_API_PASSWORD;
+
+    const config = loadConfig();
+
+    expect(config.go2rtc.apiUsername).toBe('fileuser');
+    expect(config.go2rtc.apiPassword).toBe('filepass');
+  });
+
   it('applies logging defaults when not in config', () => {
     process.env.ADC_USERNAME = 'u';
     process.env.ADC_PASSWORD = 'p';

@@ -29,4 +29,6 @@ jobs:
       - run: docker build --tag adc-video-bridge:test .
       - run: >-
           docker run --rm --entrypoint sh adc-video-bridge:test -c
-          'test "$(id -u)" -ne 0 && command -v node && command -v go2rtc && command -v ffmpeg && command -v curl'
+          'test "$(id -u)" -ne 0 && command -v node && command -v ffmpeg && command -v curl'
+      - run: docker build -f Dockerfile.go2rtc -t go2rtc-hksv:test .
+      - run: docker run --rm --entrypoint go2rtc go2rtc-hksv:test --version

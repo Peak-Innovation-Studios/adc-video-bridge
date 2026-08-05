@@ -1240,3 +1240,107 @@ describe('CameraStream ffmpeg SDP', () => {
     );
   });
 });
+
+describe('CameraStream ffmpeg stderr scrubbing', () => {
+  // ffmpeg echoes its own output URL back on stderr at -loglevel info
+  // (`Output #0, rtsp, to 'rtsp://user:pass@...'`). It arrives as an object
+  // VALUE under the `ffmpeg` key, so neither the pino logMethod hook (which
+  // only maps message-string args) nor the `rtspUrl`/`rtspBaseUrl` entries in
+  // redact.paths can reach it. The explicit scrub in the stderr handler is the
+  // only thing standing between the go2rtc RTSP password and the log file.
+  let stream: CameraStream;
+  let stderrHandler: (data: Buffer) => void;
+
+  beforeEach(async () => {
+    stream = new CameraStream('cam-123', 'test-camera', 'rtsp://rtspuser:s3cret@127.0.0.1:8554');
+
+    (stream as any).videoPort = 12345;
+    (stream as any)._state = 'streaming';
+
+    const { spawn } = await import('node:child_process');
+    vi.mocked(spawn).mockReturnValue({
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: {
+        on: vi.fn((event: string, handler: any) => {
+          if (event === 'data') stderrHandler = handler;
+        }),
+      },
+      on: vi.fn(),
+      kill: vi.fn(),
+    } as any);
+
+    (stream as any).startFfmpeg({ h264Fmtp: null });
+
+    // startFfmpeg itself logs `{ rtspUrl }` on the way in. That field is
+    // covered by pino's redact.paths in production, but this suite mocks the
+    // logger, so drop those calls and assert only on what the stderr handler
+    // logs.
+    logSpy.info.mockClear();
+    logSpy.debug.mockClear();
+    logSpy.warn.mockClear();
+    logSpy.error.mockClear();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('registers a data handler on the child stderr stream', () => {
+    expect(stderrHandler).toBeTypeOf('function');
+  });
+
+  it('never logs the RTSP password from ffmpeg stderr', () => {
+    stderrHandler(
+      Buffer.from(
+        "Output #0, rtsp, to 'rtsp://rtspuser:s3cret@127.0.0.1:8554/test-camera':\n",
+      ),
+    );
+
+    const allCalls = [
+      ...logSpy.info.mock.calls,
+      ...logSpy.debug.mock.calls,
+      ...logSpy.warn.mock.calls,
+      ...logSpy.error.mock.calls,
+    ];
+    expect(allCalls.length).toBeGreaterThan(0);
+
+    const loggedText = JSON.stringify(allCalls);
+    expect(loggedText).not.toContain('s3cret');
+    expect(loggedText).not.toContain('rtspuser');
+    expect(loggedText).toContain('[REDACTED]');
+    // The line is still useful — only the userinfo is removed.
+    expect(loggedText).toContain('127.0.0.1:8554/test-camera');
+  });
+
+  it('scrubs credentials on the debug (progress-line) path too', () => {
+    // Contrived: a progress line would not normally carry a URL. The point is
+    // that the scrub happens before the info/debug branch, so neither path can
+    // grow a leak independently of the other.
+    stderrHandler(
+      Buffer.from('frame= 42 fps=10 rtsp://rtspuser:s3cret@127.0.0.1:8554/test-camera'),
+    );
+
+    const loggedText = JSON.stringify(logSpy.debug.mock.calls);
+    expect(logSpy.debug).toHaveBeenCalled();
+    expect(logSpy.info).not.toHaveBeenCalled();
+    expect(loggedText).not.toContain('s3cret');
+    expect(loggedText).toContain('[REDACTED]');
+  });
+
+  it('leaves a credential-free line intact', () => {
+    stderrHandler(Buffer.from('  Stream #0:0: Video: h264, yuv420p, 1920x1080  \n'));
+
+    expect(logSpy.info).toHaveBeenCalledWith(
+      { camera: 'test-camera', ffmpeg: 'Stream #0:0: Video: h264, yuv420p, 1920x1080' },
+      'ffmpeg',
+    );
+  });
+
+  it('ignores an empty chunk', () => {
+    stderrHandler(Buffer.from('   \n'));
+
+    expect(logSpy.info).not.toHaveBeenCalled();
+    expect(logSpy.debug).not.toHaveBeenCalled();
+  });
+});

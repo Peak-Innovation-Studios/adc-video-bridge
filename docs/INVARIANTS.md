@@ -181,9 +181,12 @@ containerised HKSV go2rtc needs `network_mode: host`, `macvlan`, or an mDNS refl
 networking costs **only** the network-namespace control — read-only rootfs, `cap_drop: ALL`,
 `no-new-privileges`, non-root and digest pinning all survive it.
 
-But go2rtc is currently **fused into the bridge image** (`alexxit/go2rtc` is the runtime base and
-`entrypoint.sh` starts it), so adopting naively would put the ADC-credential-holding bridge on host
-networking too. **Split go2rtc into its own container first.**
+✅ **Prerequisite done (Phase 0, 2026-08-04): go2rtc is split into its own container.** It was
+previously fused into the bridge image (`alexxit/go2rtc` as the runtime base, started by
+`entrypoint.sh`), which would have put the ADC-credential-holding bridge on host networking too.
+Now only the go2rtc container runs `network_mode: host`; the bridge keeps its own network namespace
+on the default Docker network and holds the Alarm.com credentials there. HKSV itself is still **not
+enabled** — no `hksv:` block, `srtp:` still disabled.
 
 🔴 **Revert trigger: when go2rtc#2130 merges and ships in an official release, delete the build
 stage in `Dockerfile.go2rtc` and go back to the official digest-pinned `alexxit/go2rtc` image.** The
