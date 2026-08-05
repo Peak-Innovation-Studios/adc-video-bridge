@@ -69,10 +69,25 @@ baton, the baton wins.
   that our *perpetual* session holds the only e2e slot, locking out ADC's own web player. **If true,
   make-before-break's central assumption is wrong** — the overlap could never hold two sessions and
   would always fall back to break-before-make, meaning the ~1.2 s gap is not actually closed.
-  **How to settle it, cheaply:** at any token refresh (every 600 s), grep the container logs for
-  `Second concurrent session refused by Alarm.com`. That line firing routinely ⇒ one session only.
-  A second, independent check: with the bridge streaming, try the **web player** — if it reliably
-  fails only while we are connected, that is the same finding from the other side.
+  **How to settle it — use these EXACT strings** (an earlier version of this baton said only "grep
+  for the refusal line", which is not enough: the *positive* case has its own message and is the one
+  that actually proves the design works). Needs sudo; use a large tail, since a status line prints
+  every 60 s:
+  ```
+  sudo .../docker-compose logs --tail=3000 adc-video-bridge | grep -E \
+    "Seamless reconnect|stays live during overlap|waiting for first RTP to cut over|\
+Second concurrent session refused|Overlap did not complete|died mid-overlap"
+  ```
+  | Line | Verdict |
+  |---|---|
+  | `Pending session connected, waiting for first RTP to cut over` | ⭐ **two sessions ALLOWED — the design works** |
+  | `Second concurrent session refused by Alarm.com` | one session only ⇒ overlap is a permanent no-op |
+  | `Overlap did not complete; keeping the current session` | second session opened, no RTP within budget |
+  | `Active session died mid-overlap` | fallback path ran |
+  | **no `Seamless reconnect` at all** | nothing has been observed yet — the reconnect path only runs
+    when already `streaming` and a token arrives (~600 s). Wait and re-run; an empty grep is **not** evidence. |
+  A second, independent check from the other side: with the bridge streaming, try the **web player**
+  — if it reliably fails only while we are connected, that points the same way.
 - 🔴 **An agent CANNOT do the rebuild — do not plan around it.** `sudo` on Kaikoura requires David's
   password (verified 2026-08-04: `sudo -n` fails, and `docker` needs privileges), and every compose
   command in [`SYNOLOGY.md`](SYNOLOGY.md) is sudo-prefixed. SSH itself works fine as `dpeak`, so
