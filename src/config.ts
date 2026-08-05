@@ -38,7 +38,9 @@ export interface AppConfig {
 const DEFAULT_CONFIG: Omit<AppConfig, 'alarm'> = {
   cameras: [],
   go2rtc: {
-    apiUrl: 'http://localhost:1984',
+    // Explicit loopback, not `localhost`: `localhost` can resolve to `::1`,
+    // which ffmpeg treats differently than the IPv4 loopback address.
+    apiUrl: 'http://127.0.0.1:1984',
     rtspPort: 8554,
   },
   logging: {
@@ -170,4 +172,14 @@ export function loadConfig(): AppConfig {
       : undefined,
     logging: { ...DEFAULT_CONFIG.logging, ...fileConfig.logging },
   });
+}
+
+/**
+ * The RTSP base URL ffmpeg publishes to. Derived from `apiUrl` rather than
+ * configured separately: both address the same go2rtc, and two keys could
+ * drift apart silently after the container split.
+ */
+export function go2rtcRtspBaseUrl(config: AppConfig): string {
+  const host = new URL(config.go2rtc.apiUrl).hostname;
+  return `rtsp://${host}:${config.go2rtc.rtspPort}`;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadConfig } from './config.js';
+import { loadConfig, go2rtcRtspBaseUrl } from './config.js';
 
 vi.mock('node:fs', () => ({
   readFileSync: vi.fn(),
@@ -86,7 +86,7 @@ alarm:
     process.env.ADC_USERNAME = 'u';
     process.env.ADC_PASSWORD = 'p';
     const config = loadConfig();
-    expect(config.go2rtc.apiUrl).toBe('http://localhost:1984');
+    expect(config.go2rtc.apiUrl).toBe('http://127.0.0.1:1984');
     expect(config.go2rtc.rtspPort).toBe(8554);
   });
 
@@ -199,5 +199,27 @@ homebridge:
     process.env.ADC_PASSWORD = 'p';
 
     expect(() => loadConfig()).toThrow('homebridge.motionUrl must use HTTP or HTTPS');
+  });
+
+  it('derives the RTSP base URL from the go2rtc API URL host', () => {
+    existsSync.mockReturnValue(true);
+    readFileSync.mockReturnValue('go2rtc:\n  apiUrl: "http://192.168.7.42:1984"\n  rtspPort: 8554\n');
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+
+    const config = loadConfig();
+
+    expect(go2rtcRtspBaseUrl(config)).toBe('rtsp://192.168.7.42:8554');
+  });
+
+  it('defaults the RTSP base URL to loopback, matching pre-split behaviour', () => {
+    existsSync.mockReturnValue(false);
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+
+    const config = loadConfig();
+
+    expect(config.go2rtc.apiUrl).toBe('http://127.0.0.1:1984');
+    expect(go2rtcRtspBaseUrl(config)).toBe('rtsp://127.0.0.1:8554');
   });
 });
