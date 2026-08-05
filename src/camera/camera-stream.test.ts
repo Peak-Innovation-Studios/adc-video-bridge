@@ -317,6 +317,88 @@ describe('CameraStream.reconnect', () => {
   });
 });
 
+describe('CameraStream session callbacks', () => {
+  let stream: CameraStream;
+
+  beforeEach(() => {
+    stream = new CameraStream('cam-123', 'test-camera', 'rtsp://localhost:8554');
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('onTrackReady starts ffmpeg, creates the video socket, and marks the active session streaming', () => {
+    const session = { h264Fmtp: null } as any;
+    (stream as any).active = session;
+    const startFfmpeg = vi.spyOn(stream as any, 'startFfmpeg').mockImplementation(() => {});
+
+    (stream as any).sessionCallbacks.onTrackReady(session);
+
+    expect(startFfmpeg).toHaveBeenCalledWith(session);
+    expect((stream as any).videoSocket).not.toBeNull();
+    expect(stream.state).toBe('streaming');
+  });
+
+  it('onTrackReady does not mark the stream streaming for a session that is no longer active', () => {
+    const activeSession = { h264Fmtp: null } as any;
+    const staleSession = { h264Fmtp: null } as any;
+    (stream as any).active = activeSession;
+    vi.spyOn(stream as any, 'startFfmpeg').mockImplementation(() => {});
+
+    (stream as any).sessionCallbacks.onTrackReady(staleSession);
+
+    expect(stream.state).not.toBe('streaming');
+  });
+
+  it('onRtp forwards packets from the active session to the video socket', () => {
+    const session = {} as any;
+    const mockSocket = { send: vi.fn(), close: vi.fn() };
+    (stream as any).active = session;
+    (stream as any).videoSocket = mockSocket;
+    (stream as any).videoPort = 12345;
+
+    const packet = Buffer.from([1, 2, 3]);
+    (stream as any).sessionCallbacks.onRtp(session, packet);
+
+    expect(mockSocket.send).toHaveBeenCalledWith(packet, 12345, '127.0.0.1');
+  });
+
+  it('onRtp ignores packets from a session that is no longer active', () => {
+    const activeSession = {} as any;
+    const otherSession = {} as any;
+    const mockSocket = { send: vi.fn(), close: vi.fn() };
+    (stream as any).active = activeSession;
+    (stream as any).videoSocket = mockSocket;
+    (stream as any).videoPort = 12345;
+
+    (stream as any).sessionCallbacks.onRtp(otherSession, Buffer.from([1, 2, 3]));
+
+    expect(mockSocket.send).not.toHaveBeenCalled();
+  });
+
+  it('handleSessionFailed sets state to error for the active session', () => {
+    const session = {} as any;
+    (stream as any).active = session;
+    (stream as any)._state = 'streaming';
+
+    (stream as any).handleSessionFailed(session);
+
+    expect(stream.state).toBe('error');
+  });
+
+  it('handleSessionFailed leaves state alone for a session that is no longer active', () => {
+    const activeSession = {} as any;
+    const staleSession = {} as any;
+    (stream as any).active = activeSession;
+    (stream as any)._state = 'streaming';
+
+    (stream as any).handleSessionFailed(staleSession);
+
+    expect(stream.state).toBe('streaming');
+  });
+});
+
 describe('CameraStream ffmpeg mid-stream exit recovery', () => {
   let stream: CameraStream;
   let exitHandler: (code: number | null) => void;
