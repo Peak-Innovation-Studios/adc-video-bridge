@@ -23,10 +23,11 @@ baton, the baton wins.
 - **Working tree:** Run `git status --short`. No agent has uncommitted work.
 - **Validation (this session, on `main`):** `npm run build` clean, `npm test` **11 files / 145 tests**,
   `npm run audit:prod` passed with the documented GHSA-2p57-rm9w-gvfp exception.
-- **🔴 Kaikoura is live and streaming, but is NOT running the circuit breaker.** It runs the
-  previous image. The breaker touched `src/`, so deploying it needs
-  `docker-compose up -d --build` and **David's sudo password**. Nothing about it has executed
-  against the live API — its behaviour is asserted by tests only.
+- **Kaikoura is live, streaming, and running the circuit breaker** — David rebuilt it 2026-08-04.
+  Verified sudo-free: go2rtc answers `401` on its bound address, so the container is up and auth is
+  enforced. ⚠️ **Not yet verified: whether the breaker has actually opened or probed in anger.**
+  That needs `docker-compose logs` (sudo) — grep for `Circuit OPEN`, `probing`, and
+  `Circuit closed`. Until the camera's WiFi is fixed, expect it to open.
   Otherwise unchanged and healthy: go2rtc serves 84–127 KB JPEGs with distinct md5s, a real
   `rtsp+tcp` publisher, and **0** WebSocket 401s (was ~60/hour). Motion, doorbell, audio and HKSV
   remain disabled.
@@ -69,7 +70,7 @@ baton, the baton wins.
   5s timeout. **The trap is broader than the werift pin: any fixture exercising code our hardening
   made more tolerant will pass here and fail there.** Fixed on both branches (`e971299`).
 - **Whose turn:** **David** — the camera's WiFi (item 1) is the only thing no code can fix, and it
-  gates everything else. Secondary David item: deploying the breaker needs a sudo rebuild (item 2).
+  gates everything else. The breaker is deployed; agent work continues on make-before-break.
 
 ### What's left (priority order)
 
@@ -77,28 +78,25 @@ baton, the baton wins.
    2026-08-03 outage and will again; a power-cycle clears the symptom, not the cause. Wired Ethernet
    if the camera supports it, else relocate it or add an AP. Matters more here than for normal use:
    Alarm.com designs for *on-demand* viewing, this bridge holds a **perpetual** session.
-2. **(David — sudo)** **Deploy the circuit breaker** — `docker-compose up -d --build` on Kaikoura.
-   It is committed on `main` but the running image predates it. ⚠️ Sensible to do *after* item 1, so
-   the first live exercise of the breaker is not during a known-bad WiFi window.
-3. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
+2. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
    ⚠️ `chmod` alone will not hold: it is the **volume's default ACL**, and the Homebridge UI rewrites
    the file on every settings change. Durable fix is at the shared-folder/ACL level.
-4. **(David, then agent)** **HKSV is now unblocked** — the event stream delivers for the first time.
+3. **(David, then agent)** **HKSV is now unblocked** — the event stream delivers for the first time.
    Needs `videoConfig.recording: true` + `prebuffer` + `motion` + `porthttp` in Homebridge, the
    bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
    Home app. ⚠️ Not before item 1.
-5. **(Agent — matters most once HKSV is on)** **Make-before-break on token refresh.** Measured
+4. **(Agent — matters most once HKSV is on)** **Make-before-break on token refresh.** Measured
    **~1.2s media gap every 600s**: `reconnect()` closes the old PeerConnection before building the
    new one. The RTSP publisher never drops (ffmpeg spawns once in 30 min), so live view is fine and
    recording is not. Filed upstream as
    [#25](https://github.com/Omar-L/adc-video-bridge/issues/25).
-6. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
+5. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
    `config/config.yaml`. Note `src/discover.ts` already generates both blocks; the job is
    reconciling at startup, not deriving names.
-7. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
+6. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
    subscribed. ⚠️ A camera demoted to Proxy has **no audio at all**, so this only means anything on
    a Direct connection.
-8. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
+7. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
    has no printf width specifiers. Cosmetic; the generated YAML is fine.
 
 ### Do not touch / gotchas
