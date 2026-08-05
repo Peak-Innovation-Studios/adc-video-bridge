@@ -40,9 +40,17 @@ vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
 }));
 
-vi.mock('../utils/logger.js', () => ({
-  createChildLogger: () => logSpy,
-}));
+vi.mock('../utils/logger.js', async () => {
+  // Keep the real scrubRtspCredentials rather than stubbing it — tests below
+  // assert on its actual redaction behaviour (e.g. that a spawn error's
+  // message survives scrubbing intact when it holds no credentials, and
+  // that camera-stream.ts never bypasses it with a raw string).
+  const actual = await vi.importActual<typeof import('../utils/logger.js')>('../utils/logger.js');
+  return {
+    createChildLogger: () => logSpy,
+    scrubRtspCredentials: actual.scrubRtspCredentials,
+  };
+});
 
 vi.mock('../utils/retry.js', () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
@@ -1049,6 +1057,127 @@ describe('CameraStream ffmpeg mid-stream exit recovery', () => {
     expect((stream as any).ffmpeg).toBe(replacement);
 
     staleExitHandler(0);
+
+    expect((stream as any).ffmpeg).toBe(replacement);
+    expect(stream.state).toBe('streaming');
+    expect(callback).not.toHaveBeenCalled();
+  });
+});
+
+describe('CameraStream ffmpeg spawn error', () => {
+  // Without an 'error' listener on the child process, Node treats a spawn
+  // failure (binary missing, PATH problem, permission error, ...) as an
+  // uncaught exception and dumps it straight to stderr — including
+  // err.spawnargs, the full argv, which now carries the credentialed
+  // rtspUrl. This suite proves the listener exists, never lets a raw Error
+  // reach the logger, and follows the same ownership gating as the 'exit'
+  // handler above.
+  let stream: CameraStream;
+  let errorHandler: (err: Error) => void;
+
+  beforeEach(async () => {
+    stream = new CameraStream('cam-123', 'test-camera', 'rtsp://rtspuser:s3cret@127.0.0.1:8554');
+
+    (stream as any).videoPort = 12345;
+    (stream as any)._state = 'streaming';
+
+    const { spawn } = await import('node:child_process');
+    vi.mocked(spawn).mockReturnValue({
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn((event: string, handler: any) => {
+        if (event === 'error') errorHandler = handler;
+      }),
+      kill: vi.fn(),
+    } as any);
+
+    (stream as any).startFfmpeg({ h264Fmtp: null });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('registers an error handler on the spawned child', () => {
+    expect(errorHandler).toBeTypeOf('function');
+  });
+
+  it('never logs the raw Error object, only a string message', () => {
+    // spawnargs (containing the credentialed URL) lives only on the Error
+    // instance itself. If any log.* call in the error handler passed the
+    // raw error — e.g. `log.error({ err }, ...)` — pino's default error
+    // serializer would re-surface spawnargs regardless of any scrubbing
+    // done elsewhere. Assert every field of every logged object is a
+    // primitive, never the Error instance.
+    const err = Object.assign(new Error('spawn ffmpeg ENOENT'), {
+      spawnargs: ['ffmpeg', '-i', 'rtsp://rtspuser:s3cret@127.0.0.1:8554/test-camera'],
+    });
+
+    errorHandler(err);
+
+    const allCalls = [...logSpy.error.mock.calls, ...logSpy.warn.mock.calls, ...logSpy.info.mock.calls, ...logSpy.debug.mock.calls];
+    expect(allCalls.length).toBeGreaterThan(0);
+    for (const [fields] of allCalls) {
+      for (const value of Object.values(fields)) {
+        expect(value).not.toBeInstanceOf(Error);
+        expect(JSON.stringify(value)).not.toContain('spawnargs');
+      }
+    }
+  });
+
+  it('does not leak credentials from the error message into the log', () => {
+    const err = new Error("spawn ffmpeg failed for rtsp://rtspuser:s3cret@127.0.0.1:8554/test-camera");
+
+    errorHandler(err);
+
+    const loggedText = JSON.stringify(logSpy.error.mock.calls);
+    expect(loggedText).not.toContain('s3cret');
+    expect(loggedText).toContain('[REDACTED]');
+  });
+
+  it('sets state to error and clears the ffmpeg reference when streaming', () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+
+    errorHandler(new Error('spawn ffmpeg ENOENT'));
+
+    expect(stream.state).toBe('error');
+    expect((stream as any).ffmpeg).toBeNull();
+    expect(callback).toHaveBeenCalledOnce();
+  });
+
+  it('does not invoke onUnexpectedExit when not streaming', () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+    (stream as any)._state = 'connecting';
+
+    errorHandler(new Error('spawn ffmpeg ENOENT'));
+
+    expect(callback).not.toHaveBeenCalled();
+    expect((stream as any).ffmpeg).toBeNull();
+  });
+
+  it('ignores a late error from an intentionally stopped or superseded ffmpeg process', async () => {
+    const callback = vi.fn();
+    stream.onUnexpectedExit = callback;
+    const staleErrorHandler = errorHandler;
+
+    const { spawn } = await import('node:child_process');
+    const replacement = {
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn() },
+      stderr: { on: vi.fn() },
+      on: vi.fn(),
+      kill: vi.fn(),
+    } as any;
+    vi.mocked(spawn).mockReturnValue(replacement);
+
+    (stream as any).ffmpeg = null;
+    (stream as any).startFfmpeg({ h264Fmtp: null });
+    expect((stream as any).ffmpeg).toBe(replacement);
+
+    staleErrorHandler(new Error('spawn ffmpeg ENOENT'));
 
     expect((stream as any).ffmpeg).toBe(replacement);
     expect(stream.state).toBe('streaming');

@@ -473,6 +473,36 @@ export class CameraStream {
         this.onUnexpectedExit?.();
       }
     });
+
+    // Without this listener, Node treats an unhandled child-process 'error'
+    // (spawn failed: binary missing, PATH problem, permission error, ...) as
+    // an uncaught exception and prints it straight to stderr — bypassing
+    // pino entirely, so none of redact.paths, the logMethod hook, or the
+    // stderr scrub above ever sees it. That default-handler dump includes
+    // `err.spawnargs`, the full argv, which now contains the credentialed
+    // rtspUrl. Log only a scrubbed err.message — never pass the raw Error
+    // to the logger: pino's default error serializer surfaces `err.spawnargs`
+    // itself if a raw Error is ever logged under an `err` key.
+    ffmpeg.on('error', (err) => {
+      // Same identity check as the exit handler above: a stale or superseded
+      // child's error must not clear the current child's reference or
+      // resurrect a stream that's already been torn down.
+      if (this.ffmpeg !== ffmpeg) {
+        log.debug({ camera: this.cameraName }, 'Ignoring stale ffmpeg error');
+        return;
+      }
+
+      log.error(
+        { camera: this.cameraName, message: scrubRtspCredentials(err.message) },
+        'ffmpeg failed to start',
+      );
+      this.ffmpeg = null;
+
+      if (this._state === 'streaming') {
+        this._state = 'error';
+        this.onUnexpectedExit?.();
+      }
+    });
   }
 
   /** Allocate a random available UDP port by briefly binding then releasing. */
