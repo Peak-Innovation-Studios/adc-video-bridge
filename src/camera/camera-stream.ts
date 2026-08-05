@@ -39,6 +39,11 @@ export class CameraStream {
   // The resolver for reconnect()'s outcome promise; assigned while an overlap
   // is in flight, null once settled.
   private overlapSettle: ((outcome: OverlapOutcome) => void) | null = null;
+  // Set by handleSessionFailed() when the active session dies mid-overlap;
+  // consulted once the overlap settles and reset both before a new overlap
+  // starts and once consumed, so a stale flag can never force a spurious
+  // fallback on a later, healthy reconnect.
+  private activeDied = false;
   private ffmpeg: ChildProcess | null = null;
   private videoSocket: Socket | null = null;
   private videoPort = 0;
@@ -142,6 +147,10 @@ export class CameraStream {
     // stale pending from an earlier reconnect must not survive into this one.
     await this.discardPending('superseded by a newer reconnect');
 
+    // A flag left over from a previous overlap must never leak into this
+    // one — only this overlap's own handleSessionFailed() may set it below.
+    this.activeDied = false;
+
     const outcome = new Promise<OverlapOutcome>((resolve) => {
       this.overlapSettle = resolve;
       this.overlapTimer = setTimeout(() => {
@@ -157,13 +166,36 @@ export class CameraStream {
       // just clears the budget timer and settles the outcome (discardPending
       // settles internally now — see its own comment).
       const msg = err instanceof Error ? err.message : String(err);
+      // A rejected pending while active is healthy is the signature of "ADC
+      // permits only one session per camera" — the question we cannot test
+      // until the camera's WiFi is fixed. Log distinctly so production
+      // answers it: if this repeats every refresh, we have our answer.
+      log.warn(
+        { camera: this.cameraName, reason: msg },
+        'Second concurrent session refused by Alarm.com — keeping the current one. ' +
+        'If this repeats every refresh, ADC permits only one session per camera and ' +
+        'make-before-break is not achievable (see Omar-L#25).',
+      );
       await this.discardPending(msg);
     }
 
     const result = await outcome;
-    if (result === 'kept') {
+    if (result === 'kept' && !this.activeDied) {
       log.info({ camera: this.cameraName }, 'Overlap did not complete; keeping the current session');
+      return;
     }
+    if (result === 'kept' && this.activeDied) {
+      // The old session died during the overlap, so there is nothing left to
+      // protect. handleSessionFailed() has already discarded pending, so the
+      // fallback below is never racing a still-live overlap session. Fall
+      // back to today's break-before-make and let it report.
+      this.activeDied = false;
+      log.warn({ camera: this.cameraName }, 'Active session died mid-overlap; falling back to a full reconnect');
+      await this.tryConnect(config);
+    }
+    // Otherwise result === 'cutover': cutOver() already logged and handled
+    // everything, and activeDied cannot be true here (cutOver's own
+    // _state === 'streaming' guard means the two never coincide).
   }
 
   /** Tear down the entire pipeline. */
@@ -320,7 +352,22 @@ export class CameraStream {
   }
 
   private handleSessionFailed(session: PeerSession): void {
-    if (session === this.active) this._state = 'error';
+    if (session === this.pending) {
+      // Dead weight — left alone it would just sit until the overlap budget
+      // expires with no chance of ever cutting over.
+      void this.discardPending('peer connection failed');
+      return;
+    }
+    if (session !== this.active) return;
+
+    this.activeDied = true; // consulted once the overlap settles, in reconnect()
+    this._state = 'error';
+    // cutOver() already refuses to promote once _state !== 'streaming', so
+    // any in-flight pending negotiation can never complete anyway. Discard
+    // it now — settling the overlap immediately — rather than leaving
+    // reconnect() parked for the rest of the 10s budget before it can fall
+    // back.
+    void this.discardPending('active session died mid-overlap');
   }
 
   private startFfmpeg(session: PeerSession): void {

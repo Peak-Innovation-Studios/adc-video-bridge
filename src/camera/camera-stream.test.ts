@@ -635,6 +635,55 @@ describe('CameraStream make-before-break', () => {
     await stream.stop();
     await expect(secondPromise).resolves.toBeUndefined();
   });
+
+  it('logs a rejected second session distinctly, and keeps streaming', async () => {
+    const active: any = { id: 1, close: vi.fn().mockResolvedValue(undefined) };
+    (stream as any).active = active;
+    vi.spyOn(stream as any, 'negotiatePending')
+      .mockRejectedValue(new Error('SESSION_REJECTED'));
+
+    await expect(stream.reconnect(makeConfig())).resolves.toBeUndefined();
+
+    expect((stream as any).active).toBe(active);
+    expect(stream.state).toBe('streaming');
+  });
+
+  it('falls back to break-before-make when the old session dies mid-overlap', async () => {
+    const active: any = { id: 1, close: vi.fn().mockResolvedValue(undefined) };
+    (stream as any).active = active;
+    const fallback = vi.spyOn(stream as any, 'tryConnect').mockResolvedValue(undefined);
+    vi.spyOn(stream as any, 'negotiatePending').mockImplementation(async () => {
+      (stream as any).handleSessionFailed(active);   // old dies during overlap
+    });
+
+    await stream.reconnect(makeConfig());
+
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards a still-live pending before falling back, rather than leaving it for tryConnect()', async () => {
+    // Ambiguity item 4: the fallback must not run while pending is still
+    // live, or tryConnect()'s own stop() would discard it and the ordering
+    // becomes hard to reason about. handleSessionFailed() discards pending
+    // itself, so by the time tryConnect() runs there is nothing left for it
+    // to clean up.
+    const active: any = { id: 1, close: vi.fn().mockResolvedValue(undefined) };
+    const pendingClose = vi.fn().mockResolvedValue(undefined);
+    (stream as any).active = active;
+    vi.spyOn(stream as any, 'tryConnect').mockImplementation(async () => {
+      // If pending were still live here, this assertion catches it.
+      expect((stream as any).pending).toBeNull();
+    });
+    vi.spyOn(stream as any, 'negotiatePending').mockImplementation(async function (this: any) {
+      this.pending = { id: 2, close: pendingClose };
+      this.handleSessionFailed(active); // old dies while a pending negotiation is still live
+    });
+
+    await stream.reconnect(makeConfig());
+
+    expect(pendingClose).toHaveBeenCalledTimes(1);
+    expect((stream as any).pending).toBeNull();
+  });
 });
 
 describe('CameraStream session callbacks', () => {
@@ -721,6 +770,40 @@ describe('CameraStream session callbacks', () => {
     (stream as any).handleSessionFailed(staleSession);
 
     expect(stream.state).toBe('streaming');
+  });
+
+  it('handleSessionFailed discards a failing pending session rather than leaving it to expire', () => {
+    // A non-null pending distinct from active, so this can't pass vacuously
+    // on a null === null match.
+    const activeSession = { id: 1 } as any;
+    const pendingClose = vi.fn().mockResolvedValue(undefined);
+    const pendingSession = { id: 2, close: pendingClose };
+    (stream as any).active = activeSession;
+    (stream as any).pending = pendingSession;
+    (stream as any)._state = 'streaming';
+
+    (stream as any).handleSessionFailed(pendingSession);
+
+    expect((stream as any).pending).toBeNull();
+    expect(pendingClose).toHaveBeenCalledTimes(1);
+    // Only the pending branch ran — the active session is untouched.
+    expect(stream.state).toBe('streaming');
+  });
+
+  it('handleSessionFailed sets activeDied and discards any live pending when the active session dies', () => {
+    const pendingClose = vi.fn().mockResolvedValue(undefined);
+    const activeSession = { id: 1 } as any;
+    const pendingSession = { id: 2, close: pendingClose };
+    (stream as any).active = activeSession;
+    (stream as any).pending = pendingSession;
+    (stream as any)._state = 'streaming';
+
+    (stream as any).handleSessionFailed(activeSession);
+
+    expect(stream.state).toBe('error');
+    expect((stream as any).activeDied).toBe(true);
+    expect((stream as any).pending).toBeNull();
+    expect(pendingClose).toHaveBeenCalledTimes(1);
   });
 });
 
