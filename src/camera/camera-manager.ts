@@ -116,8 +116,23 @@ export class CameraManager {
         // reconnect() can resolve well after something else (a concurrent
         // recovery, a mid-overlap death) has already torn this stream down —
         // crediting that as a success would hide a real failure from the
-        // breaker. Only a stream that is actually still streaming earns it.
-        if (stream.state === 'streaming') {
+        // breaker. Two independent things have to hold, and neither implies
+        // the other:
+        //   - We still own the guard. A stale attempt whose guard was taken
+        //     over (handleUnexpectedExit -> a fresh start) is crediting a
+        //     recovery that is not its own.
+        //   - The stream is not dead. An attempt can still own the guard and
+        //     yet have had its stream torn down while it was in flight.
+        // 'connecting' counts as alive, and deliberately so: the activeDied
+        // fallback awaits tryConnect(), which resolves on 'sessionStarted'
+        // while _state is still 'connecting' — only onTrackReady (first RTP)
+        // flips it to 'streaming'. Demanding 'streaming' here would record
+        // neither success nor failure on a genuine recovery, leaving
+        // failureCount and the breaker uncleared. Unknown/dead states default
+        // to no credit: a missed credit is bounded, a false one hides an outage.
+        const stillOurs = this.activeStarts.get(cameraId) === startId;
+        const alive = stream.state === 'streaming' || stream.state === 'connecting';
+        if (stillOurs && alive) {
           this.failureCount.delete(cameraId);
           breaker.recordSuccess();
         }

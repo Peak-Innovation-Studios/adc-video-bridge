@@ -420,6 +420,35 @@ describe('CameraManager backoff', () => {
       expect(manager.getStatus()).toEqual({ driveway: 'error (circuit open)' });
     });
 
+    it('credits a recovery that fell back to a full restart before onTrackReady', async () => {
+      autoEmitTokens();
+      await startWithCamera();
+      const stream = getStream();
+      stream.start.mockRejectedValue(new Error('camera offline'));
+
+      await driveUntilOpen();
+      expect(manager.getStatus()).toEqual({ driveway: 'idle (circuit open)' });
+
+      // The active session died mid-overlap, so reconnect() fell back to
+      // break-before-make. That path awaits tryConnect(), which resolves on
+      // PeerSession.connect() -> 'sessionStarted' — while _state is still
+      // 'connecting', because only onTrackReady (first RTP) flips it to
+      // 'streaming'. This is a REAL recovery, and it must reset the breaker;
+      // requiring 'streaming' here records neither success nor failure, so
+      // six such fallbacks with no clean cutover between would leave the
+      // counters uncleared.
+      stream.state = 'streaming';
+      stream.reconnect.mockImplementation(async () => {
+        stream.state = 'connecting';
+      });
+
+      await vi.advanceTimersByTimeAsync(FIVE_MIN);
+
+      expect(stream.reconnect).toHaveBeenCalledOnce();
+      // Credited: the '(circuit open)' suffix is gone.
+      expect(manager.getStatus()).toEqual({ driveway: 'connecting' });
+    });
+
     it('does not let a stale reconnect() completion clear a newer start\'s guard', async () => {
       autoEmitTokens();
       await startWithCamera();
