@@ -162,6 +162,40 @@ open token circuit permanent.
 
 ---
 
+## 🔴 BLOCKER: go2rtc API auth and HomeKit pairing are mutually exclusive
+
+**Measured 2026-08-04 on the deployed fork (`1.9.14+dev.506cfa7`).** Pairing fails; the Home app
+retries for ~a minute and gives up.
+
+The HAP accessory is served on the **API port** — `internal/homekit/homekit.go` passes
+`Port: uint16(api.Port)` — and `internal/api/api.go`'s `middlewareAuth` has **no path exemption**.
+So HomeKit's pairing requests hit Basic auth and are rejected:
+
+```
+POST /pair-setup   -> 401
+POST /pair-verify  -> 401
+POST /accessories  -> 401
+```
+
+HomeKit speaks HAP, not HTTP Basic, and cannot authenticate. **With go2rtc API auth enabled at all,
+native HomeKit pairing cannot work.** ⚠️ `local_auth` is NOT the deciding factor — an iPhone is
+never on loopback, so the LAN path is blocked either way.
+
+**Do not "fix" this by disabling go2rtc's API auth.** That would leave the snapshot/stream API
+unauthenticated to every device on the LAN — for a security camera — and it breaks the compose
+healthcheck, which asserts a 401. The options are: patch the fork so HAP paths bypass the auth
+middleware (this looks like a real defect in PR #2130 and is worth reporting there); run a second,
+auth-less go2rtc dedicated to HomeKit; or keep Homebridge serving HomeKit.
+
+✅ **One risk retired while diagnosing:** `Store: &go2rtcPairingStore{}` **is** wired in the fork, so
+the spec's "pairings may be lost on every restart" concern does not apply. go2rtc also writes
+`device_id` and `device_private` back into `go2rtc.yaml` as designed — observed directly.
+
+🔑 **Config schema correction:** the key is `homekit:` keyed by stream name with `hksv: true` nested
+under it — **not** a top-level `hksv:` block as earlier docs said. Go's YAML ignores unknown keys, so
+the wrong spelling starts cleanly and advertises nothing, which looks exactly like "HomeKit shows no
+accessory to pair."
+
 ## Standing decision: native HKSV via go2rtc
 
 **Spiked and measured 2026-08-03. Verdict: track, adopt when it ships.** Recorded here so it is not
