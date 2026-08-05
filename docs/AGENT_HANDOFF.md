@@ -117,7 +117,29 @@ Second concurrent session refused|Overlap did not complete|died mid-overlap"
   change and a deploy — and the deploy was the one that got blamed. When two changes overlap, the
   first question is which one the evidence actually names; here the logs named neither until they
   were read, and they named the camera.
-- 🆕 **Native HKSV Phase 0 is MERGED but NOT DEPLOYED.** `main` now carries the two-container split
+- 🆕 **PHASE 1 IS DEPLOYED (2026-08-04). The two-container split is LIVE on Kaikoura.**
+  Deployed commit `5300742`, 0 behind `origin/main`. Verified sudo-free:
+  | Check | Result |
+  |---|---|
+  | go2rtc actual bind | **`192.168.7.42:8554` / `:1984` — NOT `0.0.0.0`** |
+  | Auth | `401` unauthenticated, `200` authenticated |
+  | Bridge `apiUrl` | `http://192.168.7.42:1984` (was loopback) |
+  | `go2rtc.yaml` `listen:` | `${GO2RTC_BIND}:…` interpolating correctly |
+  🔑 **The bind row is the one that matters** — the whole security argument for host networking
+  rested on `${GO2RTC_BIND}` resolving, and that was previously verified only by reading go2rtc's
+  source. It is now confirmed in production.
+  ❌ **The BRIDGE half is NOT yet verified.** No media, but the camera was already down before the
+  deploy, so that proves nothing. Needs `docker-compose logs --tail=40 adc-video-bridge` (sudo):
+  `Camera … has not yet dialed in` + the retry ladder means healthy-against-a-dead-camera;
+  connection-refused would mean the addressing fix did not take.
+  ⚠️ **Do not trust a host `ps` process count to tell you whether a container is running** —
+  measured 2026-08-04: it reported `go2rtc procs: 0` while go2rtc was demonstrably serving HTTP with
+  correct auth. Container processes are not reliably visible to host `ps` on DSM. Use the HTTP
+  response.
+  ✅ **Phase 2 decision taken: `motion: api`** (David, 2026-08-04) — the ADC event stream now
+  delivers, and it is more accurate than `detect`'s bitrate heuristic. Phase 2 itself remains
+  blocked on a stable camera.
+- 📦 **Phase 0 (the code) is merged.** `main` now carries the two-container split
   (`Dockerfile.go2rtc`, a two-service `docker-compose.yml`, an authenticated bridge). **The running
   image does not have any of it** — Kaikoura is still the single fused container. HKSV itself is
   **not enabled**: no `hksv:` block, no pairing. That is Phase 2.

@@ -49,8 +49,10 @@ the event stream delivering for the first time.
 document's own open question ("is `motion: detect` accurate enough on a 10 fps stream, whose GOP
 structure is unusual?") argues against `detect`.
 
-🔴 **Open — decide before Phase 2.** Prefer `motion: api` driven by the ADC event stream; fall back
-to `motion: detect` if wiring the trigger proves awkward. Do not implement both.
+✅ **DECIDED 2026-08-04 (David): `motion: api`.** Driven by the ADC event stream, which now
+delivers. More accurate than a bitrate heuristic, and it retires the older document's own open
+question about whether `detect`'s P-frame analysis is reliable on a 10 fps stream with an unusual
+GOP structure. Do not implement both.
 
 ## Architecture
 
@@ -211,7 +213,6 @@ dark.
 
 ## Open questions
 
-- **`motion: api` vs `motion: detect`** — see Corrections §2. Decide before Phase 2.
 - What HKSV recording costs on the **Homebridge** path, still never measured. It sets the actual
   benefit margin but does not change the decision's direction.
 - Whether the pinned fork commit is based on go2rtc `1.9.14` or a different release, and whether any
