@@ -1,7 +1,23 @@
 # Native HKSV deployment design
 
-**Status:** Design only. **Blocked on** [AlexxIT/go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130)
-merging and shipping in an official release. Do not implement before then — see "Why wait".
+> 🔄 **SUPERSEDED 2026-08-04 by
+> [`2026-08-04-native-hksv-implementation-design.md`](2026-08-04-native-hksv-implementation-design.md).**
+> Read that one for what is being built. This document is kept because its **measured evidence** is
+> the foundation — the spike numbers, the networking comparison, and the observation that go2rtc
+> writes pairing keys back into its config file.
+>
+> ⚠️ **Two things here are now known to be wrong or stale:**
+> 1. *"What changes in the bridge: only configuration … no code change."* Incorrect —
+>    `index.ts:43` hardcodes `rtsp://127.0.0.1:…`, taking only the port from config.
+> 2. The **motion source** recommendation of `motion: detect` was chosen *because* the ADC event
+>    stream was failing at ~60 × 401/hour. That is fixed, so `motion: api` is viable again.
+>
+> The "Why wait" section no longer governs: David decided on 2026-08-04 to proceed via a self-build,
+> pinned to a commit SHA with a documented revert trigger.
+
+**Status:** Design only — **superseded, see above.** Was blocked on
+[AlexxIT/go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130) merging and shipping in an
+official release (still open as of 2026-08-04).
 
 **Context:** measured 2026-08-03 (see `Journal.md`). Native go2rtc HKSV recording does **not**
 re-encode: 0.7% CPU, ~22 MB RSS, zero ffmpeg processes, muxing fMP4 fragments in-process.
