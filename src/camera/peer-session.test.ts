@@ -59,6 +59,65 @@ describe('PeerSession', () => {
     expect(later.onReceiveRtp.subscribe).not.toHaveBeenCalled();
   });
 
+  it('lets the real onTrack track win over a placeholder from onRemoteTransceiverAdded (Omar-L#23)', () => {
+    // werift fires onRemoteTransceiverAdded with a placeholder defaultTrack
+    // before it fires onTrack with the real, SSRC-backed track. If the
+    // placeholder ever won the subscription guard, video would silently
+    // never flow. This exercises the actual pc event wiring end to end —
+    // not just the guard in isolation — so a future change that starts
+    // subscribing from onRemoteTransceiverAdded would be caught here.
+    const event = () => {
+      const handlers: Array<(...args: any[]) => void> = [];
+      return {
+        subscribe: vi.fn((handler: (...args: any[]) => void) => {
+          handlers.push(handler);
+        }),
+        emit: (...args: any[]) => {
+          for (const handler of handlers) handler(...args);
+        },
+      };
+    };
+
+    const onRtp = vi.fn();
+    const session = new PeerSession('cam', { onRtp });
+
+    const placeholderRtp = event();
+    const actualRtp = event();
+    const placeholderTrack = { kind: 'video', onReceiveRtp: placeholderRtp };
+    const actualTrack = { kind: 'video', onReceiveRtp: actualRtp };
+    const onRemoteTransceiverAdded = event();
+    const onTrack = event();
+    const pc: any = {
+      onRemoteTransceiverAdded,
+      onTrack,
+      ontrack: null,
+      connectionStateChange: event(),
+      onIceCandidate: event(),
+      iceConnectionStateChange: event(),
+      iceGatheringStateChange: event(),
+      getTransceivers: vi.fn().mockReturnValue([]),
+    };
+
+    (session as any).pc = pc;
+    (session as any).setupPeerConnection();
+
+    onRemoteTransceiverAdded.emit({
+      mid: 'video0',
+      kind: 'video',
+      direction: 'recvonly',
+      receiver: { track: placeholderTrack },
+    });
+
+    onTrack.emit(actualTrack);
+
+    actualRtp.emit({ serialize: () => Buffer.from([1, 2, 3]) });
+    expect(onRtp).toHaveBeenCalledWith(session, Buffer.from([1, 2, 3]));
+
+    onRtp.mockClear();
+    placeholderRtp.emit({ serialize: () => Buffer.from([9, 9, 9]) });
+    expect(onRtp).not.toHaveBeenCalled();
+  });
+
   it('resolves connect() on SESSION_STARTED', async () => {
     const session = new PeerSession('cam', { onRtp: vi.fn() });
     vi.spyOn(session as any, 'createPeerConnection').mockReturnValue({});
