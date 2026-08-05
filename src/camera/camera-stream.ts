@@ -131,6 +131,13 @@ export class CameraStream {
 
   /** Tear down the entire pipeline. */
   async stop(): Promise<void> {
+    // discardPending() nulls this.pending synchronously, before its own
+    // close() await. An abandoned pending session is not inert — its first
+    // RTP still reaches cutOver via handleRtp's identity check — so it must
+    // be detached up front, not after the active-session teardown below has
+    // already had a chance to yield.
+    await this.discardPending();
+
     await this.active?.close();
     this.active = null;
 
@@ -161,6 +168,11 @@ export class CameraStream {
 
   private async tryConnect(config: EndToEndWebrtcConfig): Promise<void> {
     await this.stop();
+    // Belt-and-suspenders: stop() already discards pending, but this method
+    // is about to install a brand-new active session, and a stale pending
+    // surviving to this point must not be left to race and replace it via
+    // cutOver.
+    await this.discardPending();
     this._state = 'connecting';
 
     this.videoPort = await this.allocateUdpPort();
@@ -190,6 +202,16 @@ export class CameraStream {
 
   /** Promote pending to active now that it has proven media flows. */
   private cutOver(session: PeerSession): void {
+    if (this._state !== 'streaming') {
+      // The pipeline was torn down (or the active session already failed)
+      // while this session was negotiating in the background. Its first RTP
+      // must not resurrect a stream that's no longer there to receive it —
+      // release it instead of promoting it.
+      if (this.pending === session) this.pending = null;
+      void session.close().catch(() => {});
+      return;
+    }
+
     const previous = this.active;
     this.active = session;
     this.pending = null;
@@ -199,8 +221,15 @@ export class CameraStream {
       { camera: this.cameraName, from: previous?.id, to: session.id },
       'Cut over to the new session without a media gap',
     );
-    void previous?.close?.().catch(() => {});
+    void previous?.close().catch(() => {});
     this.settleOverlap('cutover');
+  }
+
+  /** Detach and close any in-flight pending overlap session. Idempotent. */
+  private async discardPending(): Promise<void> {
+    const pending = this.pending;
+    this.pending = null;
+    await pending?.close();
   }
 
   /** Resolve whoever is awaiting the current overlap. No-op once already settled. */
@@ -222,7 +251,17 @@ export class CameraStream {
   private async negotiatePending(config: EndToEndWebrtcConfig): Promise<void> {
     const session = new PeerSession(this.cameraName, this.sessionCallbacks);
     this.pending = session;
-    await session.connect(config);
+
+    try {
+      await session.connect(config);
+    } catch (err) {
+      // connect() does not clean up after itself on rejection — it leaves
+      // the RTCPeerConnection and signaling WebSocket live. Nothing else
+      // owns this session, so a leak here is silent and per-reconnect.
+      if (this.pending === session) this.pending = null;
+      await session.close().catch(() => {});
+      throw err;
+    }
   }
 
   private handleSessionFailed(session: PeerSession): void {
