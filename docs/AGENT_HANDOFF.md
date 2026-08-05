@@ -31,10 +31,11 @@ baton, the baton wins.
 - **Validation (as of the commit this baton describes — re-run before trusting it):**
   `npm run build` clean, `npx vitest run` **12 files / 180 tests**, `npm run audit:prod` passed with
   the documented GHSA-2p57-rm9w-gvfp exception.
-  ⚠️ **If you see ~360 tests, an agent worktree is back under `.claude/worktrees/`.**
-  `vitest.config.ts` sets no `include`/`exclude`, so the default glob walks the worktree's copy of
-  `src/` too. Cosmetic when both copies pass — but a **stale** worktree's failures will fail
-  `main`'s suite while pointing at files that look like the ones you are editing.
+  ✅ **Agent worktrees no longer double-count the suite.** They live under `.claude/worktrees/`
+  *inside* the repo, so their copy of `src/` used to match vitest's include glob and every run
+  counted twice (12/180 → 24/360). `vitest.config.ts` now excludes `**/.claude/**`. ⚠️ If you ever
+  edit that `exclude`, **spread `defaultExclude`** — setting it replaces the defaults, and in
+  vitest 4 those are only `node_modules` and `.git`.
 - 🔴 **Kaikoura does NOT have make-before-break yet.** It is still running the circuit-breaker build
   David rebuilt 2026-08-04. `src/` changed, so it needs `docker-compose up -d --build`. ⚠️ Not
   before item 1 — deploying onto a camera with a bad link measures the WiFi, not the change.
