@@ -37,7 +37,13 @@ webrtc:
   listen: ""
 
 srtp:
-  listen: ""
+  # 🔴 REQUIRED once `homekit:` is configured — do NOT set this to "".
+  # internal/srtp returns early on an empty value, leaving srtp.Server nil, and
+  # internal/homekit's streamHandler then refuses every stream with
+  # "homekit: can't work without SRTP server". The accessory still pairs and
+  # looks healthy; it just never sends video, which presents in the Home app as
+  # a camera that pairs fine and shows "No Response".
+  listen: "${GO2RTC_BIND}:8443"
 
 # Each camera needs a matching stream entry.
 # Run "npx tsx src/discover.ts" to find your camera names.

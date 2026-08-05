@@ -206,6 +206,21 @@ under it — **not** a top-level `hksv:` block as earlier docs said. Go's YAML i
 the wrong spelling starts cleanly and advertises nothing, which looks exactly like "HomeKit shows no
 accessory to pair."
 
+## 🔴 `srtp.listen` must NOT be empty once `homekit:` is configured
+
+**Measured 2026-08-04.** The accessory pairs successfully and looks entirely healthy, then shows
+**"No Response"** in the Home app and never sends video.
+
+`internal/srtp` returns early when `listen` is empty, leaving `srtp.Server` **nil**, and
+`internal/homekit`'s `streamHandler` refuses every stream with `homekit: can't work without SRTP
+server`. Nothing in the Home app hints at the cause. Set it to a bound address —
+`"${GO2RTC_BIND}:8443"` (`:8443` is the module's own default) — never `""`.
+
+⚠️ This was flagged during the Phase 0 final review as a "Phase-2 landmine", recorded only in the
+SDD ledger, and **lost when that gitignored worktree was deleted at merge**. It then cost a real
+debugging cycle. 🔑 **A finding that lives only in scratch state does not survive the merge that
+ends the work — move it into the repo before deleting the workspace.**
+
 ## Standing decision: native HKSV via go2rtc
 
 **Spiked and measured 2026-08-03. Verdict: track, adopt when it ships.** Recorded here so it is not
