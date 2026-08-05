@@ -42,68 +42,50 @@ baton, the baton wins.
   counted twice (12/180 → 24/360). `vitest.config.ts` now excludes `**/.claude/**`. ⚠️ If you ever
   edit that `exclude`, **spread `defaultExclude`** — setting it replaces the defaults, and in
   vitest 4 those are only `node_modules` and `.git`.
-- 🔴🔴 **PRODUCTION IS NOT STREAMING RIGHT NOW.** David rebuilt Kaikoura onto make-before-break
-  2026-08-04 (**image now built from `34f1338`**; checkout clean at that commit). Since the rebuild,
-  **no video**. (Previous image was `2e98710` — see below for why NOT to roll back to it.)
-  **Measured sudo-free, post-rebuild:**
-  | Signal | Value | Reading |
-  |---|---|---|
-  | `frame.jpeg` | **0 bytes** | was 84–127 KB before |
-  | go2rtc `bytes_recv` | **0**, flat over 60 s+ | no media reaching go2rtc |
-  | go2rtc producers / receivers | 1 / **0** | publisher entry, no RTP |
-  | `ffmpeg` on host | **absent** for 45 s straight | not running, and not restart-looping |
-  | ports 8554 / 1984 | accepting | go2rtc itself is up |
-  | unauthenticated `frame.jpeg` | **401** | auth still enforced |
-  ✅ **CAUSE FOUND, and it is NOT the rebuild.** Container logs show every attempt closing with
-  Alarm.com's own signaling error: **`"Camera <id> has not yet dialed in"`** (WebSocket code 1000).
-  **The camera is not connected to Alarm.com.** The bridge is behaving exactly as designed — 12
-  signaling attempts, then the manager's `60 → 120 → 300 → 600 s` ladder, `failures:5` and climbing,
-  so the circuit opens at 6. Nothing to fix in code.
-  🔄 **RETRACTED: an earlier version of this baton said "do NOT roll back — the new image is
-  exonerated." That call was wrong** and is the single most important correction here. It rested on
-  "the error text comes from Alarm.com's server, so it cannot be us" — but that describes ADC's
-  *view*, not the cause. **Rolling back to `2e98710` is now the decisive test**, because the camera
-  has been cleared and the rebuild is the only uncontrolled variable left.
-  ⚠️ **Prime suspect is the WiFi work itself** (item 1, same window).
-  🔑 **THE CAMERA HAS BEEN CLEARED. Do not re-investigate it.** It streams perfectly in the
-  Brinks/Alarm.com app, it is on a **closer AP with better signal** than before, and its **IP is
-  unchanged** — so there is no subnet, VLAN or band change. If the camera were off the network the
-  app could not stream it either.
-  ⚠️ **A "different subnet" finding was raised and RETRACTED.** The `172.20.14.x` addresses in the
-  probe payload are `coturnAddressesTuplets` — **Alarm.com's own TURN infrastructure**, not the
-  camera. Do not re-derive that theory.
-  ➡️ **With the camera cleared, the rebuild is the only uncontrolled variable left.** See the
-  rollback test below.
-  **Already ruled out — do not repeat these:**
+- 🔴🔴 **PRODUCTION IS NOT STREAMING.** Kaikoura was rebuilt onto make-before-break 2026-08-04
+  (**image built from `34f1338`**, previous image `2e98710`) and video stopped. Every signaling
+  attempt is closed by Alarm.com with `"Camera <id> has not yet dialed in"` (WebSocket code **1000**,
+  a *normal* close, which is why it does not look like an error).
+  **Measured sudo-free:** `frame.jpeg` **0 bytes** (was 84–127 KB) · go2rtc `bytes_recv` **0**, flat ·
+  producers/receivers **1 / 0** · **no `ffmpeg`** · ports 8554/1984 accepting · unauthenticated
+  `frame.jpeg` still **401**. So go2rtc and auth are fine; nothing reaches them.
+  The bridge itself behaves exactly as designed — 12 signaling attempts, then the manager's
+  `60 → 120 → 300 → 600 s` ladder, breaker opening at 6 failures.
+  ✅ **THE CAMERA IS CLEARED — do not re-investigate it.** It streams perfectly in the Brinks app,
+  sits on a **closer AP with better signal** than before, and its **IP is unchanged** (no subnet,
+  VLAN or band change). Were it off the network the app could not stream it either.
+  **Ruled out — do not repeat:**
   | Tried | Result |
   |---|---|
   | Camera power-cycle | no change |
-  | `docker-compose restart` (resets backoff, forces immediate attempt) | refused instantly, twice |
-  | Fresh token each attempt | same refusal |
+  | `docker-compose restart` ×2 (resets backoff → immediate attempt) | refused instantly |
+  | Fresh token every attempt | same refusal |
   | Waiting out the backoff ladder | same refusal |
-  | `endToEndWebrtcConnectionInfo` still non-null, `errorEnum: 0` | **cannot discriminate** — served
-    from ADC's database, not the device |
-  🎯 **THE DECISIVE TEST — roll back the image and see.** The camera is cleared; the rebuild is the
-  only variable left. `main` is untouched by this; it is a checkout on the NAS.
+  🎯 **THE DECISIVE TEST — roll back the image.** The camera is cleared, so the rebuild is the only
+  uncontrolled variable. `main` is untouched; this is a checkout on the NAS.
   ```
   cd /volume1/docker/adc-video-bridge && git checkout 2e98710 && \
     sudo /var/packages/ContainerManager/target/usr/bin/docker-compose up -d --build adc-video-bridge
   ```
-  - **Video returns** ⇒ make-before-break broke the **initial connect** path (not the reconnect
-    path — that is the half the 180 tests cover). Restore with `git checkout main` + rebuild, then
-    fix properly. Prime suspects: the `onTrackReady` ownership gate and the RTP session-identity
-    gate, both of which are new and both of which silently *drop* rather than error.
-  - **Still refused** ⇒ the code really is exonerated and this is Alarm.com account/service-side —
-    a support call, not a config change.
-  🔑 **Two diagnostic traps this session fell into and corrected — both now in
-  [`INVARIANTS.md`](INVARIANTS.md):**
-  1. The Janus/proxy fields (`janusGatewayUrl`, `proxyStreamTimeoutTime: 180`) are in the payload
-     **always**, as fallback config. Their presence is **not** demotion; demotion is specifically
-     `endToEndWebrtcConnectionInfo: null`.
-  2. **`probe.js` returning a non-null Direct config does NOT prove the camera is online.** ADC
-     serves that config from its **database**, not the device — it looked healthy (`errorEnum: 0`,
-     both video sources enumerated) while the camera was entirely offline. Only signaling reveals
-     presence. This is exactly why step 1 of the "no video" order is ADC's own app, not our probe.
+  - **Video returns** ⇒ make-before-break broke the **initial connect** path — notably the half the
+    180 tests cover *least*, since they overwhelmingly exercise reconnect. Restore with
+    `git checkout main` + rebuild, then fix properly. Prime suspects: the new `onTrackReady`
+    ownership gate and the RTP session-identity gate, both of which **drop silently** rather than
+    error.
+  - **Still refused** ⇒ the code is genuinely exonerated; this is Alarm.com account/service-side and
+    becomes a support call.
+  ⚠️ **THREE WRONG THEORIES WERE RAISED AND RETRACTED THIS SESSION. Do not re-derive them:**
+  1. *"Alarm.com demoted the camera to Proxy."* No — `janusGatewayUrl`/`proxyStreamTimeoutTime` are
+     in the payload **always**, as fallback config. Demotion is specifically
+     `endToEndWebrtcConnectionInfo: null`, and it never was.
+  2. *"The camera is offline."* No — it streams in the app.
+  3. *"The camera is on a different subnet."* No — the `172.20.14.x` addresses are
+     `coturnAddressesTuplets`, **Alarm.com's own TURN infrastructure**.
+  🔑 **All three were the same error: reading a field of ADC's payload as a statement about the
+  camera, when it was a statement about ADC's own plumbing.** `probe.js` answers from Alarm.com's
+  **database** — it reported `errorEnum: 0`, non-null `endToEndWebrtcConnectionInfo` and both video
+  sources throughout, while no session could be established. **It cannot prove the camera can
+  stream.** Only the bridge reaching `sessionStarted` proves that. See [`INVARIANTS.md`](INVARIANTS.md).
 - 🔴 **An agent CANNOT do the rebuild — do not plan around it.** `sudo` on Kaikoura requires David's
   password (verified 2026-08-04: `sudo -n` fails, and `docker` needs privileges), and every compose
   command in [`SYNOLOGY.md`](SYNOLOGY.md) is sudo-prefixed. SSH itself works fine as `dpeak`, so

@@ -59,15 +59,25 @@ does.
 
 ### 🔴 `probe.js` returning a Direct config does NOT prove the camera is online
 
-This one cost a wrong conclusion on 2026-08-04. `probe.js` can log in, enumerate the camera's video
-sources, report `errorEnum: 0`, and return a **non-null `endToEndWebrtcConnectionInfo`** — while the
-camera is completely offline. Alarm.com serves that session config **from its database**, not from
-the device. The camera's actual presence is only revealed at **signaling** time, by the "has not yet
-dialed in" close above.
+This cost **three** wrong conclusions in one session (2026-08-04). `probe.js` logged in, enumerated
+both video sources, reported `errorEnum: 0` and a **non-null `endToEndWebrtcConnectionInfo`** —
+continuously, while not a single session could be established.
 
-So `probe.js` proves *our credentials and the ADC config API work*. It says nothing about the
-camera. **It is not a substitute for step 1 of the "no video" order below** — only ADC's own web
-player and phone app answer that question cheaply.
+Alarm.com serves that config **from its database**, not from the device. So `probe.js` proves only
+that *our credentials and the ADC config API work*. It says nothing about whether a session can
+actually be set up. Only the bridge reaching **`sessionStarted`** proves that.
+
+⚠️ **The same trap has three faces. All were raised and retracted in that one session:**
+
+| Read as… | Actually |
+|---|---|
+| `janusGatewayUrl` / `proxyStreamTimeoutTime` present ⇒ "demoted to Proxy" | Those fields are in the payload **always**, as fallback config |
+| Signaling says "not dialed in" ⇒ "camera is offline" | It streamed in the app the whole time |
+| `172.20.14.x` in the payload ⇒ "camera moved to another subnet" | `coturnAddressesTuplets` — **Alarm.com's own TURN servers** |
+
+🔑 **The single underlying error: reading a field of ADC's payload as a statement about the camera,
+when it is a statement about ADC's own plumbing.** Before concluding anything about the camera from
+this payload, ask which component the field actually describes.
 
 ### 🔑 `endToEndWebrtcConnectionInfo: null` does NOT mean Alarm.com dropped end-to-end WebRTC
 
