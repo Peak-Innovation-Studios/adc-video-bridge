@@ -352,7 +352,7 @@ describe('CameraStream session callbacks', () => {
   });
 
   it('onRtp forwards packets from the active session to the video socket', () => {
-    const session = {} as any;
+    const session = { id: 1 } as any;
     const mockSocket = { send: vi.fn(), close: vi.fn() };
     (stream as any).active = session;
     (stream as any).videoSocket = mockSocket;
@@ -364,11 +364,15 @@ describe('CameraStream session callbacks', () => {
     expect(mockSocket.send).toHaveBeenCalledWith(packet, 12345, '127.0.0.1');
   });
 
-  it('onRtp ignores packets from a session that is no longer active', () => {
-    const activeSession = {} as any;
-    const otherSession = {} as any;
+  // pending stays null until later tasks wire up overlap, so today this is
+  // equivalent to "not active" — but the assertion is phrased against the
+  // full gate (active or pending) so it keeps holding once pending is used.
+  it('onRtp ignores packets from a session that is neither active nor pending', () => {
+    const activeSession = { id: 1 } as any;
+    const otherSession = { id: 99 } as any;
     const mockSocket = { send: vi.fn(), close: vi.fn() };
     (stream as any).active = activeSession;
+    (stream as any).pending = null;
     (stream as any).videoSocket = mockSocket;
     (stream as any).videoPort = 12345;
 

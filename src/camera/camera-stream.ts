@@ -21,6 +21,9 @@ export type TokenFetcher = () => Promise<EndToEndWebrtcConfig | null>;
  */
 export class CameraStream {
   private active: PeerSession | null = null;
+  // Reserved for the overlapping "make before break" session (later tasks);
+  // stays null here so the identity gate has nothing extra to admit yet.
+  private pending: PeerSession | null = null;
   private ffmpeg: ChildProcess | null = null;
   private videoSocket: Socket | null = null;
   private videoPort = 0;
