@@ -567,9 +567,11 @@ services:
     pids_limit: 256
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "3",
-             "-u", "${GO2RTC_API_USERNAME}:${GO2RTC_API_PASSWORD}",
-             "http://${ADC_BRIDGE_BIND_ADDRESS:-127.0.0.1}:1984/api/streams"]
+      # Deliberately UNauthenticated, expecting 401. Embedding credentials here
+      # would expose them in `docker inspect`. A 401 proves both that go2rtc is
+      # up AND that auth is still enforced — a stronger check than a 200.
+      test: ["CMD-SHELL",
+             "test \"$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://${ADC_BRIDGE_BIND_ADDRESS:-127.0.0.1}:1984/api/streams)\" = 401"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -614,9 +616,12 @@ Expected: `VALID`.
 Then confirm the credential separation holds:
 
 ```bash
-docker compose config | awk '/^  go2rtc:/,/^  adc-video-bridge:/' | grep -c ADC_ 
+docker compose config | awk '/^  go2rtc:/,/^  adc-video-bridge:/' \
+  | grep -cE 'ADC_USERNAME|ADC_PASSWORD|ADC_MFA_TOKEN'
 ```
 Expected: `0`. Any non-zero result means Alarm.com credentials reached the host-networked container — stop and fix.
+
+⚠️ Match the **secret names specifically**, not the `ADC_` prefix: `ADC_BRIDGE_UID`, `ADC_BRIDGE_GID` and `ADC_BRIDGE_BIND_ADDRESS` are all legitimately used by the go2rtc service, so a prefix grep reports a false positive and trains you to ignore the check.
 
 - [ ] **Step 3: Commit**
 
