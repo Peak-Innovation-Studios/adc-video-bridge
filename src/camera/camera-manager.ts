@@ -23,7 +23,12 @@ export const STREAM_FAILURE_THRESHOLD = BACKOFF_STEPS_MS.length + 1;
  */
 export class CameraManager {
   private streams = new Map<string, CameraStream>();
-  private activeStarts = new Set<string>();
+  // Guards against a second concurrent start/reconnect per camera. Maps to
+  // the id of the attempt currently holding the guard (see startSeq) rather
+  // than a bare presence flag, so a stale completion can release only the
+  // attempt it actually owns — never a newer one that has since taken over.
+  private activeStarts = new Map<string, number>();
+  private startSeq = 0;
   private failureCount = new Map<string, number>();
   private breakers = new Map<string, CircuitBreaker>();
   private running = false;
@@ -103,18 +108,25 @@ export class CameraManager {
 
     // If the stream is already active, do a seamless reconnect (keeps ffmpeg alive)
     if (stream.state === 'streaming') {
-      this.activeStarts.add(cameraId);
+      const startId = ++this.startSeq;
+      this.activeStarts.set(cameraId, startId);
       try {
         log.info({ camera: stream.cameraName }, 'Seamless reconnect with fresh token');
         await stream.reconnect(config);
-        this.failureCount.delete(cameraId);
-        breaker.recordSuccess();
-        this.activeStarts.delete(cameraId);
+        // reconnect() can resolve well after something else (a concurrent
+        // recovery, a mid-overlap death) has already torn this stream down —
+        // crediting that as a success would hide a real failure from the
+        // breaker. Only a stream that is actually still streaming earns it.
+        if (stream.state === 'streaming') {
+          this.failureCount.delete(cameraId);
+          breaker.recordSuccess();
+        }
+        this.releaseStart(cameraId, startId);
         return;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log.warn({ camera: stream.cameraName }, 'Reconnect failed (%s), falling back to full restart', msg);
-        this.activeStarts.delete(cameraId);
+        this.releaseStart(cameraId, startId);
       }
     }
 
@@ -126,7 +138,8 @@ export class CameraManager {
       return;
     }
 
-    this.activeStarts.add(cameraId);
+    const startId = ++this.startSeq;
+    this.activeStarts.set(cameraId, startId);
 
     try {
       log.info({ camera: stream.cameraName }, 'Starting stream with fresh token');
@@ -152,7 +165,7 @@ export class CameraManager {
 
         log.info({ camera: stream.cameraName, delay: delay / 1000, failures: failures + 1 }, 'Will retry in %ds', delay / 1000);
         setTimeout(() => {
-          this.activeStarts.delete(cameraId);
+          this.releaseStart(cameraId, startId);
           if (!this.running) return;
           this.tokenManager.fetchVideoToken(cameraId);
         }, delay);
@@ -160,7 +173,20 @@ export class CameraManager {
       }
     }
 
-    this.activeStarts.delete(cameraId);
+    this.releaseStart(cameraId, startId);
+  }
+
+  /**
+   * Clear the start guard, but only if it still belongs to this attempt.
+   * A completion that runs after a newer attempt has already taken the
+   * guard (e.g. a stale reconnect() resolving after handleUnexpectedExit()
+   * has already handed off to a fresh start()) must not clear that newer
+   * attempt's guard out from under it.
+   */
+  private releaseStart(cameraId: string, startId: number): void {
+    if (this.activeStarts.get(cameraId) === startId) {
+      this.activeStarts.delete(cameraId);
+    }
   }
 
   private breakerFor(cameraId: string): CircuitBreaker {
@@ -182,6 +208,13 @@ export class CameraManager {
     const name = stream?.cameraName ?? cameraId;
     log.warn({ camera: name }, 'Stream died mid-stream, fetching fresh token to recover');
 
+    // Unconditional, not releaseStart(): this fires from an external event
+    // (ffmpeg exit) that owns no startId of its own, and it deliberately
+    // wants the guard open regardless of who currently holds it, so recovery
+    // can start immediately rather than waiting for a stale attempt's own
+    // completion. That stale attempt's own eventual releaseStart() is what's
+    // ownership-scoped — it will find a newer startId here (the one the
+    // fetchVideoToken call below leads to) and correctly leave it alone.
     this.activeStarts.delete(cameraId);
     this.tokenManager.fetchVideoToken(cameraId);
   }

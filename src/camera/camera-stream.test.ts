@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { EndToEndWebrtcConfig } from '../types.js';
 
+// Hoisted so tests can hold a handle on the same mock the module-scoped
+// `log` inside camera-stream.ts (and peer-session.ts) actually logs
+// through — a fresh object per createChildLogger() call, as this used to
+// mock, gives no test anything to assert against.
+const { logSpy } = vi.hoisted(() => ({
+  logSpy: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 vi.mock('werift', () => ({
   RTCPeerConnection: vi.fn(),
   RTCRtpCodecParameters: vi.fn(),
@@ -33,12 +41,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 vi.mock('../utils/logger.js', () => ({
-  createChildLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
+  createChildLogger: () => logSpy,
 }));
 
 vi.mock('../utils/retry.js', () => ({
@@ -389,6 +392,116 @@ describe('CameraStream.reconnect', () => {
 
     closeSpy.mockRestore();
   });
+
+  it('logs the exact Alarm.com refusal message when a healthy active session cannot get a second session', async () => {
+    // This message is the only evidence available (until the camera's WiFi
+    // problem is fixed) for whether ADC permits two concurrent sessions per
+    // camera — a refactor that reflows it destroys that evidence. This test
+    // pins the exact substring so it cannot silently drift.
+    (stream as any).ffmpeg = { kill: vi.fn(), on: vi.fn() };
+    (stream as any).videoSocket = { close: vi.fn(), send: vi.fn() };
+    (stream as any).videoPort = 12345;
+    (stream as any)._state = 'streaming';
+
+    setupReconnectMocks();
+    vi.mocked(SignalingClient).mockImplementation(function () {
+      return {
+        on: vi.fn((event: string, handler: any) => {
+          if (event === 'error') setTimeout(() => handler(new Error('signaling failed')), 0);
+        }),
+        removeAllListeners: vi.fn(),
+        close: vi.fn(),
+        connect: vi.fn().mockResolvedValue(undefined),
+        sendAnswer: vi.fn(),
+        sendIceCandidate: vi.fn(),
+      } as any;
+    });
+
+    await expect(stream.reconnect(makeConfig())).resolves.toBeUndefined();
+
+    expect(logSpy.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ camera: 'test-camera', reason: 'signaling failed' }),
+      expect.stringContaining(
+        'Second concurrent session refused by Alarm.com — keeping the current one.',
+      ),
+    );
+  });
+
+  it('does not log the refusal message when the active session died mid-overlap, not a refusal', async () => {
+    // A rejected pending negotiation here is a side effect of the active
+    // session's own death (handleSessionFailed's discardPending tears the
+    // pending down too) — it says nothing about whether ADC would have
+    // permitted a second session, so it must not be logged as if it did.
+    // Mirrors the mocking idiom of the 'make-before-break' describe block's
+    // own mid-overlap-death test, rather than driving the full
+    // PeerSession/signaling mock chain this suite otherwise uses.
+    const active: any = { id: 1, close: vi.fn().mockResolvedValue(undefined) };
+    (stream as any).active = active;
+    (stream as any)._state = 'streaming';
+
+    vi.spyOn(stream as any, 'tryConnect').mockResolvedValue(undefined);
+    vi.spyOn(stream as any, 'negotiatePending').mockImplementation(async function (this: any) {
+      this.handleSessionFailed(active); // old session dies mid-negotiation
+      throw new Error('peer connection failed');
+    });
+
+    await stream.reconnect(makeConfig());
+
+    expect(logSpy.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('Second concurrent session refused by Alarm.com'),
+    );
+    expect(logSpy.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ camera: 'test-camera' }),
+      expect.stringContaining('not a refusal'),
+    );
+  });
+
+  it('does not lose an active-session death that lands during the pre-overlap discardPending() await', async () => {
+    // Regression test: this.activeDied = false used to run AFTER the
+    // `await this.discardPending(...)` at the top of reconnect(), which
+    // awaits a genuine I/O close(). If the active session dies inside that
+    // window, handleSessionFailed() sets activeDied = true — and the old
+    // ordering would immediately wipe it back to false, so the overlap
+    // settles 'kept' with the flag clear and reconnect() resolves instead
+    // of falling back, even though nothing live remains.
+    (stream as any)._state = 'streaming';
+    (stream as any).ffmpeg = { kill: vi.fn(), on: vi.fn() };
+    (stream as any).videoSocket = { close: vi.fn(), send: vi.fn() };
+    (stream as any).videoPort = 12345;
+    const active: any = { id: 1, close: vi.fn().mockResolvedValue(undefined) };
+    (stream as any).active = active;
+
+    // A stale pending left behind from an earlier cycle, whose close() we
+    // control, so a session failure can be landed inside reconnect()'s
+    // opening discardPending() await.
+    let resolveClose!: () => void;
+    const stalePending = {
+      id: 99,
+      close: vi.fn(() => new Promise<void>((resolve) => { resolveClose = resolve; })),
+    };
+    (stream as any).pending = stalePending;
+
+    const tryConnectSpy = vi.spyOn(stream as any, 'tryConnect').mockResolvedValue(undefined);
+    // The negotiation itself is not what's under test here — let it resolve
+    // harmlessly and drive the overlap's own outcome via the budget timeout.
+    vi.spyOn(stream as any, 'negotiatePending').mockResolvedValue(undefined);
+
+    vi.useFakeTimers();
+    const promise = stream.reconnect(makeConfig());
+
+    // reconnect() has run synchronously up to `await this.discardPending(...)`,
+    // which is itself parked awaiting the stale pending's close().
+    (stream as any).handleSessionFailed(active);
+    resolveClose();
+
+    // Let the overlap resolve via the budget timeout (no RTP arrives).
+    await vi.advanceTimersByTimeAsync(OVERLAP_BUDGET_MS);
+    await promise;
+
+    // activeDied survived the await, so reconnect() took the fallback path.
+    expect(tryConnectSpy).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('CameraStream.negotiatePending', () => {
@@ -717,6 +830,39 @@ describe('CameraStream session callbacks', () => {
 
     (stream as any).sessionCallbacks.onTrackReady(staleSession);
 
+    expect(stream.state).not.toBe('streaming');
+  });
+
+  it('onTrackReady ignores a session that is neither active nor pending, rather than spawning an unowned ffmpeg', () => {
+    // A session already discarded by stop() or a superseding reconnect (so
+    // it is neither this.active nor this.pending) can still deliver a late
+    // onTrackReady. Without this gate that would spawn ffmpeg for a
+    // pipeline nothing feeds — harmless only by the accident of the
+    // `if (this.ffmpeg) return` guard inside startFfmpeg() already holding.
+    const discardedSession = { h264Fmtp: null } as any;
+    (stream as any).active = null;
+    (stream as any).pending = null;
+    const startFfmpeg = vi.spyOn(stream as any, 'startFfmpeg').mockImplementation(() => {});
+
+    (stream as any).sessionCallbacks.onTrackReady(discardedSession);
+
+    expect(startFfmpeg).not.toHaveBeenCalled();
+    expect((stream as any).videoSocket).toBeNull();
+  });
+
+  it('onTrackReady still starts ffmpeg for the pending session during a legitimate overlap', () => {
+    // The gate must not be so broad that it blocks the pending session's own
+    // onTrackReady — that is how ffmpeg ends up primed before cutOver.
+    const activeSession = { h264Fmtp: null } as any;
+    const pendingSession = { h264Fmtp: null } as any;
+    (stream as any).active = activeSession;
+    (stream as any).pending = pendingSession;
+    const startFfmpeg = vi.spyOn(stream as any, 'startFfmpeg').mockImplementation(() => {});
+
+    (stream as any).sessionCallbacks.onTrackReady(pendingSession);
+
+    expect(startFfmpeg).toHaveBeenCalledWith(pendingSession);
+    // Only the active session's onTrackReady flips state to 'streaming'.
     expect(stream.state).not.toBe('streaming');
   });
 

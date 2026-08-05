@@ -56,6 +56,11 @@ export class CameraStream {
   private readonly sessionCallbacks: PeerSessionCallbacks = {
     onRtp: (session, packet) => this.handleRtp(session, packet),
     onTrackReady: (session) => {
+      // A session that is neither active nor pending has already been
+      // discarded (stop(), a superseding reconnect, ...). A late callback
+      // from it must not spawn an unowned ffmpeg with nothing left to feed
+      // it, or open a videoSocket for a pipeline that no longer exists.
+      if (session !== this.active && session !== this.pending) return;
       this.startFfmpeg(session);
       if (!this.videoSocket) this.videoSocket = createSocket('udp4');
       if (session === this.active) this._state = 'streaming';
@@ -143,13 +148,18 @@ export class CameraStream {
 
     log.info({ camera: this.cameraName }, 'Reconnecting WebRTC (old session stays live during overlap)...');
 
+    // A flag left over from a previous overlap must never leak into this
+    // one — only this overlap's own handleSessionFailed() may set it below.
+    // Reset BEFORE the discardPending() await, not after: discardPending()
+    // awaits a genuine I/O close(), and the active session can die inside
+    // that window (via handleSessionFailed, setting this flag true). Reset
+    // it after the await instead and that death is wiped the instant it's
+    // recorded, so a dead active session gets reported as a success.
+    this.activeDied = false;
+
     // Never depend on a caller's bookkeeping to avoid leaking a session — a
     // stale pending from an earlier reconnect must not survive into this one.
     await this.discardPending('superseded by a newer reconnect');
-
-    // A flag left over from a previous overlap must never leak into this
-    // one — only this overlap's own handleSessionFailed() may set it below.
-    this.activeDied = false;
 
     const outcome = new Promise<OverlapOutcome>((resolve) => {
       this.overlapSettle = resolve;
@@ -169,13 +179,25 @@ export class CameraStream {
       // A rejected pending while active is healthy is the signature of "ADC
       // permits only one session per camera" — the question we cannot test
       // until the camera's WiFi is fixed. Log distinctly so production
-      // answers it: if this repeats every refresh, we have our answer.
-      log.warn(
-        { camera: this.cameraName, reason: msg },
-        'Second concurrent session refused by Alarm.com — keeping the current one. ' +
-        'If this repeats every refresh, ADC permits only one session per camera and ' +
-        'make-before-break is not achievable (see Omar-L#25).',
-      );
+      // answers it: if this repeats every refresh, we have our answer. But
+      // only when it plausibly IS a refusal: the active session dying
+      // mid-overlap, or a stop() tearing the pending down from under it,
+      // rejects negotiatePending() too, and neither is evidence of anything
+      // ADC did — logging those at the same level would pollute the one
+      // signal this line exists to give production.
+      if (this._state === 'streaming' && !this.activeDied) {
+        log.warn(
+          { camera: this.cameraName, reason: msg },
+          'Second concurrent session refused by Alarm.com — keeping the current one. ' +
+          'If this repeats every refresh, ADC permits only one session per camera and ' +
+          'make-before-break is not achievable (see Omar-L#25).',
+        );
+      } else {
+        log.debug(
+          { camera: this.cameraName, reason: msg },
+          'Pending negotiation ended without completing (active session unhealthy or stream stopped, not a refusal)',
+        );
+      }
       await this.discardPending(msg);
     }
 
