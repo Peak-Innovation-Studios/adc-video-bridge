@@ -11,6 +11,11 @@ const MAX_DIAL_IN_RETRIES = 12;
 const DIAL_IN_RETRY_DELAY_MS = 10_000;
 const INITIAL_WAKE_DELAY_MS = 5_000;
 
+// How long a pending overlap session may negotiate before it is given up on.
+// The old token has no server-enforced timeout, so giving up costs nothing —
+// the next 600s refresh just tries again.
+export const OVERLAP_BUDGET_MS = 10_000;
+
 export type StreamState = 'idle' | 'connecting' | 'streaming' | 'error';
 
 export type TokenFetcher = () => Promise<EndToEndWebrtcConfig | null>;
@@ -28,9 +33,11 @@ export class CameraStream {
   // reconnect. RTP from it is never forwarded — see handleRtp's gate — until
   // its first packet proves media flows and cutOver() promotes it to active.
   private pending: PeerSession | null = null;
-  // Armed in Task 4 to bound how long an overlap may run before falling back.
+  // Bounds how long an overlap may run — armed by reconnect(), cleared by
+  // cutOver(), discardPending(), and stop().
   private overlapTimer: ReturnType<typeof setTimeout> | null = null;
-  // Assigned in Task 4 by the reconnect() caller awaiting the overlap outcome.
+  // The resolver for reconnect()'s outcome promise; assigned while an overlap
+  // is in flight, null once settled.
   private overlapSettle: ((outcome: OverlapOutcome) => void) | null = null;
   private ffmpeg: ChildProcess | null = null;
   private videoSocket: Socket | null = null;
@@ -115,7 +122,14 @@ export class CameraStream {
    * while the new one negotiates in parallel — state stays 'streaming' for
    * the whole overlap, since media never stops. cutOver() (triggered by the
    * new session's first RTP packet, in handleRtp) is what actually retires
-   * the old session; this method only sets the overlap in motion.
+   * the old session; this method arms the overlap and resolves only once its
+   * outcome is known.
+   *
+   * Resolves once the overlap is settled, never on negotiation alone —
+   * CameraManager records breaker.recordSuccess() when this resolves, which
+   * would be wrong for an overlap that never actually completed. A pending
+   * session that fails or times out still resolves (not throws): the old
+   * session is still streaming, so a failed overlap costs nothing.
    */
   async reconnect(config: EndToEndWebrtcConfig): Promise<void> {
     if (this._state !== 'streaming') {
@@ -124,9 +138,33 @@ export class CameraStream {
 
     log.info({ camera: this.cameraName }, 'Reconnecting WebRTC (old session stays live during overlap)...');
 
-    await this.negotiatePending(config);
+    // Never depend on a caller's bookkeeping to avoid leaking a session — a
+    // stale pending from an earlier reconnect must not survive into this one.
+    await this.discardPending('superseded by a newer reconnect');
 
-    log.info({ camera: this.cameraName }, 'Pending session connected, waiting for first RTP to cut over...');
+    const outcome = new Promise<OverlapOutcome>((resolve) => {
+      this.overlapSettle = resolve;
+      this.overlapTimer = setTimeout(() => {
+        void this.discardPending('no RTP within the overlap budget');
+        this.settleOverlap('kept');
+      }, OVERLAP_BUDGET_MS);
+    });
+
+    try {
+      await this.negotiatePending(config);
+      log.info({ camera: this.cameraName }, 'Pending session connected, waiting for first RTP to cut over...');
+    } catch (err) {
+      // negotiatePending() already discarded the session that failed; this
+      // just clears the budget timer and settles the outcome.
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.discardPending(msg);
+      this.settleOverlap('kept');
+    }
+
+    const result = await outcome;
+    if (result === 'kept') {
+      log.info({ camera: this.cameraName }, 'Overlap did not complete; keeping the current session');
+    }
   }
 
   /** Tear down the entire pipeline. */
@@ -136,7 +174,7 @@ export class CameraStream {
     // RTP still reaches cutOver via handleRtp's identity check — so it must
     // be detached up front, not after the active-session teardown below has
     // already had a chance to yield.
-    await this.discardPending();
+    await this.discardPending('stream stopped');
 
     await this.active?.close();
     this.active = null;
@@ -172,7 +210,7 @@ export class CameraStream {
     // is about to install a brand-new active session, and a stale pending
     // surviving to this point must not be left to race and replace it via
     // cutOver.
-    await this.discardPending();
+    await this.discardPending('superseded by a new active session');
     this._state = 'connecting';
 
     this.videoPort = await this.allocateUdpPort();
@@ -225,11 +263,18 @@ export class CameraStream {
     this.settleOverlap('cutover');
   }
 
-  /** Detach and close any in-flight pending overlap session. Idempotent. */
-  private async discardPending(): Promise<void> {
+  /**
+   * Detach and close any in-flight pending overlap session, and clear the
+   * overlap budget timer along with it — the two always end together.
+   * Idempotent: safe to call with no pending in flight.
+   */
+  private async discardPending(reason: string): Promise<void> {
     const pending = this.pending;
     this.pending = null;
-    await pending?.close();
+    this.clearOverlapTimer();
+    if (!pending) return;
+    log.warn({ camera: this.cameraName, session: pending.id, reason }, 'Discarding pending session');
+    await pending.close().catch(() => {});
   }
 
   /** Resolve whoever is awaiting the current overlap. No-op once already settled. */
@@ -239,7 +284,7 @@ export class CameraStream {
     settle?.(outcome);
   }
 
-  /** Guard for the (Task 4) budget timer; a no-op while overlapTimer is null. */
+  /** Clear the overlap budget timer, if armed. Idempotent. */
   private clearOverlapTimer(): void {
     if (this.overlapTimer) {
       clearTimeout(this.overlapTimer);

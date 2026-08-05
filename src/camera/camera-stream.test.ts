@@ -45,7 +45,7 @@ vi.mock('../utils/retry.js', () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { CameraStream } from './camera-stream.js';
+import { CameraStream, OVERLAP_BUDGET_MS } from './camera-stream.js';
 import { PeerSession } from './peer-session.js';
 import { SignalingClient } from '../signaling/signaling-client.js';
 import { sleep } from '../utils/retry.js';
@@ -201,6 +201,7 @@ describe('CameraStream.reconnect', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   function setupReconnectMocks() {
@@ -238,7 +239,13 @@ describe('CameraStream.reconnect', () => {
     setupReconnectMocks();
     mockSignalingToSucceed();
 
-    await stream.reconnect(makeConfig());
+    // reconnect() now resolves on the overlap's outcome, not on negotiation
+    // alone — with no RTP to trigger cutover, that outcome is the budget
+    // timeout ('kept'). Either outcome leaves ffmpeg/videoSocket untouched.
+    vi.useFakeTimers();
+    const promise = stream.reconnect(makeConfig());
+    await vi.advanceTimersByTimeAsync(OVERLAP_BUDGET_MS);
+    await expect(promise).resolves.toBeUndefined();
 
     expect(mockFfmpeg.kill).not.toHaveBeenCalled();
     expect(mockSocket.close).not.toHaveBeenCalled();
@@ -255,13 +262,19 @@ describe('CameraStream.reconnect', () => {
     setupReconnectMocks();
     mockSignalingToSucceed();
 
+    // reconnect() no longer resolves once negotiation completes — it awaits
+    // the overlap outcome — so it is kicked off without awaiting it yet.
+    vi.useFakeTimers();
+    const promise = stream.reconnect(makeConfig());
+
     // negotiatePending() resolves once signaling reports SESSION_STARTED —
     // well before any RTP, and therefore well before cutover. The old
     // session must still be untouched at that point.
-    await stream.reconnect(makeConfig());
+    await vi.advanceTimersByTimeAsync(0);
     expect(oldClose).not.toHaveBeenCalled();
 
     (stream as any).handleRtp((stream as any).pending, Buffer.from([1]));
+    await promise;
     expect(oldClose).toHaveBeenCalledTimes(1);
   });
 
@@ -291,7 +304,12 @@ describe('CameraStream.reconnect', () => {
       } as any;
     });
 
-    await stream.reconnect(makeConfig());
+    // No RTP arrives in this test, so the overlap resolves via the budget
+    // timeout rather than cutover — state must stay 'streaming' either way.
+    vi.useFakeTimers();
+    const promise = stream.reconnect(makeConfig());
+    await vi.advanceTimersByTimeAsync(OVERLAP_BUDGET_MS);
+    await promise;
 
     // Never 'connecting' — the old session is still live and feeding
     // ffmpeg for the whole negotiation, so nothing about the stream state
@@ -300,7 +318,7 @@ describe('CameraStream.reconnect', () => {
     expect(stream.state).toBe('streaming');
   });
 
-  it('rejects but leaves the still-live active session and state alone when negotiation fails', async () => {
+  it('resolves (does not throw) and leaves the still-live active session and state alone when negotiation fails', async () => {
     (stream as any).ffmpeg = { kill: vi.fn(), on: vi.fn() };
     (stream as any).videoSocket = { close: vi.fn(), send: vi.fn() };
     (stream as any).videoPort = 12345;
@@ -324,8 +342,10 @@ describe('CameraStream.reconnect', () => {
     });
 
     // A failed pending negotiation does not touch the still-good active
-    // session: media is still flowing, so there is nothing to error out.
-    await expect(stream.reconnect(makeConfig())).rejects.toThrow('signaling failed');
+    // session: media is still flowing, so there is nothing to error out —
+    // and reconnect() resolves rather than throwing, so a caller does not
+    // record this harmless failure against the circuit breaker.
+    await expect(stream.reconnect(makeConfig())).resolves.toBeUndefined();
     expect(stream.state).toBe('streaming');
     expect(activeClose).not.toHaveBeenCalled();
   });
@@ -356,7 +376,9 @@ describe('CameraStream.reconnect', () => {
       } as any;
     });
 
-    await expect(stream.reconnect(makeConfig())).rejects.toThrow('signaling failed');
+    // Task 4: reconnect() resolves rather than rejecting on a failed
+    // negotiation — see the previous test for why.
+    await expect(stream.reconnect(makeConfig())).resolves.toBeUndefined();
 
     expect(closeSpy).toHaveBeenCalledTimes(1);
     expect((stream as any).pending).toBeNull();
@@ -482,6 +504,37 @@ describe('CameraStream make-before-break', () => {
     expect((stream as any).pending).toBeNull();
     expect(pendingClose).toHaveBeenCalledTimes(1);
     expect(activeClose).not.toHaveBeenCalled();
+  });
+
+  it('keeps the old session and does not throw when the new one never delivers', async () => {
+    vi.useFakeTimers();
+    const oldClose = vi.fn().mockResolvedValue(undefined);
+    const active: any = { id: 1, close: oldClose };
+    (stream as any).active = active;
+    vi.spyOn(stream as any, 'negotiatePending').mockResolvedValue(undefined);
+
+    const promise = stream.reconnect(makeConfig());
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(promise).resolves.toBeUndefined();   // must NOT throw
+    expect((stream as any).active).toBe(active);      // old retained
+    expect(oldClose).not.toHaveBeenCalled();
+    expect((stream as any).pending).toBeNull();
+    expect((stream as any).ffmpeg.kill).not.toHaveBeenCalled();
+    expect(stream.state).toBe('streaming');
+    vi.useRealTimers();
+  });
+
+  it('discards a previous pending rather than leaking it', async () => {
+    const stale = { id: 5, close: vi.fn().mockResolvedValue(undefined) };
+    (stream as any).active = { id: 1, close: vi.fn() };
+    (stream as any).pending = stale;
+    vi.spyOn(stream as any, 'negotiatePending').mockResolvedValue(undefined);
+
+    void stream.reconnect(makeConfig()).catch(() => {});
+    await Promise.resolve();
+
+    expect(stale.close).toHaveBeenCalledTimes(1);
   });
 });
 
