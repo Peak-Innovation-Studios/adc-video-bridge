@@ -369,6 +369,26 @@ describe('CameraManager backoff', () => {
 
       expect(manager.getStatus()).toEqual({ driveway: 'idle (circuit open)' });
     });
+
+    it('a failed overlap on a healthy stream is not a circuit-breaker failure', async () => {
+      await startWithCamera();
+      const stream = getStream();
+      stream.state = 'streaming';
+      // Overlap failed but the stream survived: reconnect() resolves.
+      stream.reconnect.mockResolvedValue(undefined);
+
+      for (let i = 0; i < 10; i++) {
+        tokenManager.emit('videoToken', 'cam-1', makeConfig());
+        await vi.advanceTimersByTimeAsync(0);
+      }
+
+      // Confirms the reconnect branch, not the start branch, ran ten times.
+      expect(stream.reconnect).toHaveBeenCalledTimes(10);
+      expect(stream.start).not.toHaveBeenCalled();
+      // Ten "failures" recorded as breaker successes would have opened the
+      // circuit at STREAM_FAILURE_THRESHOLD (6); it stays closed.
+      expect(manager.getStatus()).toEqual({ driveway: 'streaming' });
+    });
   });
 
   it('does not retry when manager is stopped', async () => {
