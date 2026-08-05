@@ -43,8 +43,9 @@ baton, the baton wins.
   edit that `exclude`, **spread `defaultExclude`** — setting it replaces the defaults, and in
   vitest 4 those are only `node_modules` and `.git`.
 - 🔴 **Kaikoura does NOT have make-before-break yet.** It is still running the circuit-breaker build
-  David rebuilt 2026-08-04. `src/` changed, so it needs `docker-compose up -d --build`. ⚠️ Not
-  before item 1 — deploying onto a camera with a bad link measures the WiFi, not the change.
+  David rebuilt 2026-08-04. `src/` changed, so it needs `docker-compose up -d --build`.
+  ✅ **No longer gated** — the link that would have confounded the result was improved 2026-08-04.
+  This is now the critical path (item 2).
 - **What Kaikoura IS running is live, streaming and healthy** — verified sudo-free (go2rtc answers
   `401` on its bound address; distinct-md5 JPEGs; a real `rtsp+tcp` publisher; **0** WebSocket 401s,
   was ~60/hour). Motion, doorbell, audio and HKSV remain disabled.
@@ -56,38 +57,47 @@ baton, the baton wins.
   needs David's password. `node_modules`/`dist` there are gitignored.
 - **⬆️ Eight upstream PRs and two issues are open at Omar-L, all awaiting his review.** Nothing is
   blocked on us. Table, held branches, and the contribution rules: [`UPSTREAM.md`](UPSTREAM.md).
-- **Whose turn:** **David** — the camera's WiFi (item 1) is the only thing no code can fix, and it
-  gates everything else including the deploy of the work just merged. ⚠️ **The agent queue is now
-  genuinely blocked on it**: every remaining code item either measures that link or is invalidated
-  by it. There is no longer useful agent work that routes around item 1.
+- 🆕 **David improved the camera's WiFi connection (2026-08-04).** This was item 1, and it gated
+  everything — **the queue is no longer blocked.** ⚠️ **"Improved" is not yet "verified."** Nothing
+  has re-measured the link, and the bridge holds a *perpetual* session, so it stresses a marginal
+  link far harder than Alarm.com's own on-demand clients do. Confirm before trusting it: re-probe
+  (`node dist/probe.js <cameraId>`), and check whether the breaker still opens
+  (`docker-compose logs`, sudo — grep `Circuit OPEN`).
+- **Whose turn:** **David** — item 2 (the rebuild) is a hand deploy over SSH and needs his password.
+  Once Kaikoura is on the new image, **agent work is unblocked for the first time in two sessions**:
+  the `-reorder_queue_size 0` A/B (item 4) and the HKSV follow-through (item 3) both become
+  measurable rather than confounded by the link.
 
 ### What's left (priority order)
 
-1. 🔴 **(David — physical, gates everything)** **The camera's WiFi signal is poor.** It caused the
-   2026-08-03 outage and will again; a power-cycle clears the symptom, not the cause. Wired Ethernet
-   if the camera supports it, else relocate it or add an AP. Matters more here than for normal use:
-   Alarm.com designs for *on-demand* viewing, this bridge holds a **perpetual** session.
-2. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
-   ⚠️ `chmod` alone will not hold: it is the **volume's default ACL**, and the Homebridge UI rewrites
-   the file on every settings change. Durable fix is at the shared-folder/ACL level.
-3. **(David — deploy)** **Rebuild Kaikoura to pick up make-before-break.** `docker-compose up -d
-   --build`, since `src/` changed. Then confirm the gap is gone — the old signature is a ~1.2s media
-   stall every 600s at token refresh. ⚠️ Not before item 1: on a weak link the overlap can fail and
-   fall back to break-before-make, which measures the WiFi rather than the change.
+1. ✅ **(David — DONE 2026-08-04)** **The camera's WiFi was improved.** This is what caused the
+   2026-08-03 outage and gated every item below. ⚠️ **Still unverified under load** — re-probe and
+   watch for `Circuit OPEN` before treating the link as solved, since a perpetual session stresses
+   it far harder than Alarm.com's own on-demand clients. If the outage recurs, the cause was not
+   fully addressed: a power-cycle clears the symptom, not the cause, and the durable fixes are wired
+   Ethernet, relocation, or an added AP.
+2. 🔴 **(David — deploy, now the critical path)** **Rebuild Kaikoura to pick up make-before-break.**
+   `docker-compose up -d --build`, since `src/` changed. Then confirm the gap is gone — the old
+   signature is a ~1.2s media stall every 600s at token refresh.
    💡 Grep the logs for `Second concurrent session refused by Alarm.com` — that line is how
    production tells us whether ADC permits two sessions per camera at all, which is the assumption
-   the whole overlap rests on.
-4. **(David, then agent)** **HKSV is unblocked** — the event stream delivers for the first time.
+   the whole overlap rests on. 💡 Now that the link is better, a *failed* overlap is much more
+   likely to be a real Alarm.com refusal than a WiFi artefact — so this reading finally means
+   something.
+3. **(David, then agent)** **HKSV is unblocked** — the event stream delivers for the first time.
    Needs `videoConfig.recording: true` + `prebuffer` + `motion` + `porthttp` in Homebridge, the
    bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
-   Home app. ⚠️ Not before item 1; best after item 3, since make-before-break exists precisely
-   because HKSV recording is what cares about the refresh gap.
-5. *(Agent, low)* **A/B `-reorder_queue_size 0`** — no longer speculative. Production logs
-   2026-08-04 show ffmpeg repeatedly emitting `Non-monotonic DTS ... This may result in incorrect
-   timestamps in the output file` while streaming normally. The
-   flag disables RTP reordering, which is right on a clean LAN and wrong over a weak wireless link —
-   exactly the condition item 1 describes. ⚠️ Test **after** item 1, or it measures the WiFi rather
-   than the flag. Matters for HKSV, which cares about timestamp continuity.
+   Home app. Best after item 2, since make-before-break exists precisely because HKSV recording is
+   what cares about the refresh gap.
+4. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
+   ⚠️ `chmod` alone will not hold: it is the **volume's default ACL**, and the Homebridge UI rewrites
+   the file on every settings change. Durable fix is at the shared-folder/ACL level.
+5. *(Agent — now measurable, was confounded by the link)* **A/B `-reorder_queue_size 0`.** Production
+   logs 2026-08-04 show ffmpeg repeatedly emitting `Non-monotonic DTS ... This may result in
+   incorrect timestamps in the output file` while streaming normally. The flag disables RTP
+   reordering, which is right on a clean LAN and wrong over a weak wireless link — the condition
+   item 1 just addressed. ⚠️ Run it **after item 2**, on the improved link, or it measures the WiFi
+   rather than the flag. Matters for HKSV, which cares about timestamp continuity.
 6. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
    `config/config.yaml`. `src/discover.ts` already generates both blocks; the job is reconciling at
    startup, not deriving names.
@@ -99,7 +109,7 @@ baton, the baton wins.
    `rtpCount` not reset across reconnect; a `tryConnect()` rejection in the fallback leaving
    `_state` at `'connecting'` rather than `'error'`. ⚠️ One is **not** cosmetic: `onFailed` fires on
    `'disconnected'` too, so a transient ICE blip now forces a full teardown — only observable
-   against a real camera, so revisit after item 3.
+   against a real camera, so revisit after item 2.
 9. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
    has no printf width specifiers. Cosmetic; the generated YAML is fine.
 
@@ -115,7 +125,8 @@ baton, the baton wins.
 ### Open decisions
 
 - Whether to enable Alarm.com motion webhooks and HKSV after the live-view pilot is stable.
-  ⚠️ Not until the camera's signal problem is addressed — see item 1.
+  ✅ The blocker (the camera's signal) was addressed 2026-08-04 — this is now a real decision rather
+  than a deferred one. Sequence it after item 2 so the pilot is running the merged code.
 - **Native HKSV via go2rtc** — spiked and measured; verdict is *track, adopt when it ships*, and
   adoption needs go2rtc split into its own container first. Do not re-litigate from scratch: the
   full verdict and its constraints are in [`INVARIANTS.md`](INVARIANTS.md).
