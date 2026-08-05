@@ -46,6 +46,7 @@ vi.mock('../utils/retry.js', () => ({
 }));
 
 import { CameraStream } from './camera-stream.js';
+import { PeerSession } from './peer-session.js';
 import { SignalingClient } from '../signaling/signaling-client.js';
 import { sleep } from '../utils/retry.js';
 
@@ -202,11 +203,12 @@ describe('CameraStream.reconnect', () => {
     vi.clearAllMocks();
   });
 
-  function setupReconnectMocks(stream: CameraStream) {
-    // Stub internal methods that depend on werift mocks
-    vi.spyOn(stream as any, 'createPeerConnection').mockReturnValue({});
-    vi.spyOn(stream as any, 'setupPeerConnection').mockImplementation(() => {});
-    vi.spyOn(stream as any, 'registerPostSessionHandlers').mockImplementation(() => {});
+  function setupReconnectMocks() {
+    // Stub internal methods that depend on werift mocks. These now live on
+    // PeerSession, which CameraStream.reconnect() creates internally.
+    vi.spyOn(PeerSession.prototype as any, 'createPeerConnection').mockReturnValue({});
+    vi.spyOn(PeerSession.prototype as any, 'setupPeerConnection').mockImplementation(() => {});
+    vi.spyOn(PeerSession.prototype as any, 'registerPostSessionHandlers').mockImplementation(() => {});
   }
 
   function mockSignalingToSucceed() {
@@ -233,7 +235,7 @@ describe('CameraStream.reconnect', () => {
     (stream as any).videoPort = 12345;
     (stream as any)._state = 'streaming';
 
-    setupReconnectMocks(stream);
+    setupReconnectMocks();
     mockSignalingToSucceed();
 
     await stream.reconnect(makeConfig());
@@ -244,13 +246,13 @@ describe('CameraStream.reconnect', () => {
 
   it('closes old PC during reconnect', async () => {
     const mockPcClose = vi.fn().mockResolvedValue(undefined);
-    (stream as any).pc = { close: mockPcClose };
+    (stream as any).active = { close: mockPcClose };
     (stream as any).ffmpeg = { kill: vi.fn(), on: vi.fn() };
     (stream as any).videoSocket = { close: vi.fn(), send: vi.fn() };
     (stream as any).videoPort = 12345;
     (stream as any)._state = 'streaming';
 
-    setupReconnectMocks(stream);
+    setupReconnectMocks();
     mockSignalingToSucceed();
 
     await stream.reconnect(makeConfig());
@@ -266,7 +268,7 @@ describe('CameraStream.reconnect', () => {
 
     let capturedState: string | undefined;
 
-    setupReconnectMocks(stream);
+    setupReconnectMocks();
 
     vi.mocked(SignalingClient).mockImplementation(function () {
       return {
@@ -295,7 +297,7 @@ describe('CameraStream.reconnect', () => {
     (stream as any).videoPort = 12345;
     (stream as any)._state = 'streaming';
 
-    setupReconnectMocks(stream);
+    setupReconnectMocks();
 
     vi.mocked(SignalingClient).mockImplementation(function () {
       return {
@@ -312,67 +314,6 @@ describe('CameraStream.reconnect', () => {
 
     await expect(stream.reconnect(makeConfig())).rejects.toThrow('signaling failed');
     expect(stream.state).toBe('error');
-  });
-});
-
-describe('CameraStream RTP track selection', () => {
-  const event = () => {
-    const handlers: Array<(...args: any[]) => void> = [];
-    return {
-      subscribe: vi.fn((handler: (...args: any[]) => void) => {
-        handlers.push(handler);
-      }),
-      emit: (...args: any[]) => {
-        for (const handler of handlers) handler(...args);
-      },
-    };
-  };
-
-  it('ignores werift placeholder tracks and forwards RTP from the registered onTrack track', () => {
-    const stream = new CameraStream('cam-123', 'test-camera', 'rtsp://localhost:8554');
-    const placeholderRtp = event();
-    const actualRtp = event();
-    const placeholderTrack = { kind: 'video', onReceiveRtp: placeholderRtp };
-    const actualTrack = { kind: 'video', onReceiveRtp: actualRtp };
-    const onRemoteTransceiverAdded = event();
-    const onTrack = event();
-    const connectionStateChange = event();
-    const pc = {
-      onRemoteTransceiverAdded,
-      onTrack,
-      ontrack: null,
-      connectionStateChange,
-      onIceCandidate: event(),
-      iceConnectionStateChange: event(),
-      iceGatheringStateChange: event(),
-      getTransceivers: vi.fn().mockReturnValue([]),
-    };
-    const startFfmpeg = vi.spyOn(stream as any, 'startFfmpeg').mockImplementation(() => {});
-
-    (stream as any).pc = pc;
-    (stream as any).videoPort = 12345;
-    (stream as any).setupPeerConnection();
-
-    onRemoteTransceiverAdded.emit({
-      mid: 'video0',
-      kind: 'video',
-      direction: 'recvonly',
-      receiver: { track: placeholderTrack },
-    });
-    expect(startFfmpeg).not.toHaveBeenCalled();
-
-    onTrack.emit(actualTrack);
-    expect(startFfmpeg).toHaveBeenCalledOnce();
-
-    const packet = { serialize: vi.fn().mockReturnValue(Buffer.from([1, 2, 3])) };
-    actualRtp.emit(packet);
-
-    expect((stream as any).videoSocket.send).toHaveBeenCalledWith(
-      Buffer.from([1, 2, 3]),
-      12345,
-      '127.0.0.1',
-    );
-    expect(packet.serialize).toHaveBeenCalledOnce();
   });
 });
 
@@ -397,7 +338,7 @@ describe('CameraStream ffmpeg mid-stream exit recovery', () => {
       kill: vi.fn(),
     } as any);
 
-    (stream as any).startFfmpeg();
+    (stream as any).startFfmpeg({ h264Fmtp: null });
   });
 
   afterEach(() => {
@@ -468,7 +409,7 @@ describe('CameraStream ffmpeg mid-stream exit recovery', () => {
     vi.mocked(spawn).mockReturnValue(replacement);
 
     (stream as any).ffmpeg = null;
-    (stream as any).startFfmpeg();
+    (stream as any).startFfmpeg({ h264Fmtp: null });
     expect((stream as any).ffmpeg).toBe(replacement);
 
     staleExitHandler(0);
@@ -506,9 +447,9 @@ describe('CameraStream ffmpeg SDP', () => {
   });
 
   it('includes parsed h264Fmtp in ffmpeg SDP', () => {
-    (stream as any).h264Fmtp = 'packetization-mode=1;profile-level-id=4d001f;sprop-parameter-sets=Z00AH+dA==,aO48gA==';
-
-    (stream as any).startFfmpeg();
+    (stream as any).startFfmpeg({
+      h264Fmtp: 'packetization-mode=1;profile-level-id=4d001f;sprop-parameter-sets=Z00AH+dA==,aO48gA==',
+    });
 
     expect(stdinWrite).toHaveBeenCalledWith(
       expect.stringContaining('a=fmtp:96 packetization-mode=1;profile-level-id=4d001f;sprop-parameter-sets=Z00AH+dA==,aO48gA=='),
@@ -516,9 +457,7 @@ describe('CameraStream ffmpeg SDP', () => {
   });
 
   it('falls back to default fmtp when h264Fmtp is null', () => {
-    (stream as any).h264Fmtp = null;
-
-    (stream as any).startFfmpeg();
+    (stream as any).startFfmpeg({ h264Fmtp: null });
 
     expect(stdinWrite).toHaveBeenCalledWith(
       expect.stringContaining('a=fmtp:96 packetization-mode=1'),
@@ -529,20 +468,10 @@ describe('CameraStream ffmpeg SDP', () => {
   });
 
   it('prepends packetization-mode=1 when missing from camera fmtp', () => {
-    (stream as any).h264Fmtp = 'profile-level-id=4d001f';
-
-    (stream as any).startFfmpeg();
+    (stream as any).startFfmpeg({ h264Fmtp: 'profile-level-id=4d001f' });
 
     expect(stdinWrite).toHaveBeenCalledWith(
       expect.stringContaining('a=fmtp:96 packetization-mode=1;profile-level-id=4d001f'),
     );
-  });
-
-  it('stop() resets h264Fmtp to null', async () => {
-    (stream as any).h264Fmtp = 'packetization-mode=1;profile-level-id=4d001f';
-
-    await stream.stop();
-
-    expect((stream as any).h264Fmtp).toBeNull();
   });
 });

@@ -1,11 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createSocket, type Socket } from 'node:dgram';
-import { RTCPeerConnection, RTCRtpCodecParameters } from 'werift';
-import { SignalingClient } from '../signaling/signaling-client.js';
 import { createChildLogger } from '../utils/logger.js';
 import { sleep } from '../utils/retry.js';
-import { parseH264Fmtp } from '../utils/sdp.js';
-import type { EndToEndWebrtcConfig, RTCSessionDescriptionLike, RTCIceCandidateLike } from '../types.js';
+import { PeerSession, type PeerSessionCallbacks } from './peer-session.js';
+import type { EndToEndWebrtcConfig } from '../types.js';
 
 const log = createChildLogger('camera-stream');
 
@@ -22,24 +20,31 @@ export type TokenFetcher = () => Promise<EndToEndWebrtcConfig | null>;
  * ADC signaling → werift PeerConnection → RTP → ffmpeg → RTSP push to go2rtc
  */
 export class CameraStream {
-  private signaling: SignalingClient;
-  private pc: RTCPeerConnection | null = null;
+  private active: PeerSession | null = null;
   private ffmpeg: ChildProcess | null = null;
   private videoSocket: Socket | null = null;
   private videoPort = 0;
-  private h264Fmtp: string | null = null;
+  private rtpCount = 0;
   private _state: StreamState = 'idle';
 
   /** Called when ffmpeg exits unexpectedly while the stream was active. */
   onUnexpectedExit: (() => void) | null = null;
 
+  private readonly sessionCallbacks: PeerSessionCallbacks = {
+    onRtp: (session, packet) => this.handleRtp(session, packet),
+    onTrackReady: (session) => {
+      this.startFfmpeg(session);
+      if (!this.videoSocket) this.videoSocket = createSocket('udp4');
+      if (session === this.active) this._state = 'streaming';
+    },
+    onFailed: (session) => this.handleSessionFailed(session),
+  };
+
   constructor(
     readonly cameraId: string,
     readonly cameraName: string,
     private readonly rtspBaseUrl: string,
-  ) {
-    this.signaling = new SignalingClient(cameraName);
-  }
+  ) {}
 
   get state(): StreamState {
     return this._state;
@@ -106,40 +111,25 @@ export class CameraStream {
     log.info({ camera: this.cameraName }, 'Reconnecting WebRTC (keeping ffmpeg alive)...');
 
     // Tear down token-bound resources only
-    this.signaling.removeAllListeners();
-    this.signaling.close();
-    if (this.pc) {
-      await this.pc.close().catch(() => {});
-      this.pc = null;
-    }
+    await this.active?.close();
 
-    // Fresh signaling client
-    this.signaling = new SignalingClient(this.cameraName);
+    this.active = new PeerSession(this.cameraName, this.sessionCallbacks);
     this._state = 'connecting';
 
     try {
-      this.pc = this.createPeerConnection(config);
-      this.setupPeerConnection();
-      await this.connectSignaling(config);
+      await this.active.connect(config);
     } catch (err) {
       this._state = 'error';
       throw err;
     }
 
     log.info({ camera: this.cameraName }, 'Reconnect complete, waiting for SDP offer...');
-
-    this.registerPostSessionHandlers();
   }
 
   /** Tear down the entire pipeline. */
   async stop(): Promise<void> {
-    this.signaling.removeAllListeners();
-    this.signaling.close();
-
-    if (this.pc) {
-      await this.pc.close().catch(() => {});
-      this.pc = null;
-    }
+    await this.active?.close();
+    this.active = null;
 
     if (this.ffmpeg) {
       // Detach ownership before signaling the child. The exit event may be
@@ -155,15 +145,15 @@ export class CameraStream {
       this.videoSocket = null;
     }
 
-    this.h264Fmtp = null;
+    this.rtpCount = 0;
     this._state = 'idle';
     log.info({ camera: this.cameraName }, 'Stream stopped');
   }
 
-  private buildFmtp(): string {
-    if (!this.h264Fmtp) return 'packetization-mode=1';
-    if (this.h264Fmtp.includes('packetization-mode')) return this.h264Fmtp;
-    return `packetization-mode=1;${this.h264Fmtp}`;
+  private buildFmtp(h264Fmtp: string | null): string {
+    if (!h264Fmtp) return 'packetization-mode=1';
+    if (h264Fmtp.includes('packetization-mode')) return h264Fmtp;
+    return `packetization-mode=1;${h264Fmtp}`;
   }
 
   private async tryConnect(config: EndToEndWebrtcConfig): Promise<void> {
@@ -173,265 +163,30 @@ export class CameraStream {
     this.videoPort = await this.allocateUdpPort();
     log.info({ camera: this.cameraName, videoPort: this.videoPort }, 'Allocated RTP port');
 
-    this.pc = this.createPeerConnection(config);
-    this.setupPeerConnection();
-    await this.connectSignaling(config);
-
-    log.info({ camera: this.cameraName }, 'Session started, waiting for SDP offer...');
-
-    this.registerPostSessionHandlers();
+    const session = new PeerSession(this.cameraName, this.sessionCallbacks);
+    this.active = session;
+    await session.connect(config);
   }
 
-  private createPeerConnection(config: EndToEndWebrtcConfig): RTCPeerConnection {
-    return new RTCPeerConnection({
-      iceServers: config.iceServers.flatMap((s) =>
-        s.urls.map((url) => ({
-          urls: url,
-          username: s.username,
-          credential: s.credential,
-        })),
-      ),
-      codecs: {
-        video: [
-          new RTCRtpCodecParameters({
-            mimeType: 'video/H264',
-            clockRate: 90000,
-            payloadType: 96,
-          }),
-        ],
-        audio: [
-          new RTCRtpCodecParameters({
-            mimeType: 'audio/opus',
-            clockRate: 48000,
-            channels: 2,
-            payloadType: 111,
-          }),
-          new RTCRtpCodecParameters({
-            mimeType: 'audio/PCMU',
-            clockRate: 8000,
-            payloadType: 0,
-          }),
-          new RTCRtpCodecParameters({
-            mimeType: 'audio/PCMA',
-            clockRate: 8000,
-            payloadType: 8,
-          }),
-        ],
-      },
-    });
-  }
+  /** Forward RTP from the active session to ffmpeg over the loopback UDP socket. */
+  private handleRtp(session: PeerSession, packet: Buffer): void {
+    if (session !== this.active) return;
+    if (!this.videoSocket || !this.videoPort) return;
 
-  /** Connect signaling — resolve on SESSION_STARTED, reject on close/error. */
-  private connectSignaling(config: EndToEndWebrtcConfig): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      this.signaling.on('sessionStarted', () => resolve());
-
-      this.signaling.on('closed', (_code, reason) => {
-        let errorMsg = reason;
-        try {
-          const parsed = JSON.parse(reason);
-          if (parsed.error) errorMsg = parsed.error;
-        } catch {}
-
-        if (this._state === 'connecting') {
-          reject(new Error(errorMsg));
-        }
-      });
-
-      this.signaling.on('error', (err) => {
-        if (this._state === 'connecting') reject(err);
-      });
-
-      this.signaling.connect(
-        config.signallingServerUrl,
-        config.signallingServerToken,
-        config.cameraAuthToken,
-      ).catch(reject);
-    });
-  }
-
-  /** Register SDP/ICE/close handlers after session is established. */
-  private registerPostSessionHandlers(): void {
-    this.signaling.on('sdpOffer', async (offer) => {
-      try {
-        await this.handleSdpOffer(offer);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.error({ camera: this.cameraName }, 'SDP handling failed: %s', msg);
-      }
-    });
-
-    this.signaling.on('iceCandidate', async (candidate) => {
-      log.debug({ camera: this.cameraName }, 'Remote ICE candidate received');
-      await this.handleRemoteIceCandidate(candidate);
-    });
-
-    this.signaling.on('closed', (_code, reason) => {
-      if (this._state === 'streaming') {
-        log.warn({ camera: this.cameraName, reason }, 'Signaling closed while streaming');
-      }
-    });
-  }
-
-  private setupPeerConnection(): void {
-    const pc = this.pc!;
-    let rtpSubscribed = false;
-    let rtpCount = 0;
-
-    const subscribeToRtp = (track: any, source: string) => {
-      if (rtpSubscribed) return;
-      rtpSubscribed = true;
-
-      // Start ffmpeg and create the send socket (guards allow reuse on reconnect)
-      this.startFfmpeg();
-      if (!this.videoSocket) {
-        this.videoSocket = createSocket('udp4');
-      }
-
-      track.onReceiveRtp.subscribe((rtp: any) => {
-        if (this.videoSocket && this.videoPort) {
-          const buf = rtp.serialize();
-          this.videoSocket.send(buf, this.videoPort, '127.0.0.1');
-          rtpCount++;
-          if (rtpCount === 1 || rtpCount === 100) {
-            log.info({ camera: this.cameraName, rtpCount, bytes: buf.length }, 'RTP packets sent to ffmpeg');
-          } else if (rtpCount % 1000 === 0) {
-            log.debug({ camera: this.cameraName, rtpCount, bytes: buf.length }, 'RTP packets sent to ffmpeg');
-          }
-        }
-      });
-
-      this._state = 'streaming';
-      log.info({ camera: this.cameraName, source }, 'Video streaming active');
-    };
-
-    // onRemoteTransceiverAdded fires before werift has registered the remote
-    // SSRC-backed track. At that point receiver.track can be a placeholder
-    // defaultTrack which never receives RTP. Observe it for diagnostics, but
-    // wait for onTrack before subscribing so the real track wins the guard.
-    pc.onRemoteTransceiverAdded.subscribe((transceiver) => {
-      log.info(
-        { camera: this.cameraName, mid: transceiver.mid, kind: transceiver.kind, direction: transceiver.direction,
-          hasReceiver: !!transceiver.receiver, hasTrack: !!transceiver.receiver?.track },
-        'Remote transceiver added',
-      );
-    });
-
-    // Method 1: onTrack — werift emits this after it registers the actual
-    // remote media track and routes the negotiated SSRC to it.
-    pc.onTrack.subscribe((track) => {
-      log.info({ camera: this.cameraName, kind: track.kind }, 'onTrack fired');
-      if (track.kind === 'video') {
-        subscribeToRtp(track, 'onTrack');
-      }
-    });
-
-    // Method 2: ontrack callback — alternative style
-    pc.ontrack = (ev) => {
-      log.info({ camera: this.cameraName, kind: ev.track.kind }, 'ontrack callback fired');
-      if (ev.track.kind === 'video') {
-        subscribeToRtp(ev.track, 'ontrack callback');
-      }
-    };
-
-    // Method 3: When connected, scan transceivers as last resort
-    pc.connectionStateChange.subscribe((state) => {
-      if (state !== 'connected') return;
-      log.info({ camera: this.cameraName }, 'Connection connected, scanning transceivers');
-      for (const t of pc.getTransceivers()) {
-        log.info(
-          { camera: this.cameraName, mid: t.mid, kind: t.kind, hasReceiver: !!t.receiver, hasTrack: !!t.receiver?.track },
-          'Transceiver state on connected',
-        );
-        if (t.kind === 'video' && t.receiver?.track) {
-          subscribeToRtp(t.receiver.track, 'connectionStateChange scan');
-        }
-      }
-    });
-
-    pc.onIceCandidate.subscribe((candidate) => {
-      if (!candidate) return;
-      log.debug({ camera: this.cameraName }, 'Local ICE candidate generated');
-      this.signaling.sendIceCandidate({
-        candidate: candidate.candidate,
-        sdpMid: candidate.sdpMid ?? null,
-        sdpMLineIndex: candidate.sdpMLineIndex ?? null,
-      });
-    });
-
-    pc.iceConnectionStateChange.subscribe((state) => {
-      log.info({ camera: this.cameraName, iceState: state }, 'ICE connection state changed');
-    });
-
-    pc.iceGatheringStateChange.subscribe((state) => {
-      log.info({ camera: this.cameraName, iceGathering: state }, 'ICE gathering state changed');
-    });
-
-    pc.connectionStateChange.subscribe((state) => {
-      if (pc !== this.pc) return; // stale PC during reconnect
-      log.info({ camera: this.cameraName, connectionState: state }, 'Connection state changed');
-      if (state === 'failed' || state === 'disconnected') {
-        this._state = 'error';
-      }
-    });
-  }
-
-  private async handleSdpOffer(offer: RTCSessionDescriptionLike): Promise<void> {
-    const pc = this.pc!;
-    log.info({ camera: this.cameraName }, 'SDP offer received, setting remote description');
-
-    // Log the SDP so we can debug codec/track issues
-    const mediaLines = offer.sdp.split('\n').filter((l: string) => l.startsWith('m=') || l.startsWith('a=rtpmap'));
-    log.info({ camera: this.cameraName, mediaLines }, 'SDP offer media lines');
-
-    // Extract H.264 fmtp before setRemoteDescription, which can synchronously
-    // trigger onRemoteTransceiverAdded → subscribeToRtp → startFfmpeg.
-    this.h264Fmtp = parseH264Fmtp(offer.sdp);
-    if (this.h264Fmtp) {
-      log.info({ camera: this.cameraName, h264Fmtp: this.h264Fmtp }, 'Parsed H.264 fmtp from SDP offer');
-    } else {
-      log.warn({ camera: this.cameraName }, 'No H.264 fmtp found in SDP offer, using default');
-    }
-
-    await pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
-
-    const transceivers = pc.getTransceivers();
-    for (const t of transceivers) {
-      log.info(
-        { camera: this.cameraName, mid: t.mid, kind: t.kind, direction: t.direction },
-        'Transceiver after setRemoteDescription',
-      );
-    }
-
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    // Log answer media lines too
-    const answerMediaLines = answer.sdp.split('\n').filter((l: string) => l.startsWith('m=') || l.startsWith('a=rtpmap'));
-    log.info({ camera: this.cameraName, answerMediaLines }, 'SDP answer media lines');
-
-    this.signaling.sendAnswer({
-      type: 'answer',
-      sdp: answer.sdp,
-    });
-    log.info({ camera: this.cameraName }, 'SDP answer sent');
-  }
-
-  private async handleRemoteIceCandidate(candidate: RTCIceCandidateLike): Promise<void> {
-    if (!this.pc) return;
-    try {
-      await this.pc.addIceCandidate({
-        candidate: candidate.candidate,
-        sdpMid: candidate.sdpMid ?? undefined,
-        sdpMLineIndex: candidate.sdpMLineIndex ?? undefined,
-      } as any);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn({ camera: this.cameraName }, 'Failed to add ICE candidate: %s', msg);
+    this.videoSocket.send(packet, this.videoPort, '127.0.0.1');
+    this.rtpCount++;
+    if (this.rtpCount === 1 || this.rtpCount === 100) {
+      log.info({ camera: this.cameraName, rtpCount: this.rtpCount, bytes: packet.length }, 'RTP packets sent to ffmpeg');
+    } else if (this.rtpCount % 1000 === 0) {
+      log.debug({ camera: this.cameraName, rtpCount: this.rtpCount, bytes: packet.length }, 'RTP packets sent to ffmpeg');
     }
   }
 
-  private startFfmpeg(): void {
+  private handleSessionFailed(session: PeerSession): void {
+    if (session === this.active) this._state = 'error';
+  }
+
+  private startFfmpeg(session: PeerSession): void {
     if (this.ffmpeg) return;
 
     const rtspUrl = `${this.rtspBaseUrl}/${this.cameraName}`;
@@ -445,7 +200,7 @@ export class CameraStream {
       't=0 0',
       `m=video ${this.videoPort} RTP/AVP 96`,
       'a=rtpmap:96 H264/90000',
-      `a=fmtp:96 ${this.buildFmtp()}`,
+      `a=fmtp:96 ${this.buildFmtp(session.h264Fmtp)}`,
     ].join('\r\n') + '\r\n';
 
     const args = [
