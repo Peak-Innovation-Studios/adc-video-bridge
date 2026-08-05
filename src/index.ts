@@ -54,18 +54,41 @@ async function main(): Promise<void> {
     log.warn('Event listener error: %s', err.message);
   });
 
-  // Motion webhook to Homebridge
-  if (config.homebridge?.motionUrl) {
-    const { motionUrl, motionTimeoutMs } = config.homebridge;
+  // Motion fan-out. Two independent sinks: the Homebridge webhook, and
+  // go2rtc's native HomeKit motion sensor. During the cutover both accessories
+  // exist, so both want telling; afterwards Homebridge's simply goes away.
+  const hksvMotion = config.go2rtc.homekitMotion === true;
+  if (config.homebridge?.motionUrl || hksvMotion) {
+    const motionUrl = config.homebridge?.motionUrl;
+    const motionTimeoutMs = config.homebridge?.motionTimeoutMs ?? 60_000;
     const cameraIdToHbName = new Map(
       config.cameras.map((c) => [c.id, c.homebridgeName ?? c.name]),
+    );
+    // go2rtc keys its HomeKit server by STREAM name, which is `name` — not
+    // `homebridgeName`, which exists only to label the Homebridge accessory.
+    const hbNameToStream = new Map(
+      config.cameras.map((c) => [c.homebridgeName ?? c.name, c.name]),
     );
     const motionTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const motionActive = new Set<string>();
 
-    log.info({ motionUrl }, 'Homebridge motion webhooks enabled');
+    if (motionUrl) log.info({ motionUrl }, 'Homebridge motion webhooks enabled');
+    if (hksvMotion) log.info('go2rtc HomeKit (HKSV) motion enabled');
+
+    const sendHksvMotion = async (hbName: string, detected: boolean) => {
+      const stream = hbNameToStream.get(hbName);
+      if (!stream) return;
+      try {
+        await go2rtc.setMotion(stream, detected);
+        log.info({ camera: stream, detected }, 'go2rtc HomeKit motion updated');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn({ camera: stream, detected }, 'go2rtc HomeKit motion failed: %s', msg);
+      }
+    };
 
     const sendMotionToggle = async (hbName: string) => {
+      if (!motionUrl) return;
       const url = `${motionUrl}/motion?${encodeURIComponent(hbName)}`;
       try {
         const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
@@ -91,6 +114,7 @@ async function main(): Promise<void> {
       if (!motionActive.has(hbName)) {
         motionActive.add(hbName);
         sendMotionToggle(hbName);
+        if (hksvMotion) sendHksvMotion(hbName, true);
       }
 
       // Schedule reset after timeout
@@ -100,6 +124,7 @@ async function main(): Promise<void> {
           motionTimers.delete(hbName);
           motionActive.delete(hbName);
           sendMotionToggle(hbName);
+          if (hksvMotion) sendHksvMotion(hbName, false);
         }, motionTimeoutMs),
       );
     });

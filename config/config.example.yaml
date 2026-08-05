@@ -21,7 +21,12 @@ cameras:
 go2rtc:
   apiUrl: "http://192.168.1.10:1984"
   rtspPort: 8554
-
+  # Drive go2rtc's native HomeKit motion sensor. Requires `motion: api` under
+  # the matching `homekit:` entry in go2rtc.yaml. Independent of
+  # homebridge.motionUrl below — during the cutover both accessories exist and
+  # both need telling; afterwards the Homebridge one simply goes away.
+  # go2rtc keys its HomeKit server by the camera's `name`, not `homebridgeName`.
+  homekitMotion: false
 # Optional: send motion events to homebridge-camera-ffmpeg
 # Requires "motion": true and "porthttp" set in the Homebridge plugin config
 # homebridge:

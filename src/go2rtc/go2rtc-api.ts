@@ -50,6 +50,25 @@ export class Go2rtcApi {
     return res.json() as Promise<Record<string, unknown>>;
   }
 
+  /**
+   * Drive go2rtc's native HomeKit motion sensor (`motion: api` mode).
+   *
+   * Not a toggle — go2rtc's handler maps the HTTP method directly:
+   * POST sets motion detected, DELETE clears it. Firing POST twice is
+   * therefore idempotent rather than an on/off flip.
+   */
+  async setMotion(stream: string, detected: boolean): Promise<void> {
+    const url = `${this.baseUrl}/api/homekit/motion?id=${encodeURIComponent(stream)}`;
+    const res = await fetch(url, {
+      method: detected ? 'POST' : 'DELETE',
+      headers: this.headers,
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) {
+      throw new Error(`go2rtc motion API error: ${res.status}`);
+    }
+  }
+
   /** Wait for go2rtc to become available, with timeout. */
   async waitReady(timeoutMs = 30_000): Promise<void> {
     const start = Date.now();

@@ -174,3 +174,52 @@ describe('Go2rtcApi', () => {
     });
   });
 });
+
+describe('Go2rtcApi.setMotion', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // go2rtc's contract is NOT a toggle: POST sets motion on, DELETE sets it off.
+  it('POSTs to turn motion on, with the stream in the id query parameter', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const api = new Go2rtcApi('http://192.168.7.42:1984', { username: 'u', password: 'p' });
+    await api.setMotion('front', true);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://192.168.7.42:1984/api/homekit/motion?id=front');
+    expect(init.method).toBe('POST');
+    expect(init.headers.Authorization).toBe(`Basic ${Buffer.from('u:p').toString('base64')}`);
+  });
+
+  it('DELETEs to turn motion off', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const api = new Go2rtcApi('http://192.168.7.42:1984', { username: 'u', password: 'p' });
+    await api.setMotion('front', false);
+
+    expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
+  });
+
+  it('percent-encodes the stream name so it cannot break the query string', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const api = new Go2rtcApi('http://192.168.7.42:1984');
+    await api.setMotion('front door&x=1', true);
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://192.168.7.42:1984/api/homekit/motion?id=front%20door%26x%3D1',
+    );
+  });
+
+  it('throws on a non-ok response so the caller can log and continue', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+
+    const api = new Go2rtcApi('http://192.168.7.42:1984');
+    await expect(api.setMotion('front', true)).rejects.toThrow(/404/);
+  });
+});

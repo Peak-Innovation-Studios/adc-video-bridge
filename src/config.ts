@@ -32,6 +32,12 @@ export interface AppConfig {
     apiPassword?: string;
     rtspUsername?: string;
     rtspPassword?: string;
+    /**
+     * Drive go2rtc's native HomeKit motion sensor (`motion: api` in
+     * go2rtc.yaml). Independent of `homebridge.motionUrl`: during the cutover
+     * both accessories exist and both want telling.
+     */
+    homekitMotion?: boolean;
   };
   homebridge?: HomebridgeConfig;
   logging: {
