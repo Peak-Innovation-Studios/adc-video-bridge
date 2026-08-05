@@ -59,16 +59,21 @@ baton, the baton wins.
   **The camera is not connected to Alarm.com.** The bridge is behaving exactly as designed — 12
   signaling attempts, then the manager's `60 → 120 → 300 → 600 s` ladder, `failures:5` and climbing,
   so the circuit opens at 6. Nothing to fix in code.
-  🔴 **Do NOT roll back.** The new image is exonerated; rolling back would change nothing and would
-  lose the ~1.2 s-gap fix. `2e98710` remains the rollback target only if some *unrelated* regression
-  appears later.
+  🔄 **RETRACTED: an earlier version of this baton said "do NOT roll back — the new image is
+  exonerated." That call was wrong** and is the single most important correction here. It rested on
+  "the error text comes from Alarm.com's server, so it cannot be us" — but that describes ADC's
+  *view*, not the cause. **Rolling back to `2e98710` is now the decisive test**, because the camera
+  has been cleared and the rebuild is the only uncontrolled variable left.
   ⚠️ **Prime suspect is the WiFi work itself** (item 1, same window).
-  🔑 **KEY DEDUCTION — the camera is NOT offline.** The Brinks/Alarm.com app streams it fine. If the
-  camera were off the network, the app could not either. So `"has not yet dialed in"` is **not**
-  "camera absent" — it is **the camera failing to establish the direct end-to-end WebRTC path our
-  bridge requires**, while the app is served happily by Alarm.com's proxy. Leading hypothesis: the
-  network change put the camera somewhere the direct path cannot be built (client isolation, a
-  guest/IoT VLAN, a different subnet, or band steering).
+  🔑 **THE CAMERA HAS BEEN CLEARED. Do not re-investigate it.** It streams perfectly in the
+  Brinks/Alarm.com app, it is on a **closer AP with better signal** than before, and its **IP is
+  unchanged** — so there is no subnet, VLAN or band change. If the camera were off the network the
+  app could not stream it either.
+  ⚠️ **A "different subnet" finding was raised and RETRACTED.** The `172.20.14.x` addresses in the
+  probe payload are `coturnAddressesTuplets` — **Alarm.com's own TURN infrastructure**, not the
+  camera. Do not re-derive that theory.
+  ➡️ **With the camera cleared, the rebuild is the only uncontrolled variable left.** See the
+  rollback test below.
   **Already ruled out — do not repeat these:**
   | Tried | Result |
   |---|---|
@@ -78,11 +83,18 @@ baton, the baton wins.
   | Waiting out the backoff ladder | same refusal |
   | `endToEndWebrtcConnectionInfo` still non-null, `errorEnum: 0` | **cannot discriminate** — served
     from ADC's database, not the device |
-  🎯 **Next thing to try, and it is the cleanest test available:** put the camera back on its
-  **original** SSID/AP/band. That is the one change correlated with the break, and reverting it
-  either restores video (hypothesis confirmed — redo the WiFi work differently) or exonerates it
-  (look at the Alarm.com account/service side). Also worth comparing the camera's **IP/subnet** with
-  what it had before.
+  🎯 **THE DECISIVE TEST — roll back the image and see.** The camera is cleared; the rebuild is the
+  only variable left. `main` is untouched by this; it is a checkout on the NAS.
+  ```
+  cd /volume1/docker/adc-video-bridge && git checkout 2e98710 && \
+    sudo /var/packages/ContainerManager/target/usr/bin/docker-compose up -d --build adc-video-bridge
+  ```
+  - **Video returns** ⇒ make-before-break broke the **initial connect** path (not the reconnect
+    path — that is the half the 180 tests cover). Restore with `git checkout main` + rebuild, then
+    fix properly. Prime suspects: the `onTrackReady` ownership gate and the RTP session-identity
+    gate, both of which are new and both of which silently *drop* rather than error.
+  - **Still refused** ⇒ the code really is exonerated and this is Alarm.com account/service-side —
+    a support call, not a config change.
   🔑 **Two diagnostic traps this session fell into and corrected — both now in
   [`INVARIANTS.md`](INVARIANTS.md):**
   1. The Janus/proxy fields (`janusGatewayUrl`, `proxyStreamTimeoutTime: 180`) are in the payload
