@@ -91,4 +91,27 @@ describe('Go2rtcApi', () => {
       await expect(promise).rejects.toThrow();
     });
   });
+
+  describe('authentication', () => {
+    it('sends HTTP Basic credentials when configured', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+      globalThis.fetch = fetchMock;
+
+      const authedApi = new Go2rtcApi('http://192.168.7.42:1984', { username: 'u', password: 'p' });
+      await authedApi.getStreams();
+
+      const init = fetchMock.mock.calls[0][1];
+      expect(init.headers.Authorization).toBe(`Basic ${Buffer.from('u:p').toString('base64')}`);
+    });
+
+    it('sends no Authorization header when no credentials are configured', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+      globalThis.fetch = fetchMock;
+
+      await api.getStreams();
+
+      const init = fetchMock.mock.calls[0][1];
+      expect(init.headers?.Authorization).toBeUndefined();
+    });
+  });
 });

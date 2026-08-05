@@ -2,17 +2,36 @@ import { createChildLogger } from '../utils/logger.js';
 
 const log = createChildLogger('go2rtc');
 
+export interface Go2rtcCredentials {
+  username: string;
+  password: string;
+}
+
 /**
  * Lightweight client for the go2rtc REST API.
  * Used for health checks and stream status monitoring.
  */
 export class Go2rtcApi {
-  constructor(private readonly baseUrl: string) {}
+  private readonly headers: Record<string, string>;
+
+  constructor(
+    private readonly baseUrl: string,
+    credentials?: Go2rtcCredentials,
+  ) {
+    this.headers = credentials
+      ? {
+          Authorization:
+            'Basic ' +
+            Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64'),
+        }
+      : {};
+  }
 
   /** Check if go2rtc is reachable. */
   async isHealthy(): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/api/streams`, {
+        headers: this.headers,
         signal: AbortSignal.timeout(5_000),
       });
       return res.ok;
@@ -24,6 +43,7 @@ export class Go2rtcApi {
   /** Get the list of active streams. */
   async getStreams(): Promise<Record<string, unknown>> {
     const res = await fetch(`${this.baseUrl}/api/streams`, {
+      headers: this.headers,
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) throw new Error(`go2rtc API error: ${res.status}`);

@@ -24,7 +24,12 @@ async function main(): Promise<void> {
   log.info({ cameraCount: config.cameras.length }, 'Config loaded');
 
   // Wait for go2rtc
-  const go2rtc = new Go2rtcApi(config.go2rtc.apiUrl);
+  const go2rtc = new Go2rtcApi(
+    config.go2rtc.apiUrl,
+    config.go2rtc.apiUsername && config.go2rtc.apiPassword
+      ? { username: config.go2rtc.apiUsername, password: config.go2rtc.apiPassword }
+      : undefined,
+  );
   try {
     await go2rtc.waitReady();
   } catch {

@@ -28,6 +28,10 @@ export interface AppConfig {
   go2rtc: {
     apiUrl: string;
     rtspPort: number;
+    apiUsername?: string;
+    apiPassword?: string;
+    rtspUsername?: string;
+    rtspPassword?: string;
   };
   homebridge?: HomebridgeConfig;
   logging: {
@@ -163,7 +167,14 @@ export function loadConfig(): AppConfig {
   return validateConfig({
     alarm,
     cameras: Array.isArray(fileConfig.cameras) ? fileConfig.cameras : DEFAULT_CONFIG.cameras,
-    go2rtc: { ...DEFAULT_CONFIG.go2rtc, ...fileConfig.go2rtc },
+    go2rtc: {
+      ...DEFAULT_CONFIG.go2rtc,
+      ...fileConfig.go2rtc,
+      apiUsername: readEnvironmentSecret('GO2RTC_API_USERNAME') ?? fileConfig.go2rtc?.apiUsername,
+      apiPassword: readEnvironmentSecret('GO2RTC_API_PASSWORD') ?? fileConfig.go2rtc?.apiPassword,
+      rtspUsername: readEnvironmentSecret('GO2RTC_RTSP_USERNAME') ?? fileConfig.go2rtc?.rtspUsername,
+      rtspPassword: readEnvironmentSecret('GO2RTC_RTSP_PASSWORD') ?? fileConfig.go2rtc?.rtspPassword,
+    },
     homebridge: fileConfig.homebridge
       ? {
           motionUrl: fileConfig.homebridge.motionUrl,
