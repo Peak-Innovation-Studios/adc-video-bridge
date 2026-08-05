@@ -26,3 +26,7 @@ docker.log
 
 # Docker
 docker-compose.dev.yml
+
+# Agent scratch: git worktrees and subagent-driven-development workspaces
+.claude/worktrees/
+.superpowers/
