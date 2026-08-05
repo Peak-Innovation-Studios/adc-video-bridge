@@ -61,19 +61,22 @@ baton, the baton wins.
   | `docker-compose restart` ×2 (resets backoff → immediate attempt) | refused instantly |
   | Fresh token every attempt | same refusal |
   | Waiting out the backoff ladder | same refusal |
-  🎯 **THE DECISIVE TEST — roll back the image.** The camera is cleared, so the rebuild is the only
-  uncontrolled variable. `main` is untouched; this is a checkout on the NAS.
-  ```
-  cd /volume1/docker/adc-video-bridge && git checkout 2e98710 && \
-    sudo /var/packages/ContainerManager/target/usr/bin/docker-compose up -d --build adc-video-bridge
-  ```
-  - **Video returns** ⇒ make-before-break broke the **initial connect** path — notably the half the
-    180 tests cover *least*, since they overwhelmingly exercise reconnect. Restore with
-    `git checkout main` + rebuild, then fix properly. Prime suspects: the new `onTrackReady`
-    ownership gate and the RTP session-identity gate, both of which **drop silently** rather than
-    error.
-  - **Still refused** ⇒ the code is genuinely exonerated; this is Alarm.com account/service-side and
-    becomes a support call.
+  ✅ **THE CODE IS EXONERATED — rollback was run and changed NOTHING.** `2e98710`, the image that
+  was serving 84–127 KB frames earlier the same day, fails identically on the same refusal. Two
+  different binaries, one symptom. **Do not re-litigate make-before-break**, and do not roll back
+  again; the NAS checkout was returned to `main`.
+  ➡️ **Both ends are now cleared: the camera works, and our code works.** What is left is the path
+  and the service between them.
+  🎯 **NEXT — finish step 1 of the "no video" order, which was never completed.** Only the *phone
+  app* was checked. The order deliberately says web player **AND** phone app, because
+  **disagreement between two first-party clients is itself the finding.** The phone app can be
+  served by Alarm.com's **proxy**; the **browser web player uses the same end-to-end WebRTC path we
+  need**. So:
+  - **Web player works** ⇒ e2e is healthy and something is specific to our client/account — a much
+    narrower hunt.
+  - **Web player fails too** ⇒ e2e is broken for every client, the camera is not dialing in for
+    anyone, and this is a **Brinks/Alarm.com support call**, not a config change. That is the
+    likeliest outcome and it is the cheapest way to earn the right to make that call.
   ⚠️ **THREE WRONG THEORIES WERE RAISED AND RETRACTED THIS SESSION. Do not re-derive them:**
   1. *"Alarm.com demoted the camera to Proxy."* No — `janusGatewayUrl`/`proxyStreamTimeoutTime` are
      in the payload **always**, as fallback config. Demotion is specifically
