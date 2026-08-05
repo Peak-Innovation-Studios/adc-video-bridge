@@ -62,9 +62,27 @@ baton, the baton wins.
   🔴 **Do NOT roll back.** The new image is exonerated; rolling back would change nothing and would
   lose the ~1.2 s-gap fix. `2e98710` remains the rollback target only if some *unrelated* regression
   appears later.
-  ⚠️ **Prime suspect is the WiFi work itself** (item 1, same window). If an SSID, band, AP or
-  passphrase changed, the camera needs **re-provisioning onto the new network** — many of these
-  cameras are 2.4 GHz-only and silently fail to join a 5 GHz or band-steered SSID.
+  ⚠️ **Prime suspect is the WiFi work itself** (item 1, same window).
+  🔑 **KEY DEDUCTION — the camera is NOT offline.** The Brinks/Alarm.com app streams it fine. If the
+  camera were off the network, the app could not either. So `"has not yet dialed in"` is **not**
+  "camera absent" — it is **the camera failing to establish the direct end-to-end WebRTC path our
+  bridge requires**, while the app is served happily by Alarm.com's proxy. Leading hypothesis: the
+  network change put the camera somewhere the direct path cannot be built (client isolation, a
+  guest/IoT VLAN, a different subnet, or band steering).
+  **Already ruled out — do not repeat these:**
+  | Tried | Result |
+  |---|---|
+  | Camera power-cycle | no change |
+  | `docker-compose restart` (resets backoff, forces immediate attempt) | refused instantly, twice |
+  | Fresh token each attempt | same refusal |
+  | Waiting out the backoff ladder | same refusal |
+  | `endToEndWebrtcConnectionInfo` still non-null, `errorEnum: 0` | **cannot discriminate** — served
+    from ADC's database, not the device |
+  🎯 **Next thing to try, and it is the cleanest test available:** put the camera back on its
+  **original** SSID/AP/band. That is the one change correlated with the break, and reverting it
+  either restores video (hypothesis confirmed — redo the WiFi work differently) or exonerates it
+  (look at the Alarm.com account/service side). Also worth comparing the camera's **IP/subnet** with
+  what it had before.
   🔑 **Two diagnostic traps this session fell into and corrected — both now in
   [`INVARIANTS.md`](INVARIANTS.md):**
   1. The Janus/proxy fields (`janusGatewayUrl`, `proxyStreamTimeoutTime: 180`) are in the payload
