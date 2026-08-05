@@ -8,6 +8,79 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-04 (later) — Make-before-break, and a parked "one-line fix" that wasn't
+
+**Claude Code (Opus 5).** Merged to `main` as a 12-commit branch. Closes the ~1.2s media gap
+filed upstream as `Omar-L#25`.
+
+The shape is what the plan intended: `reconnect()` builds the replacement `PeerSession` **alongside**
+the live one and cuts over on its **first RTP packet**, rather than closing the old PeerConnection
+first. Break-before-make survives only as the fallback, for when the overlap fails or the active
+session dies mid-flight. `PeerSession` was extracted out of `CameraStream` to make "two sessions at
+once" expressible at all — the old code could not represent the state.
+
+**The gap is real and current, not historical.** Production logs mid-branch measured
+reconnect→first RTP at **~1.08s**, which is what the whole exercise is aimed at. Live view never
+noticed it (the RTSP publisher never drops — ffmpeg spawns once in 30 minutes); it is HKSV
+recording that will care.
+
+### The thing actually worth writing down: a parked fix was a hypothesis, not a conclusion
+
+The final whole-branch review returned "Ship with fixes." The fix wave landed them, and re-review
+found one more hole, which was **parked with an explicit ruling**: the breaker records neither
+success nor failure on the `activeDied` fallback path, because that path awaits `tryConnect()`,
+which resolves on `'sessionStarted'` while `_state` is still `'connecting'` — only `onTrackReady`
+flips it to `'streaming'`. The ruling was right about the defect, right that it was non-blocking,
+and named the mechanism correctly. It also stated **"THE FIX IS KNOWN AND ONE LINE"**: swap the
+`state === 'streaming'` check for an ownership check on the `startId` stamp.
+
+That swap is wrong, and it takes one command to find out. Applying it fails
+`'does not credit a torn-down stream when reconnect() resolves after it'` — a test **the same fix
+wave had just added**. That test reproduces a tear-down *without* handing the guard to a newer
+attempt, so the stale attempt still owns it and would falsely credit; the circuit closes on a dead
+stream (`'error'` instead of `'error (circuit open)'`).
+
+🔑 **The two guards defend disjoint failure modes, and neither implies the other.** Ownership stops
+a *stale* attempt crediting after a newer one took over. Liveness stops an attempt that *still owns
+the guard* crediting a stream that died in flight. The real defect was never "wrong guard" — it was
+that `=== 'streaming'` is too **strict**, excluding the legitimately-recovering `'connecting'`
+state. So the fix requires **both** conditions, and admits `'connecting'` as alive. Dead and unknown
+states default to no credit: a missed credit is bounded (the next clean cutover clears the
+counters), a false credit hides an outage.
+
+The generalisable lesson, and it is not specific to this repo: **a finding parked with a proposed
+fix carries two claims — that the defect is real, and that the fix is correct. Reviews are good at
+the first and unreliable at the second**, because the proposer reasons about the bug in isolation
+while the regression tests that would contradict them were written to defend the *opposite* failure
+mode. Try the proposed fix and watch which test dies before believing it.
+
+### The plan had a real bug in it, and the implementer caught it
+
+Task 5's brief guarded the fallback on `result === 'kept' && !activeDied`, which lets a **successful
+cutover** fall through into `tryConnect()` and tear down a perfectly healthy stream. The implementer
+found it, the reviewer confirmed it. Worth noting because it is the second time on this branch the
+*plan's own sample code* contradicted the plan's prose (Task 4's `discardPending()` never settled the
+outcome promise, hanging `reconnect()` forever, while the text promised it "cannot hang forever").
+Where the two disagree, the prose is the design and the sample is a defect.
+
+### The same object-lifecycle bug class showed up a third time
+
+Task 3's review caught `stop()`/`tryConnect()` never tearing down `pending`, so a stale pending's
+late RTP re-entered `cutOver` and forced a dead pipeline back to `'streaming'`. This file has now
+produced that shape three times (the stale-ffmpeg-`exit` callback, the placeholder track, this).
+The recurring fix is the same: **gate every callback on "is the object that fired this still the
+one I own?"** — hence the identity gate on RTP forwarding and the ownership gate on `onTrackReady`.
+
+### ⚠️ An agent worktree under `.claude/worktrees/` doubles the test count
+
+Merging produced `24 files / 360 tests` — exactly twice the real figure. `vitest.config.ts` sets no
+`include`/`exclude`, so the default glob walks the worktree's copy of `src/` too. Both copies passed
+here, so it was only cosmetic, but the failure mode is not: **a stale worktree's failing tests fail
+`main`'s suite**, and the failures point at files that look like the ones you are editing. After
+`git worktree remove`, the honest number is `12 files / 180 tests`.
+
+---
+
 ## 2026-08-04 — The ADC API circuit breaker, and four things the tests found
 
 **Claude Code (Opus 5).**

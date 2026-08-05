@@ -11,19 +11,29 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-04 — built the ADC API circuit breaker across all three retry loops and
-  upstreamed it as [#32](https://github.com/Omar-L/adc-video-bridge/pull/32). Narrative:
-  `Journal.md`, entry 2026-08-04; the outage and upstream-PR context is the 2026-08-03 entry.
+- **Updated:** 2026-08-04 (later) — **merged `make-before-break` into `main`** (12 commits), closing
+  the ~1.2s media gap. Narrative: `Journal.md`, entry "2026-08-04 (later)". The circuit breaker is
+  the earlier 2026-08-04 entry; the outage and upstream-PR context is 2026-08-03.
 - **Branch / HEAD:** Run `git fetch && git status -sb && git log --oneline -1`. `main` is the branch
   to deploy from. **Pushing here does NOT deploy** — Kaikoura is updated by hand, and `src/` changes
   need `docker-compose up -d --build`.
   💡 "Do I need a rebuild?" is answerable from git alone: the Dockerfile copies only `package*.json`,
   `tsconfig.json`, `src/` and `entrypoint.sh`, so
   `git diff --name-only <deployed-commit>..main -- <those paths>` empty ⇒ the image is current.
-- **Working tree:** Run `git status --short`. No agent has uncommitted work.
-- **Validation (this session, on `main`):** `npm run build` clean, `npm test` **11 files / 145 tests**,
-  `npm run audit:prod` passed with the documented GHSA-2p57-rm9w-gvfp exception.
-- **Kaikoura is live, streaming, and running the circuit breaker** — David rebuilt it 2026-08-04.
+- **Working tree:** Run `git status --short`. No agent has uncommitted work. The
+  `make-before-break` worktree and branch are **merged and deleted** — `git worktree list` should
+  show only the main checkout.
+- **Validation (this session, on merged `main`):** `npm run build` clean, `npx vitest run`
+  **12 files / 180 tests**, `npm run audit:prod` passed with the documented GHSA-2p57-rm9w-gvfp
+  exception.
+  ⚠️ **If you see ~360 tests, an agent worktree is back under `.claude/worktrees/`.**
+  `vitest.config.ts` sets no `include`/`exclude`, so the default glob walks the worktree's copy of
+  `src/` as well. Cosmetic when both copies pass — but a **stale** worktree's failures will fail
+  `main`'s suite while pointing at files that look like the ones you are editing.
+- 🔴 **Kaikoura does NOT have make-before-break yet.** It is still running the circuit-breaker build
+  David rebuilt 2026-08-04. `src/` changed, so it needs `docker-compose up -d --build`. ⚠️ Not
+  before item 1 — deploying onto a camera with a bad link measures the WiFi, not the change.
+- **What Kaikoura IS running is live, streaming and healthy.**
   Verified sudo-free: go2rtc answers `401` on its bound address, so the container is up and auth is
   enforced. ⚠️ **Not yet verified: whether the breaker has actually opened or probed in anger.**
   That needs `docker-compose logs` (sudo) — grep for `Circuit OPEN`, `probing`, and
@@ -70,7 +80,10 @@ baton, the baton wins.
   5s timeout. **The trap is broader than the werift pin: any fixture exercising code our hardening
   made more tolerant will pass here and fail there.** Fixed on both branches (`e971299`).
 - **Whose turn:** **David** — the camera's WiFi (item 1) is the only thing no code can fix, and it
-  gates everything else. The breaker is deployed; agent work continues on make-before-break.
+  gates everything else including the deploy of the work just merged. ⚠️ **The agent queue is now
+  genuinely blocked on it**: every remaining code item (the A/B in item 4, HKSV in item 3) either
+  measures the link or is invalidated by it. There is no longer useful agent work that routes
+  around item 1.
 
 ### What's left (priority order)
 
@@ -81,15 +94,18 @@ baton, the baton wins.
 2. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
    ⚠️ `chmod` alone will not hold: it is the **volume's default ACL**, and the Homebridge UI rewrites
    the file on every settings change. Durable fix is at the shared-folder/ACL level.
-3. **(David, then agent)** **HKSV is now unblocked** — the event stream delivers for the first time.
+3. **(David — deploy)** **Rebuild Kaikoura to pick up make-before-break.**
+   `docker-compose up -d --build`, since `src/` changed. Then confirm the gap is actually gone:
+   the old signature is a ~1.2s media stall every 600s at token refresh. ⚠️ Not before item 1 — on a
+   weak link the overlap can fail and fall back to break-before-make, which measures the WiFi rather
+   than the change. 💡 Worth grepping the logs for `Second concurrent session refused by
+   Alarm.com` — that line is how production tells us whether ADC permits two sessions per camera at
+   all, which is the assumption the whole overlap rests on.
+4. **(David, then agent)** **HKSV is now unblocked** — the event stream delivers for the first time.
    Needs `videoConfig.recording: true` + `prebuffer` + `motion` + `porthttp` in Homebridge, the
    bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
-   Home app. ⚠️ Not before item 1.
-4. **(Agent — matters most once HKSV is on)** **Make-before-break on token refresh.** Measured
-   **~1.2s media gap every 600s**: `reconnect()` closes the old PeerConnection before building the
-   new one. The RTSP publisher never drops (ffmpeg spawns once in 30 min), so live view is fine and
-   recording is not. Filed upstream as
-   [#25](https://github.com/Omar-L/adc-video-bridge/issues/25).
+   Home app. ⚠️ Not before item 1. Best after item 3 — make-before-break exists precisely because
+   HKSV recording is what cares about the refresh gap.
 5. *(Agent, low)* **A/B `-reorder_queue_size 0`** — now has evidence, so it is no longer
    speculative. Production logs 2026-08-04 show ffmpeg emitting repeated
    `Non-monotonic DTS ... This may result in incorrect timestamps in the output file` while
@@ -103,7 +119,14 @@ baton, the baton wins.
 7. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
    subscribed. ⚠️ A camera demoted to Proxy has **no audio at all**, so this only means anything on
    a Direct connection.
-8. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
+8. *(Agent, trivial — deferred from the make-before-break review, all triaged "ship as is")*
+   `'fallback'` is a dead member of `OverlapOutcome` (nothing settles it); the comment near
+   `cutOver` claiming `activeDied` "cannot be true" is false; `onFailed` fires on `'disconnected'`
+   too, which is often a transient ICE blip and now forces a full teardown (⚠️ this one only shows
+   up against a real camera, so revisit it after item 3); a `tryConnect()` rejection in the fallback
+   leaves `_state` at `'connecting'` rather than `'error'`; `rtpCount` is not reset across
+   reconnect.
+9. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
    has no printf width specifiers. Cosmetic; the generated YAML is fine.
 
 ### Do not touch / gotchas
@@ -132,6 +155,22 @@ baton, the baton wins.
   Alarm.com returns HTTP 200 with no WebRTC block, which does **not** throw and does **not** emit
   `error`. That branch is the entire point; a breaker keyed on `catch` sleeps through the outage it
   was built for. Reasoning: `Journal.md` 2026-08-03 and 2026-08-04.
+- 🔑 **The breaker credit in `camera-manager.ts`'s reconnect branch needs BOTH conditions. Do not
+  collapse it to one.** It requires that we *still own the start guard* (`activeStarts.get(id) ===
+  startId`) **and** that the stream is *not dead* (`'streaming'` **or** `'connecting'`). Neither
+  implies the other: ownership stops a **stale** attempt crediting after a newer one took over;
+  liveness stops an attempt that still owns the guard crediting a stream that died in flight.
+  `'connecting'` counts as alive **deliberately** — the `activeDied` fallback awaits `tryConnect()`,
+  which resolves on `'sessionStarted'` while `onTrackReady` has not yet flipped `_state` to
+  `'streaming'`. Requiring `'streaming'` records neither success nor failure on a real recovery.
+  ⚠️ A previous review parked this as a "known one-line fix" (swap state for ownership) — **that
+  swap is wrong and regresses `'does not credit a torn-down stream…'`**. Reasoning: `Journal.md`
+  2026-08-04 (later).
+- 🔑 **Every session callback must be gated on ownership.** This file has now produced the same
+  object-lifecycle bug three times: the stale ffmpeg `exit` callback, the placeholder track, and a
+  discarded `pending` whose late RTP re-entered `cutOver` and forced a dead pipeline back to
+  `'streaming'`. Any new callback on a `PeerSession` asks *"is the object that fired this still the
+  one I own?"* first — see the identity gate on RTP forwarding and on `onTrackReady`.
 - ⚠️ **Breaker thresholds are coupled to the ladders next to them, and one is deliberately off by
   one.** `STREAM_FAILURE_THRESHOLD` is `BACKOFF_STEPS_MS.length + 1` so the ladder's 10-minute cap
   is used once before the circuit opens; setting it equal to the length makes that rung dead code.
