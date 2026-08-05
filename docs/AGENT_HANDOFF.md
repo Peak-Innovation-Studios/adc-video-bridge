@@ -42,28 +42,30 @@ baton, the baton wins.
   counted twice (12/180 → 24/360). `vitest.config.ts` now excludes `**/.claude/**`. ⚠️ If you ever
   edit that `exclude`, **spread `defaultExclude`** — setting it replaces the defaults, and in
   vitest 4 those are only `node_modules` and `.git`.
-- ✅ **RESOLVED 2026-08-04 — production is streaming again, ON make-before-break.** Verified
-  sudo-free: **152–155 KB** frames, **3 of 3 distinct md5s**, `ffmpeg` running, go2rtc showing
-  **1 consumer** (Homebridge), HomeKit displaying video. Deployed checkout was at `8142c1f`
-  (post-merge, so `src/` is current — later commits are docs only).
-  **What the outage cost and what it proved.** Both ends were cleared by independent evidence:
-  the camera streamed in the Brinks app throughout, and a **rollback to `2e98710` failed
-  identically**, exonerating the code. Recovery came after the AP change plus a camera power-cycle
-  and several rebuild/restart cycles; the camera evidently began dialing in again on a later
-  attempt. ⚠️ **The precise trigger was never isolated** — do not record one.
-  🔑 **The bridge recovered on its own once the camera returned, exactly as designed** —
-  `TokenManager`'s unconditional 600 s interval is the backstop and the breaker self-heals. No
-  redeploy was needed for the recovery itself.
-  ⚠️ **THREE WRONG THEORIES WERE RAISED AND RETRACTED. Do not re-derive them:**
-  1. *"Alarm.com demoted the camera to Proxy."* No — `janusGatewayUrl`/`proxyStreamTimeoutTime` are
-     in the payload **always**, as fallback config.
-  2. *"The camera is offline."* No — it streamed in the app the whole time.
-  3. *"The camera is on a different subnet."* No — `172.20.14.x` is `coturnAddressesTuplets`,
-     **Alarm.com's own TURN infrastructure**.
-  🔑 **All three were one error: reading a field of ADC's payload as a statement about the camera
-  when it describes ADC's own plumbing.** `probe.js` answers from their **database** — it reported
-  `errorEnum: 0` and a non-null `endToEndWebrtcConnectionInfo` throughout the outage, while no
-  session could be established at all. Only the bridge reaching `sessionStarted` proves anything.
+- 🔴🔴 **ROOT CAUSE: THE CAMERA IS FLAPPING.** It reports **offline in the Alarm.com app itself**,
+  intermittently. Measured here: a period of healthy streaming (152–155 KB frames, 3/3 distinct
+  md5s, ffmpeg up, HomeKit live) followed within minutes by **0 of 9 samples over 3 minutes**.
+  This is not our code, not proxy-vs-direct, and not the rebuild.
+  🔑 **THIS EXPLAINS EVERY CONTRADICTION FROM 2026-08-04, and it is the lesson worth keeping.**
+  Observations taken minutes apart were treated as one consistent picture — app works / web fails /
+  HomeKit works / all three work / all down. They were **samples of an oscillating system**, not
+  facts to reconcile. ⚠️ **With an intermittent fault, sequential measurements cannot be combined.**
+  Every theory built that way ("demoted to Proxy", "camera offline", "different subnet", "our
+  session locks out the web player") failed on the next sample, and each was a reasonable reading of
+  the sample it came from. **Measure the same thing repeatedly over time before explaining
+  anything.**
+  ⚠️ **Both exonerations still hold** — they were established by *controlled* tests, not snapshots:
+  the code by a rollback to `2e98710` that failed identically, and the bridge/go2rtc/auth stack by
+  direct inspection. The camera is the variable.
+  ➡️ **Item 1 is REOPENED. Better signal strength did not deliver a stable connection.** The camera
+  moved to a closer AP with stronger signal and is *still* dropping, so RSSI was the wrong metric.
+  Suspects, in order: **roaming/band-steering flap** between mesh nodes (the classic cause of a
+  strong-signal-yet-unstable client), channel interference on the new AP, or camera power. Try
+  **pinning the camera to one AP and one band** (disable band steering / set a fixed BSSID if the
+  mesh allows) and watch the AP's client list for it bouncing between nodes.
+  💡 **The bridge needs no intervention through any of this.** `TokenManager`'s unconditional 600 s
+  interval restarts the chain and the breaker self-heals, so video returns on its own each time the
+  camera does. Do not restart containers to chase this.
 - 🔬 **OPEN AND IMPORTANT — does Alarm.com allow only ONE e2e session per camera?** During the
   outage the **web player did not work while the bridge was streaming**. The likeliest reading is
   that our *perpetual* session holds the only e2e slot, locking out ADC's own web player. **If true,
@@ -115,17 +117,19 @@ Second concurrent session refused|Overlap did not complete|died mid-overlap"
   change and a deploy — and the deploy was the one that got blamed. When two changes overlap, the
   first question is which one the evidence actually names; here the logs named neither until they
   were read, and they named the camera.
-- **Whose turn:** **Agent** — production is healthy again. Next up is the one-session question
-  above: grep a token refresh for the refusal line. It decides whether make-before-break actually
-  closes the ~1.2 s gap or silently always falls back — and it needs only one log grep.
+- **Whose turn:** **David — PHYSICAL.** The camera flaps offline in Alarm.com's own app; that is
+  the root cause and no code can fix it. Chase link STABILITY, not signal strength. The bridge
+  self-recovers each time the camera returns, so no restarts are needed while diagnosing.
 
 ### What's left (priority order)
 
-1. ✅ **(DONE 2026-08-04)** **WiFi improved and production restored.** The camera moved to a closer
-   AP with better signal; it then stopped dialing in for several hours, and recovered after a
-   power-cycle and several restart cycles. Both the camera and the code were positively cleared —
-   full account in the handoff block above and in `Journal.md`. ⚠️ **Watch for recurrence:** if it
-   stops dialing in again, that is the signal the AP change is implicated after all.
+1. 🔴🔴 **(David — PHYSICAL, and it is the root cause of everything else) THE CAMERA FLAPS.** It
+   goes **offline in the Alarm.com app itself**, intermittently — confirmed 2026-08-04. Moving it to
+   a closer AP raised signal strength but did **not** make the link stable, so stop optimising RSSI.
+   Chase **stability**: pin it to one AP and one band (disable band steering), check the mesh's
+   client list for it bouncing between nodes, and consider channel interference or camera power.
+   ⚠️ Everything else in this list is unmeasurable until this is fixed — an intermittent camera
+   makes every other test unrepeatable.
 2. 🔬 **(Agent — cheap, and it gates the value of the whole make-before-break merge)** **Determine
    whether Alarm.com allows more than one e2e session per camera.** Grep any token refresh for
    `Second concurrent session refused by Alarm.com`. If ADC permits only one, the overlap can never
