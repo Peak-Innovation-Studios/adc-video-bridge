@@ -185,6 +185,13 @@ But go2rtc is currently **fused into the bridge image** (`alexxit/go2rtc` is the
 `entrypoint.sh` starts it), so adopting naively would put the ADC-credential-holding bridge on host
 networking too. **Split go2rtc into its own container first.**
 
+🔴 **Revert trigger: when go2rtc#2130 merges and ships in an official release, delete the build
+stage in `Dockerfile.go2rtc` and go back to the official digest-pinned `alexxit/go2rtc` image.** The
+self-build (toolchain pinned by digest, source pinned to a commit SHA on the `hksv` branch — see
+`docs/SECURITY_AUDIT.md`) is justified only by HKSV being unreleased. Without deleting the stage
+when the PR ships, the self-build outlives its justification and keeps carrying a maintenance and
+audit cost the official image no longer requires.
+
 Spike method, gotchas, and what stayed unmeasured: `Journal.md` 2026-08-03.
 🧹 Spike fully torn down; production untouched. Delete any leftover **"HKSV Spike"** accessory from
 the Home app.
