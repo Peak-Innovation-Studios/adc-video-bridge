@@ -181,6 +181,16 @@ HomeKit speaks HAP, not HTTP Basic, and cannot authenticate. **With go2rtc API a
 native HomeKit pairing cannot work.** ⚠️ `local_auth` is NOT the deciding factor — an iPhone is
 never on loopback, so the LAN path is blocked either way.
 
+✅ **FIXED LOCALLY 2026-08-04 by `patches/go2rtc-hap-auth-exempt.patch`**, applied in
+`Dockerfile.go2rtc` on top of the pinned commit. It exempts **only** `/pair-setup` and
+`/pair-verify` from the Basic-auth middleware — neither is left unprotected (pair-setup is guarded
+by the setup PIN via SRP, pair-verify by the long-term keys), and everything afterwards runs inside
+the encrypted HAP connection `pkg/hksv` hijacks from the `ResponseWriter`, so it never re-enters
+that mux. Verified: applies cleanly to a fresh checkout at `506cfa7d` and `go build ./...` is clean.
+⚠️ The build uses plain `git apply` — **not** `-3` or `--reject` — so a patch that stops applying
+FAILS the build loudly instead of silently producing an unpatched binary. That is the whole point of
+pinning. 🔴 Report this upstream on #2130 and delete the patch when it lands there.
+
 **Do not "fix" this by disabling go2rtc's API auth.** That would leave the snapshot/stream API
 unauthenticated to every device on the LAN — for a security camera — and it breaks the compose
 healthcheck, which asserts a 401. The options are: patch the fork so HAP paths bypass the auth

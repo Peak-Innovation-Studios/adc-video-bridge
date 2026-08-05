@@ -19,6 +19,17 @@ ARG GO2RTC_REF=506cfa7df508058b0d46a3457130a9cd3a647ae8
 RUN apk add --no-cache git && \
     git clone https://github.com/skrashevich/go2rtc /src && \
     git -C /src checkout "$GO2RTC_REF"
+
+# 🔴 Local patch, applied on top of the pinned commit. Without it native HomeKit
+# CANNOT pair while go2rtc's API authentication is enabled: HAP is served on the
+# API port and the Basic-auth middleware answers /pair-setup and /pair-verify
+# with 401, which HAP has no way to satisfy. Measured on this exact commit.
+# `git apply` (not `-3`/`--reject`) so a patch that no longer applies FAILS the
+# build loudly rather than silently producing an unpatched binary — the whole
+# point of pinning. Report upstream and drop this when it lands there.
+COPY patches/go2rtc-hap-auth-exempt.patch /tmp/
+RUN git -C /src apply --verbose /tmp/go2rtc-hap-auth-exempt.patch
+
 # This fork's module root (main.go) is the build target, not ./cmd/go2rtc —
 # that path doesn't exist at this commit.
 RUN cd /src && CGO_ENABLED=0 GOOS=linux go build -trimpath -o /go2rtc .

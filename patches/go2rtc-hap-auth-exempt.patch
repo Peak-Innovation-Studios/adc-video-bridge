@@ -1,0 +1,46 @@
+Exempt the two HAP pairing endpoints from go2rtc's Basic-auth middleware
+
+The HomeKit Accessory Protocol is served on the API port (internal/homekit
+passes Port: uint16(api.Port)), but middlewareAuth has no path exemption. HAP
+speaks its own protocol and cannot send HTTP Basic credentials, so an iPhone's
+pairing request is answered with 401 and the Home app fails to add the
+accessory. Measured on 1.9.14+dev.506cfa7: POST /pair-setup, /pair-verify and
+/accessories all return 401 once api.username is set. The practical effect is
+that native HomeKit and API authentication are mutually exclusive, with no
+diagnostic pointing at the cause.
+
+Only /pair-setup and /pair-verify need exempting, and neither is left
+unprotected:
+
+  - pair-setup is guarded by the setup PIN via SRP.
+  - pair-verify is guarded by the long-term keys established during pairing.
+  - Everything afterwards (/accessories, /characteristics, events) runs inside
+    the encrypted HAP connection that pkg/hksv hijacks from the ResponseWriter,
+    so it never re-enters this mux and is unaffected.
+
+Verified against skrashevich/go2rtc @ 506cfa7d: applies cleanly and `go build
+./...` is clean.
+
+diff --git a/internal/api/api.go b/internal/api/api.go
+index dfb65117..3e18410d 100644
+--- a/internal/api/api.go
++++ b/internal/api/api.go
+@@ -211,6 +211,18 @@ func isLoopback(remoteAddr string) bool {
+ 
+ func middlewareAuth(username, password string, localAuth bool, next http.Handler) http.Handler {
+ 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		// The HomeKit Accessory Protocol is served on this same port but cannot
++		// send HTTP Basic credentials, so Basic auth here makes native HomeKit
++		// unusable whenever api.username is set. These two endpoints carry their
++		// own cryptography: pair-setup is protected by the setup PIN via SRP,
++		// pair-verify by the long-term keys from pairing. Everything after
++		// pair-verify runs inside the encrypted HAP connection that pkg/hksv
++		// hijacks from the ResponseWriter, and never reaches this middleware.
++		if r.URL.Path == "/pair-setup" || r.URL.Path == "/pair-verify" {
++			next.ServeHTTP(w, r)
++			return
++		}
++
+ 		if localAuth || !isLoopback(r.RemoteAddr) {
+ 			user, pass, ok := r.BasicAuth()
+ 			if !ok || user != username || pass != password {
