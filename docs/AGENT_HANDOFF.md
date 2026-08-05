@@ -90,13 +90,20 @@ baton, the baton wins.
    new one. The RTSP publisher never drops (ffmpeg spawns once in 30 min), so live view is fine and
    recording is not. Filed upstream as
    [#25](https://github.com/Omar-L/adc-video-bridge/issues/25).
-5. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
+5. *(Agent, low)* **A/B `-reorder_queue_size 0`** — now has evidence, so it is no longer
+   speculative. Production logs 2026-08-04 show ffmpeg emitting repeated
+   `Non-monotonic DTS ... This may result in incorrect timestamps in the output file` while
+   streaming normally. That flag disables RTP reordering, which is right on a clean LAN and
+   wrong over a weak wireless link — exactly the condition item 1 describes. ⚠️ Test **after**
+   item 1, or the result measures the WiFi rather than the flag. Matters for HKSV, which
+   cares about timestamp continuity.
+6. *(Agent, low)* go2rtc stream auto-configuration — `config/go2rtc.yaml` is hand-synced with
    `config/config.yaml`. Note `src/discover.ts` already generates both blocks; the job is
    reconciling at startup, not deriving names.
-6. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
+7. *(Agent, low)* Audio passthrough. The peer connection negotiates Opus/PCMU/PCMA but only video is
    subscribed. ⚠️ A camera demoted to Proxy has **no audio at all**, so this only means anything on
    a Direct connection.
-7. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
+8. *(Trivial)* `src/discover.ts` prints `%-20s` literally — `console.log` uses `util.format`, which
    has no printf width specifiers. Cosmetic; the generated YAML is fine.
 
 ### Do not touch / gotchas
