@@ -42,53 +42,37 @@ baton, the baton wins.
   counted twice (12/180 → 24/360). `vitest.config.ts` now excludes `**/.claude/**`. ⚠️ If you ever
   edit that `exclude`, **spread `defaultExclude`** — setting it replaces the defaults, and in
   vitest 4 those are only `node_modules` and `.git`.
-- 🔴🔴 **PRODUCTION IS NOT STREAMING.** Kaikoura was rebuilt onto make-before-break 2026-08-04
-  (**image built from `34f1338`**, previous image `2e98710`) and video stopped. Every signaling
-  attempt is closed by Alarm.com with `"Camera <id> has not yet dialed in"` (WebSocket code **1000**,
-  a *normal* close, which is why it does not look like an error).
-  **Measured sudo-free:** `frame.jpeg` **0 bytes** (was 84–127 KB) · go2rtc `bytes_recv` **0**, flat ·
-  producers/receivers **1 / 0** · **no `ffmpeg`** · ports 8554/1984 accepting · unauthenticated
-  `frame.jpeg` still **401**. So go2rtc and auth are fine; nothing reaches them.
-  The bridge itself behaves exactly as designed — 12 signaling attempts, then the manager's
-  `60 → 120 → 300 → 600 s` ladder, breaker opening at 6 failures.
-  ✅ **THE CAMERA IS CLEARED — do not re-investigate it.** It streams perfectly in the Brinks app,
-  sits on a **closer AP with better signal** than before, and its **IP is unchanged** (no subnet,
-  VLAN or band change). Were it off the network the app could not stream it either.
-  **Ruled out — do not repeat:**
-  | Tried | Result |
-  |---|---|
-  | Camera power-cycle | no change |
-  | `docker-compose restart` ×2 (resets backoff → immediate attempt) | refused instantly |
-  | Fresh token every attempt | same refusal |
-  | Waiting out the backoff ladder | same refusal |
-  ✅ **THE CODE IS EXONERATED — rollback was run and changed NOTHING.** `2e98710`, the image that
-  was serving 84–127 KB frames earlier the same day, fails identically on the same refusal. Two
-  different binaries, one symptom. **Do not re-litigate make-before-break**, and do not roll back
-  again; the NAS checkout was returned to `main`.
-  ➡️ **Both ends are now cleared: the camera works, and our code works.** What is left is the path
-  and the service between them.
-  🎯 **NEXT — finish step 1 of the "no video" order, which was never completed.** Only the *phone
-  app* was checked. The order deliberately says web player **AND** phone app, because
-  **disagreement between two first-party clients is itself the finding.** The phone app can be
-  served by Alarm.com's **proxy**; the **browser web player uses the same end-to-end WebRTC path we
-  need**. So:
-  - **Web player works** ⇒ e2e is healthy and something is specific to our client/account — a much
-    narrower hunt.
-  - **Web player fails too** ⇒ e2e is broken for every client, the camera is not dialing in for
-    anyone, and this is a **Brinks/Alarm.com support call**, not a config change. That is the
-    likeliest outcome and it is the cheapest way to earn the right to make that call.
-  ⚠️ **THREE WRONG THEORIES WERE RAISED AND RETRACTED THIS SESSION. Do not re-derive them:**
+- ✅ **RESOLVED 2026-08-04 — production is streaming again, ON make-before-break.** Verified
+  sudo-free: **152–155 KB** frames, **3 of 3 distinct md5s**, `ffmpeg` running, go2rtc showing
+  **1 consumer** (Homebridge), HomeKit displaying video. Deployed checkout was at `8142c1f`
+  (post-merge, so `src/` is current — later commits are docs only).
+  **What the outage cost and what it proved.** Both ends were cleared by independent evidence:
+  the camera streamed in the Brinks app throughout, and a **rollback to `2e98710` failed
+  identically**, exonerating the code. Recovery came after the AP change plus a camera power-cycle
+  and several rebuild/restart cycles; the camera evidently began dialing in again on a later
+  attempt. ⚠️ **The precise trigger was never isolated** — do not record one.
+  🔑 **The bridge recovered on its own once the camera returned, exactly as designed** —
+  `TokenManager`'s unconditional 600 s interval is the backstop and the breaker self-heals. No
+  redeploy was needed for the recovery itself.
+  ⚠️ **THREE WRONG THEORIES WERE RAISED AND RETRACTED. Do not re-derive them:**
   1. *"Alarm.com demoted the camera to Proxy."* No — `janusGatewayUrl`/`proxyStreamTimeoutTime` are
-     in the payload **always**, as fallback config. Demotion is specifically
-     `endToEndWebrtcConnectionInfo: null`, and it never was.
-  2. *"The camera is offline."* No — it streams in the app.
-  3. *"The camera is on a different subnet."* No — the `172.20.14.x` addresses are
-     `coturnAddressesTuplets`, **Alarm.com's own TURN infrastructure**.
-  🔑 **All three were the same error: reading a field of ADC's payload as a statement about the
-  camera, when it was a statement about ADC's own plumbing.** `probe.js` answers from Alarm.com's
-  **database** — it reported `errorEnum: 0`, non-null `endToEndWebrtcConnectionInfo` and both video
-  sources throughout, while no session could be established. **It cannot prove the camera can
-  stream.** Only the bridge reaching `sessionStarted` proves that. See [`INVARIANTS.md`](INVARIANTS.md).
+     in the payload **always**, as fallback config.
+  2. *"The camera is offline."* No — it streamed in the app the whole time.
+  3. *"The camera is on a different subnet."* No — `172.20.14.x` is `coturnAddressesTuplets`,
+     **Alarm.com's own TURN infrastructure**.
+  🔑 **All three were one error: reading a field of ADC's payload as a statement about the camera
+  when it describes ADC's own plumbing.** `probe.js` answers from their **database** — it reported
+  `errorEnum: 0` and a non-null `endToEndWebrtcConnectionInfo` throughout the outage, while no
+  session could be established at all. Only the bridge reaching `sessionStarted` proves anything.
+- 🔬 **OPEN AND IMPORTANT — does Alarm.com allow only ONE e2e session per camera?** During the
+  outage the **web player did not work while the bridge was streaming**. The likeliest reading is
+  that our *perpetual* session holds the only e2e slot, locking out ADC's own web player. **If true,
+  make-before-break's central assumption is wrong** — the overlap could never hold two sessions and
+  would always fall back to break-before-make, meaning the ~1.2 s gap is not actually closed.
+  **How to settle it, cheaply:** at any token refresh (every 600 s), grep the container logs for
+  `Second concurrent session refused by Alarm.com`. That line firing routinely ⇒ one session only.
+  A second, independent check: with the bridge streaming, try the **web player** — if it reliably
+  fails only while we are connected, that is the same finding from the other side.
 - 🔴 **An agent CANNOT do the rebuild — do not plan around it.** `sudo` on Kaikoura requires David's
   password (verified 2026-08-04: `sudo -n` fails, and `docker` needs privileges), and every compose
   command in [`SYNOLOGY.md`](SYNOLOGY.md) is sudo-prefixed. SSH itself works fine as `dpeak`, so
@@ -116,35 +100,22 @@ baton, the baton wins.
   change and a deploy — and the deploy was the one that got blamed. When two changes overlap, the
   first question is which one the evidence actually names; here the logs named neither until they
   were read, and they named the camera.
-- **Whose turn:** **David — PHYSICAL.** Production is down because **the camera is not dialed in to
-  Alarm.com** (diagnosed from logs — not our code, do not roll back). Re-provision it onto the
-  changed WiFi, checking the 2.4 GHz band. The bridge self-recovers once it returns. Everything below
-  item 2 is parked, including the agent work the WiFi fix had just unblocked.
+- **Whose turn:** **Agent** — production is healthy again. Next up is the one-session question
+  above: grep a token refresh for the refusal line. It decides whether make-before-break actually
+  closes the ~1.2 s gap or silently always falls back — and it needs only one log grep.
 
 ### What's left (priority order)
 
-1. ⚠️ **(David — REOPENED 2026-08-04)** **The WiFi was improved, and the camera then stopped dialing
-   in to Alarm.com.** Superseded by item 2, which is the live version of this. Original context: This is what caused the
-   2026-08-03 outage and gated every item below. ⚠️ **Still unverified under load** — re-probe and
-   watch for `Circuit OPEN` before treating the link as solved, since a perpetual session stresses
-   it far harder than Alarm.com's own on-demand clients. If the outage recurs, the cause was not
-   fully addressed: a power-cycle clears the symptom, not the cause, and the durable fixes are wired
-   Ethernet, relocation, or an added AP.
-2. 🔴🔴 **(David — PHYSICAL. Get the camera back on WiFi; nothing else matters until it dials in.)**
-   **Diagnosed:** Alarm.com's signaling server reports the camera **has not dialed in**. Not a code
-   problem, and no agent can fix it. 🔴 **Do NOT roll back** — the new image is exonerated and a
-   rollback would only lose the ~1.2 s-gap fix. In order:
-   1. **Does the camera show online in the Alarm.com app?** If it is offline there, it is offline
-      full stop; everything else is downstream of that.
-   2. **Re-provision it onto the changed network.** ⚠️ Check the **band** — many of these cameras
-      are 2.4 GHz-only and silently fail to join a 5 GHz or band-steered SSID. A changed SSID or
-      passphrase is not something the camera learns by itself.
-   3. **Power-cycle**, then re-check the app.
-   💡 **Nothing to redeploy afterwards.** The bridge recovers on its own: `TokenManager`'s 600 s
-   interval is unconditional and is the backstop that restarts the chain, and the breaker self-heals
-   on its first successful probe. Expect recovery within ~15 minutes of the camera returning.
-   💡 Once video is back, grep for `Second concurrent session refused by Alarm.com` — how production
-   tells us whether ADC permits two sessions per camera at all, which the whole overlap rests on.
+1. ✅ **(DONE 2026-08-04)** **WiFi improved and production restored.** The camera moved to a closer
+   AP with better signal; it then stopped dialing in for several hours, and recovered after a
+   power-cycle and several restart cycles. Both the camera and the code were positively cleared —
+   full account in the handoff block above and in `Journal.md`. ⚠️ **Watch for recurrence:** if it
+   stops dialing in again, that is the signal the AP change is implicated after all.
+2. 🔬 **(Agent — cheap, and it gates the value of the whole make-before-break merge)** **Determine
+   whether Alarm.com allows more than one e2e session per camera.** Grep any token refresh for
+   `Second concurrent session refused by Alarm.com`. If ADC permits only one, the overlap can never
+   hold two sessions, the fallback runs every time, and the ~1.2 s gap is *not* closed — which
+   would make issue `Omar-L#25` still open in substance. Needs `docker-compose logs` (sudo).
 3. **(David, then agent)** **HKSV is unblocked** — the event stream delivers for the first time.
    Needs `videoConfig.recording: true` + `prebuffer` + `motion` + `porthttp` in Homebridge, the
    bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
