@@ -35,7 +35,7 @@ baton, the baton wins.
   compare content rather than trusting `git apply --check --reverse`, which is context-tolerant:
   `diff <(git show stash@{0}:<path>) <(git show HEAD:<path>)`.
 - **Validation (as of the commit this baton describes — re-run before trusting it):**
-  `npm run build` clean, `npx vitest run` **14 files / 213 tests**, `npm run audit:prod` passed with
+  `npm run build` clean, `npx vitest run` **14 files / 214 tests**, `npm run audit:prod` passed with
   the documented GHSA-2p57-rm9w-gvfp exception.
   ✅ **Agent worktrees no longer double-count the suite.** They live under `.claude/worktrees/`
   *inside* the repo, so their copy of `src/` used to match vitest's include glob and every run
@@ -134,10 +134,11 @@ Second concurrent session refused|Overlap did not complete|died mid-overlap"
      (`&& !conn.RemoteAddr().(*net.TCPAddr).IP.IsLoopback()`), verified at the pinned commit. Every
      RTSP request still authenticates, but that comes from the **bind address**, not a toggle.
      🔴 Binding to `127.0.0.1` or `0.0.0.0` exposes unauthenticated RTSP to anything on the host.
-  Still parked, non-blocking: CI's 20-minute timeout now also covers a Go-from-source build (it will
-  report itself on the first run); `SECURITY_AUDIT.md`'s "Last reviewed" date is stale; and an
-  absent `config/config.yaml` makes Docker create a *directory* at the single-file bind mount
-  (caught as a fatal `EISDIR`, so fail-fast but not self-explanatory).
+  ✅ **All three remaining parked items are also closed** (2026-08-04): the CI timeout is 30 min
+  (it now compiles go2rtc from source on top of npm ci, the suite and two image builds);
+  `SECURITY_AUDIT.md`'s review date is current; and `loadConfig()` now `statSync().isFile()`-guards
+  the config path, so Docker's directory-at-a-missing-bind-mount names its own cause instead of
+  surfacing as a bare `EISDIR`. **Nothing is parked. Phase 0 carries no known debt.**
 - **Whose turn:** **David — PHYSICAL.** The camera flaps offline in Alarm.com's own app; that is
   the root cause and no code can fix it. Chase link STABILITY, not signal strength. The bridge
   self-recovers each time the camera returns, so no restarts are needed while diagnosing.

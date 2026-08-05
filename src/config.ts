@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
 
@@ -143,6 +143,16 @@ export function loadConfig(): AppConfig {
 
   for (const configPath of configPaths) {
     if (existsSync(configPath)) {
+      // Docker creates a DIRECTORY at a single-file bind mount whose host file
+      // is missing, and existsSync() is true for a directory — so without this
+      // the failure surfaced as a bare EISDIR naming neither file nor cause.
+      if (!statSync(configPath).isFile()) {
+        throw new Error(
+          `${configPath} is a directory, not a file. This usually means Docker created it ` +
+            'for a bind mount whose host file does not exist — run ' +
+            '"cp config/config.example.yaml config/config.yaml" and recreate the container.',
+        );
+      }
       const raw = readFileSync(configPath, 'utf-8');
       fileConfig = (parse(raw) as Partial<AppConfig>) ?? {};
       break;

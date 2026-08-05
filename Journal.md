@@ -82,12 +82,37 @@ stated clearly, reviewed against, and land nowhere. The final review found a sec
   empty, and that `local_auth: true` makes the 401 hold on loopback. Two of my own assumptions were
   wrong elsewhere in this session; that habit is why this one shipped.
 
-### ⚠️ Two residuals were parked, not fixed — see the baton
+### The residuals, and the one that turned out to be two halves of one fact
 
-The workflow allows one fix wave and it was spent. Both are one-line fixes and both should land
-before Phase 1: `ADC_BRIDGE_BIND_ADDRESS` is now the last required variable still fail-open, and a
-claim in `SECURITY_AUDIT.md`/`README.md` about RTSP loopback auth is **factually wrong** — the
-pre-branch wording was correct.
+Five items were parked at merge because the workflow allows a single fix wave. All five were closed
+immediately afterwards.
+
+🔑 **The two "important" ones were the same fact seen from opposite ends.** `ADC_BRIDGE_BIND_ADDRESS`
+was the last required variable still defaulted (`${VAR:-127.0.0.1}`), and the security record claimed
+Basic auth covered every RTSP request *"loopback included (`local_auth: true`)"*. Verified against the
+pinned commit, that claim is false — `internal/rtsp/rtsp.go` reads
+
+```go
+// skip check auth for localhost
+if conf.Mod.Username != "" && !conn.RemoteAddr().(*net.TCPAddr).IP.IsLoopback() {
+```
+
+and there is **no `local_auth` key under `rtsp:` at all**. `local_auth` governs the API module only.
+RTSP *is* fully authenticated in practice — but solely because `listen:` is the LAN address, so
+nothing arrives over loopback.
+
+Which means the security guarantee rested entirely on the variable that defaulted to the value
+breaking it. ⚠️ And `local_auth: true` had **removed the accident that used to catch a missing bind
+address**: previously the loopback probe returned 200 and failed the health gate loudly; afterwards
+it returns 401 at any address, so go2rtc would report **healthy while bound where nothing can reach
+it** and every stream would fail silently. Fixing either alone would have left a live hole.
+
+The corrected wording now names *where* each endpoint's protection comes from, rather than asserting
+that it holds — a claim that names its mechanism can be re-checked against that mechanism later.
+
+The other three were quick: the CI timeout raised to 30 minutes (it now compiles go2rtc from source),
+a stale review date, and a `statSync().isFile()` guard so Docker's directory-at-a-missing-bind-mount
+names its own cause instead of a bare `EISDIR`.
 
 ---
 

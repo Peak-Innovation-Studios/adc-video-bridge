@@ -4,12 +4,14 @@ import { loadConfig, go2rtcRtspBaseUrl } from './config.js';
 vi.mock('node:fs', () => ({
   readFileSync: vi.fn(),
   existsSync: vi.fn(() => false),
+  statSync: vi.fn(() => ({ isFile: () => true })),
 }));
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 
 const mockExistsSync = vi.mocked(existsSync);
 const mockReadFileSync = vi.mocked(readFileSync);
+const mockStatSync = vi.mocked(statSync);
 
 describe('loadConfig', () => {
   const origEnv = { ...process.env };
@@ -18,6 +20,7 @@ describe('loadConfig', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test');
     mockExistsSync.mockReturnValue(false);
     mockReadFileSync.mockReturnValue('');
+    mockStatSync.mockReturnValue({ isFile: () => true } as unknown as ReturnType<typeof statSync>);
     delete process.env.ADC_USERNAME;
     delete process.env.ADC_PASSWORD;
     delete process.env.ADC_MFA_TOKEN;
@@ -29,6 +32,19 @@ describe('loadConfig', () => {
   afterEach(() => {
     process.env = { ...origEnv };
     vi.restoreAllMocks();
+  });
+
+  it('names the Docker bind-mount cause when the config path is a directory', () => {
+    // Docker creates a DIRECTORY at a single-file bind mount whose host file is
+    // missing. existsSync() is true for a directory, so this used to surface as
+    // a bare EISDIR that named neither the file nor the cause.
+    mockExistsSync.mockReturnValue(true);
+    mockStatSync.mockReturnValue({ isFile: () => false } as unknown as ReturnType<typeof statSync>);
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+
+    expect(() => loadConfig()).toThrow(/is a directory, not a file/);
+    expect(() => loadConfig()).toThrow(/bind mount/);
   });
 
   it('throws when no credentials provided', () => {
