@@ -26,6 +26,34 @@ starting at step 3.
 2. Check camera WiFi signal. Power-cycle it. Re-probe.
 3. Only then read our logs.
 
+### 🔴 `"Camera <id> has not yet dialed in"` means the CAMERA is offline. It is not our bug
+
+Alarm.com's signaling server closes the WebSocket with code **1000** (a *normal* closure, which is
+why it does not look like an error) carrying this message. It means the camera has not registered
+with ADC's video service — there is nothing for us to connect to.
+
+Correct response: **fix the camera's connectivity.** Do not debug the bridge. The retry ladder and
+the circuit breaker are already handling it correctly by design — 12 signaling attempts, then the
+manager's `60s → 120s → 300s → 600s` backoff, then the circuit opens at 6 failures.
+
+⚠️ **Suspect recent WiFi work first.** Measured 2026-08-04: the camera stopped dialing in
+immediately after the WiFi was "improved", while a bridge rebuild happened in the same window — the
+rebuild was blamed first and was innocent. If an SSID, band, AP or passphrase changed, the camera
+must be **re-provisioned onto the new network**; many of these cameras are 2.4 GHz-only and will
+silently fail to join a 5 GHz or band-steered SSID.
+
+### 🔴 `probe.js` returning a Direct config does NOT prove the camera is online
+
+This one cost a wrong conclusion on 2026-08-04. `probe.js` can log in, enumerate the camera's video
+sources, report `errorEnum: 0`, and return a **non-null `endToEndWebrtcConnectionInfo`** — while the
+camera is completely offline. Alarm.com serves that session config **from its database**, not from
+the device. The camera's actual presence is only revealed at **signaling** time, by the "has not yet
+dialed in" close above.
+
+So `probe.js` proves *our credentials and the ADC config API work*. It says nothing about the
+camera. **It is not a substitute for step 1 of the "no video" order below** — only ADC's own web
+player and phone app answer that question cheaply.
+
 ### 🔑 `endToEndWebrtcConnectionInfo: null` does NOT mean Alarm.com dropped end-to-end WebRTC
 
 Proxy is their documented **failure fallback** (3-min timeout, no audio), so that `null` means

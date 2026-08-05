@@ -44,7 +44,7 @@ baton, the baton wins.
   vitest 4 those are only `node_modules` and `.git`.
 - 🔴🔴 **PRODUCTION IS NOT STREAMING RIGHT NOW.** David rebuilt Kaikoura onto make-before-break
   2026-08-04 (**image now built from `34f1338`**; checkout clean at that commit). Since the rebuild,
-  **no video**. Rollback target is the previous image, `2e98710`.
+  **no video**. (Previous image was `2e98710` — see below for why NOT to roll back to it.)
   **Measured sudo-free, post-rebuild:**
   | Signal | Value | Reading |
   |---|---|---|
@@ -54,18 +54,26 @@ baton, the baton wins.
   | `ffmpeg` on host | **absent** for 45 s straight | not running, and not restart-looping |
   | ports 8554 / 1984 | accepting | go2rtc itself is up |
   | unauthenticated `frame.jpeg` | **401** | auth still enforced |
-  **The Alarm.com side looks healthy:** `probe.js` logs in, enumerates the camera (HD 1920x1080 /
-  SD 640x360), `errorEnum: 0`, and **`endToEndWebrtcConnectionInfo` is present and NOT null** — so
-  Direct is being offered, not demoted to Proxy.
-  ⚠️ **Do not read the Janus fields as demotion.** `janusGatewayUrl`, `proxyUrl` and
-  `proxyStreamTimeoutTime: 180` are in the payload **always**, as fallback config. Demotion is
-  specifically `endToEndWebrtcConnectionInfo: null` — see [`INVARIANTS.md`](INVARIANTS.md). This
-  session briefly mis-read exactly that and had to correct it.
-  🔎 **Not yet distinguished, and it is the whole question:** a regression in the just-deployed
-  refactor, versus the camera itself being unreachable. Both produce this signature. Cheapest
-  discriminator is **step 1 of the `INVARIANTS.md` "no video" order** — can Alarm.com's own web
-  player and phone app stream it? That needs David; it is 30 seconds and it decides which half to
-  investigate. Only after that do container logs (sudo) mean anything.
+  ✅ **CAUSE FOUND, and it is NOT the rebuild.** Container logs show every attempt closing with
+  Alarm.com's own signaling error: **`"Camera <id> has not yet dialed in"`** (WebSocket code 1000).
+  **The camera is not connected to Alarm.com.** The bridge is behaving exactly as designed — 12
+  signaling attempts, then the manager's `60 → 120 → 300 → 600 s` ladder, `failures:5` and climbing,
+  so the circuit opens at 6. Nothing to fix in code.
+  🔴 **Do NOT roll back.** The new image is exonerated; rolling back would change nothing and would
+  lose the ~1.2 s-gap fix. `2e98710` remains the rollback target only if some *unrelated* regression
+  appears later.
+  ⚠️ **Prime suspect is the WiFi work itself** (item 1, same window). If an SSID, band, AP or
+  passphrase changed, the camera needs **re-provisioning onto the new network** — many of these
+  cameras are 2.4 GHz-only and silently fail to join a 5 GHz or band-steered SSID.
+  🔑 **Two diagnostic traps this session fell into and corrected — both now in
+  [`INVARIANTS.md`](INVARIANTS.md):**
+  1. The Janus/proxy fields (`janusGatewayUrl`, `proxyStreamTimeoutTime: 180`) are in the payload
+     **always**, as fallback config. Their presence is **not** demotion; demotion is specifically
+     `endToEndWebrtcConnectionInfo: null`.
+  2. **`probe.js` returning a non-null Direct config does NOT prove the camera is online.** ADC
+     serves that config from its **database**, not the device — it looked healthy (`errorEnum: 0`,
+     both video sources enumerated) while the camera was entirely offline. Only signaling reveals
+     presence. This is exactly why step 1 of the "no video" order is ADC's own app, not our probe.
 - 🔴 **An agent CANNOT do the rebuild — do not plan around it.** `sudo` on Kaikoura requires David's
   password (verified 2026-08-04: `sudo -n` fails, and `docker` needs privileges), and every compose
   command in [`SYNOLOGY.md`](SYNOLOGY.md) is sudo-prefixed. SSH itself works fine as `dpeak`, so
@@ -85,41 +93,43 @@ baton, the baton wins.
   needs David's password. `node_modules`/`dist` there are gitignored.
 - **⬆️ Eight upstream PRs and two issues are open at Omar-L, all awaiting his review.** Nothing is
   blocked on us. Table, held branches, and the contribution rules: [`UPSTREAM.md`](UPSTREAM.md).
-- 🆕 **David improved the camera's WiFi connection (2026-08-04).** This was item 1, and it gated
-  everything — **the queue is no longer blocked.** ⚠️ **"Improved" is not yet "verified."** Nothing
-  has re-measured the link, and the bridge holds a *perpetual* session, so it stresses a marginal
-  link far harder than Alarm.com's own on-demand clients do. Confirm before trusting it: re-probe
-  (`node dist/probe.js <cameraId>`), and check whether the breaker still opens
-  (`docker-compose logs`, sudo — grep `Circuit OPEN`).
-- **Whose turn:** **David** — **production is not streaming (item 2), and nothing else matters until
-  it is.** Two things only he can do: the 30-second Alarm.com app/web check, which decides whether
-  our code is even a suspect, and the container logs, which need his password. Everything below
+- ⚠️ **David improved the camera's WiFi 2026-08-04 — and the camera has not dialed in since.** The
+  two are almost certainly connected: this is the change that plausibly took the camera off the
+  network (new SSID / band / AP / passphrase). Treat item 1 as **reopened, not done** until the
+  camera is back online in the Alarm.com app.
+  🔑 **This is also why the rebuild looked guilty.** Two changes landed in the same window — a WiFi
+  change and a deploy — and the deploy was the one that got blamed. When two changes overlap, the
+  first question is which one the evidence actually names; here the logs named neither until they
+  were read, and they named the camera.
+- **Whose turn:** **David — PHYSICAL.** Production is down because **the camera is not dialed in to
+  Alarm.com** (diagnosed from logs — not our code, do not roll back). Re-provision it onto the
+  changed WiFi, checking the 2.4 GHz band. The bridge self-recovers once it returns. Everything below
   item 2 is parked, including the agent work the WiFi fix had just unblocked.
 
 ### What's left (priority order)
 
-1. ✅ **(David — DONE 2026-08-04)** **The camera's WiFi was improved.** This is what caused the
+1. ⚠️ **(David — REOPENED 2026-08-04)** **The WiFi was improved, and the camera then stopped dialing
+   in to Alarm.com.** Superseded by item 2, which is the live version of this. Original context: This is what caused the
    2026-08-03 outage and gated every item below. ⚠️ **Still unverified under load** — re-probe and
    watch for `Circuit OPEN` before treating the link as solved, since a perpetual session stresses
    it far harder than Alarm.com's own on-demand clients. If the outage recurs, the cause was not
    fully addressed: a power-cycle clears the symptom, not the cause, and the durable fixes are wired
    Ethernet, relocation, or an added AP.
-2. 🔴🔴 **(David, then agent — PRODUCTION IS DOWN, everything else waits)** The rebuild landed and
-   **video stopped.** Evidence table is in the handoff block above. In order, cheapest first:
-   1. **(David, 30 s)** Can Alarm.com's **own web player and phone app** stream the camera? This
-      decides whether to investigate our code at all. If neither can, it is not our code; if they
-      disagree with each other, suspect the network path.
-   2. **(David, sudo)** `sudo /var/packages/ContainerManager/target/usr/bin/docker-compose logs
-      --tail=300 adc-video-bridge` — grep `Circuit OPEN`, `sessionStarted`, `onTrackReady`,
-      `Second concurrent session refused by Alarm.com`, and any ffmpeg exit line. Agents cannot
-      read these.
-   3. **Rollback is cheap and reversible** if the logs implicate the new code:
-      `git checkout 2e98710 && sudo .../docker-compose up -d --build adc-video-bridge`.
-      ⚠️ Rolling back loses the ~1.2s-gap fix but restores video; do it if diagnosis will not be
-      quick. `main` is unaffected either way — the rollback is a checkout on the NAS, not a revert.
-   💡 Once video is back: `Second concurrent session refused by Alarm.com` is still the line worth
-   grepping — it is how production tells us whether ADC permits two sessions per camera at all,
-   which is the assumption the whole overlap rests on.
+2. 🔴🔴 **(David — PHYSICAL. Get the camera back on WiFi; nothing else matters until it dials in.)**
+   **Diagnosed:** Alarm.com's signaling server reports the camera **has not dialed in**. Not a code
+   problem, and no agent can fix it. 🔴 **Do NOT roll back** — the new image is exonerated and a
+   rollback would only lose the ~1.2 s-gap fix. In order:
+   1. **Does the camera show online in the Alarm.com app?** If it is offline there, it is offline
+      full stop; everything else is downstream of that.
+   2. **Re-provision it onto the changed network.** ⚠️ Check the **band** — many of these cameras
+      are 2.4 GHz-only and silently fail to join a 5 GHz or band-steered SSID. A changed SSID or
+      passphrase is not something the camera learns by itself.
+   3. **Power-cycle**, then re-check the app.
+   💡 **Nothing to redeploy afterwards.** The bridge recovers on its own: `TokenManager`'s 600 s
+   interval is unconditional and is the backstop that restarts the chain, and the breaker self-heals
+   on its first successful probe. Expect recovery within ~15 minutes of the camera returning.
+   💡 Once video is back, grep for `Second concurrent session refused by Alarm.com` — how production
+   tells us whether ADC permits two sessions per camera at all, which the whole overlap rests on.
 3. **(David, then agent)** **HKSV is unblocked** — the event stream delivers for the first time.
    Needs `videoConfig.recording: true` + `prebuffer` + `motion` + `porthttp` in Homebridge, the
    bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
