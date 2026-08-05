@@ -369,6 +369,132 @@ describe('CameraManager backoff', () => {
 
       expect(manager.getStatus()).toEqual({ driveway: 'idle (circuit open)' });
     });
+
+    it('a failed overlap on a healthy stream is not a circuit-breaker failure', async () => {
+      await startWithCamera();
+      const stream = getStream();
+      stream.state = 'streaming';
+      // Overlap failed but the stream survived: reconnect() resolves.
+      stream.reconnect.mockResolvedValue(undefined);
+
+      for (let i = 0; i < 10; i++) {
+        tokenManager.emit('videoToken', 'cam-1', makeConfig());
+        await vi.advanceTimersByTimeAsync(0);
+      }
+
+      // Confirms the reconnect branch, not the start branch, ran ten times.
+      expect(stream.reconnect).toHaveBeenCalledTimes(10);
+      expect(stream.start).not.toHaveBeenCalled();
+      // Ten "failures" recorded as breaker successes would have opened the
+      // circuit at STREAM_FAILURE_THRESHOLD (6); it stays closed.
+      expect(manager.getStatus()).toEqual({ driveway: 'streaming' });
+    });
+
+    it('does not credit a torn-down stream when reconnect() resolves after it', async () => {
+      autoEmitTokens();
+      await startWithCamera();
+      const stream = getStream();
+      stream.start.mockRejectedValue(new Error('camera offline'));
+
+      // Open the circuit the normal way, through real failures.
+      await driveUntilOpen();
+      expect(manager.getStatus()).toEqual({ driveway: 'idle (circuit open)' });
+
+      // Now the stream is streaming and gets a reconnect() that resolves —
+      // but only because something else (a concurrent recovery, a
+      // mid-overlap death) tore it down while it was in flight, leaving
+      // state at 'error' by the time it returns. A false credit here would
+      // close the circuit on a stream that never actually recovered.
+      stream.state = 'streaming';
+      stream.reconnect.mockImplementation(async () => {
+        stream.state = 'error';
+      });
+
+      // driveUntilOpen()'s final failure leaves a probe timer pending (the
+      // guard is only released when it fires); let it fire — that's what
+      // calls fetchVideoToken() and re-enters handleVideoToken, which takes
+      // the reconnect branch since the stream is (nominally) streaming.
+      await vi.advanceTimersByTimeAsync(FIVE_MIN);
+
+      expect(stream.reconnect).toHaveBeenCalledOnce();
+      expect(manager.getStatus()).toEqual({ driveway: 'error (circuit open)' });
+    });
+
+    it('credits a recovery that fell back to a full restart before onTrackReady', async () => {
+      autoEmitTokens();
+      await startWithCamera();
+      const stream = getStream();
+      stream.start.mockRejectedValue(new Error('camera offline'));
+
+      await driveUntilOpen();
+      expect(manager.getStatus()).toEqual({ driveway: 'idle (circuit open)' });
+
+      // The active session died mid-overlap, so reconnect() fell back to
+      // break-before-make. That path awaits tryConnect(), which resolves on
+      // PeerSession.connect() -> 'sessionStarted' — while _state is still
+      // 'connecting', because only onTrackReady (first RTP) flips it to
+      // 'streaming'. This is a REAL recovery, and it must reset the breaker;
+      // requiring 'streaming' here records neither success nor failure, so
+      // six such fallbacks with no clean cutover between would leave the
+      // counters uncleared.
+      stream.state = 'streaming';
+      stream.reconnect.mockImplementation(async () => {
+        stream.state = 'connecting';
+      });
+
+      await vi.advanceTimersByTimeAsync(FIVE_MIN);
+
+      expect(stream.reconnect).toHaveBeenCalledOnce();
+      // Credited: the '(circuit open)' suffix is gone.
+      expect(manager.getStatus()).toEqual({ driveway: 'connecting' });
+    });
+
+    it('does not let a stale reconnect() completion clear a newer start\'s guard', async () => {
+      autoEmitTokens();
+      await startWithCamera();
+      const stream = getStream();
+      stream.state = 'streaming';
+
+      // A: seamless reconnect, parked mid-negotiation.
+      let resolveReconnect!: () => void;
+      stream.reconnect.mockImplementation(
+        () => new Promise<void>((resolve) => { resolveReconnect = resolve; }),
+      );
+
+      tokenManager.emit('videoToken', 'cam-1', makeConfig());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stream.reconnect).toHaveBeenCalledOnce();
+
+      // ffmpeg dies mid-overlap. The real handleUnexpectedExit() clears the
+      // guard unconditionally and fetches a fresh token, which — per
+      // autoEmitTokens() — immediately re-enters as a new videoToken event.
+      stream.state = 'error';
+      let resolveStart!: () => void;
+      stream.start.mockImplementation(
+        () => new Promise<void>((resolve) => { resolveStart = resolve; }),
+      );
+      stream.onUnexpectedExit();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // B is now mid-start (parked, dial-in retries can take minutes). A's
+      // stale reconnect() is still pending too.
+      expect(stream.start).toHaveBeenCalledOnce();
+
+      // A's stale reconnect() now completes.
+      resolveReconnect();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // A's completion must not have cleared B's guard: a token event
+      // arriving in this window must be skipped, not start a second
+      // concurrent stream.start() — which would race B's own tryConnect()
+      // for ownership of ffmpeg/socket/`this.active`.
+      tokenManager.emit('videoToken', 'cam-1', makeConfig());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stream.start).toHaveBeenCalledOnce();
+
+      resolveStart();
+      await vi.advanceTimersByTimeAsync(0);
+    });
   });
 
   it('does not retry when manager is stopped', async () => {
