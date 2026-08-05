@@ -121,21 +121,20 @@ Second concurrent session refused|Overlap did not complete|died mid-overlap"
   (`Dockerfile.go2rtc`, a two-service `docker-compose.yml`, an authenticated bridge). **The running
   image does not have any of it** — Kaikoura is still the single fused container. HKSV itself is
   **not enabled**: no `hksv:` block, no pairing. That is Phase 2.
-  🔴 **TWO RESIDUALS MUST LAND BEFORE PHASE 1 DEPLOY.** Both are one-line fixes, both parked because
-  the review workflow permits a single fix wave and it was spent:
-  1. **`ADC_BRIDGE_BIND_ADDRESS` is the last required variable still fail-open** —
-     `${VAR:-127.0.0.1}` at `docker-compose.yml`, while the docs now call it required. ⚠️ And
-     `local_auth: true` **removed the accident that used to catch it**: previously a missing bind
-     address failed the health gate loudly (200 ≠ 401); now the loopback probe returns 401, so
-     go2rtc reports **healthy while bound where nothing can reach it** and every stream fails
-     silently. Fix: `${ADC_BRIDGE_BIND_ADDRESS:?ADC_BRIDGE_BIND_ADDRESS must be the host's LAN address}`.
-  2. **A factually wrong claim in the security record.** `README.md` and `docs/SECURITY_AUDIT.md`
-     now say Basic auth covers every RTSP request "loopback included (`local_auth: true`)". False —
-     `local_auth` governs the **API module only**; go2rtc's `internal/rtsp/rtsp.go` skips auth for
-     loopback unconditionally and there is no `local_auth` under `rtsp:`. The **pre-branch** wording
-     was correct. Not exploitable as shipped (LAN-bound), but a wrong claim in a security document
-     is worse than none.
-  Also parked, non-blocking: CI's 20-minute timeout now also covers a Go-from-source build (it will
+  ✅ **Both pre-Phase-1 residuals are now FIXED** (2026-08-04, after the merge):
+  1. `ADC_BRIDGE_BIND_ADDRESS` is now **required, not defaulted** —
+     `${ADC_BRIDGE_BIND_ADDRESS:?...}` at both compose sites. Verified fail-closed in all three
+     cases: set renders, **empty and unset both error** with the named message. This matters more
+     than it looks: `local_auth: true` had removed the accident that used to catch a missing bind
+     address, so go2rtc would have reported **healthy while bound where nothing can reach it**.
+  2. The RTSP auth claim is corrected in `README.md`, `docs/SECURITY_AUDIT.md` and
+     `config/go2rtc.example.yaml`. 🔑 **The two endpoints enforce differently and only one is
+     governed by config:** `local_auth: true` covers the **API/snapshot** module including loopback,
+     but **RTSP has no such setting** — `internal/rtsp/rtsp.go` skips loopback auth unconditionally
+     (`&& !conn.RemoteAddr().(*net.TCPAddr).IP.IsLoopback()`), verified at the pinned commit. Every
+     RTSP request still authenticates, but that comes from the **bind address**, not a toggle.
+     🔴 Binding to `127.0.0.1` or `0.0.0.0` exposes unauthenticated RTSP to anything on the host.
+  Still parked, non-blocking: CI's 20-minute timeout now also covers a Go-from-source build (it will
   report itself on the first run); `SECURITY_AUDIT.md`'s "Last reviewed" date is stale; and an
   absent `config/config.yaml` makes Docker create a *directory* at the single-file bind mount
   (caught as a fatal `EISDIR`, so fail-fast but not self-explanatory).

@@ -24,7 +24,11 @@ services:
       GO2RTC_API_PASSWORD: ${GO2RTC_API_PASSWORD:?GO2RTC_API_PASSWORD is required}
       GO2RTC_RTSP_USERNAME: ${GO2RTC_RTSP_USERNAME:?GO2RTC_RTSP_USERNAME is required}
       GO2RTC_RTSP_PASSWORD: ${GO2RTC_RTSP_PASSWORD:?GO2RTC_RTSP_PASSWORD is required}
-      GO2RTC_BIND: ${ADC_BRIDGE_BIND_ADDRESS:-127.0.0.1}
+      # Required, not defaulted. Under network_mode: host this is the only thing
+      # binding go2rtc to one address, and the bridge — in its own network
+      # namespace — cannot reach the host's loopback. A 127.0.0.1 fallback would
+      # leave go2rtc reporting HEALTHY while bound where nothing can reach it.
+      GO2RTC_BIND: ${ADC_BRIDGE_BIND_ADDRESS:?ADC_BRIDGE_BIND_ADDRESS must be the host's LAN address}
     volumes:
       # Writable: go2rtc persists HomeKit pairings, device_id and
       # device_private back into this file. It is a secret — mode 600.
@@ -42,7 +46,7 @@ services:
       # `local_auth: false` go2rtc waves through loopback requests with a 200
       # and this check can never pass.
       test: ["CMD-SHELL",
-             "test \"$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://${ADC_BRIDGE_BIND_ADDRESS:-127.0.0.1}:1984/api/streams)\" = 401"]
+             "test \"$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://${ADC_BRIDGE_BIND_ADDRESS:?ADC_BRIDGE_BIND_ADDRESS must be the host's LAN address}:1984/api/streams)\" = 401"]
       interval: 30s
       timeout: 5s
       retries: 3

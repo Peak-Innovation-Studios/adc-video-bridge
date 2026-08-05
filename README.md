@@ -189,7 +189,7 @@ See `.env.example` and `config/config.example.yaml` for the full configuration r
 - Use a dedicated Alarm.com login with only the permissions needed to view the selected cameras.
 - Keep `.env`, real camera configuration, logs, and Homebridge URLs out of source control.
 - go2rtc runs on `network_mode: host`, where Compose `ports:` is ignored — the `listen:` addresses in `config/go2rtc.yaml` are the only thing keeping ports 8554 and 1984 off every interface. Set `ADC_BRIDGE_BIND_ADDRESS` to one trusted LAN address and restrict both ports at the host firewall.
-- go2rtc requires Basic authentication for every RTSP and snapshot/API request, loopback included (`local_auth: true`). Its unused WebRTC and SRTP listeners are disabled.
+- go2rtc requires Basic authentication for snapshot/API requests, loopback included (`local_auth: true`), and for every RTSP request that does not arrive over loopback — go2rtc skips RTSP auth for loopback unconditionally, so that protection comes from binding to the LAN address rather than from a setting. Its unused WebRTC and SRTP listeners are disabled.
 - Both containers run without root privileges, drop Linux capabilities, and use a read-only filesystem. The bridge image is pinned to a base-image digest; the go2rtc image is built from source (HKSV is unreleased) with its toolchain pinned by digest and its source pinned to a commit SHA — see `docs/SECURITY_AUDIT.md`.
 - This remains an unofficial cloud integration. Alarm.com can change or restrict the endpoints at any time.
 

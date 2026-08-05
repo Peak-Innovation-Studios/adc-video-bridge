@@ -14,6 +14,11 @@ rtsp:
   listen: "${GO2RTC_BIND}:8554"
   username: "${GO2RTC_RTSP_USERNAME}"
   password: "${GO2RTC_RTSP_PASSWORD}"
+  # 🔴 There is no `local_auth` for RTSP — go2rtc skips auth for loopback
+  # connections unconditionally. Every RTSP request still authenticates here,
+  # but only because `listen:` is the LAN address, so nothing arrives over
+  # loopback. Bind this to 127.0.0.1 or 0.0.0.0 and unauthenticated RTSP
+  # becomes reachable from the host.
 
 api:
   listen: "${GO2RTC_BIND}:1984"
