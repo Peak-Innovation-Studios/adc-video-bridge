@@ -42,10 +42,19 @@ baton, the baton wins.
   counted twice (12/180 → 24/360). `vitest.config.ts` now excludes `**/.claude/**`. ⚠️ If you ever
   edit that `exclude`, **spread `defaultExclude`** — setting it replaces the defaults, and in
   vitest 4 those are only `node_modules` and `.git`.
-- 🔴 **Kaikoura does NOT have make-before-break yet.** It is still running the circuit-breaker build
-  David rebuilt 2026-08-04. `src/` changed, so it needs `docker-compose up -d --build`.
+- 🔴 **Kaikoura does NOT have make-before-break yet.** 🔑 **The running image was built from
+  `2e98710`** — the fact git cannot tell you, and the one the rebuild test needs. The deployment
+  checkout at `/volume1/docker/adc-video-bridge` is clean and sits at that same commit. `src/`
+  has changed since, so a `docker-compose up -d --build` is genuinely required.
   ✅ **No longer gated** — the link that would have confounded the result was improved 2026-08-04.
   This is now the critical path (item 2).
+- 🔴 **An agent CANNOT do the rebuild — do not plan around it.** `sudo` on Kaikoura requires David's
+  password (verified 2026-08-04: `sudo -n` fails, and `docker` needs privileges), and every compose
+  command in [`SYNOLOGY.md`](SYNOLOGY.md) is sudo-prefixed. SSH itself works fine as `dpeak`, so
+  read-only inspection of the checkout **is** available to an agent — see the sudo-free tools below.
+  ⚠️ Do not run the `git pull` half on its own to "get ahead": pulling source does not replace the
+  running image, and it desyncs the checkout from the image, which silently invalidates the rebuild
+  test above. Run the documented sequence intact, or not at all.
 - **What Kaikoura IS running is live, streaming and healthy** — verified sudo-free (go2rtc answers
   `401` on its bound address; distinct-md5 JPEGs; a real `rtsp+tcp` publisher; **0** WebSocket 401s,
   was ~60/hour). Motion, doorbell, audio and HKSV remain disabled.
@@ -89,9 +98,15 @@ baton, the baton wins.
    bridge's `homebridge.motionUrl` pointed at it, a Homebridge restart, and recording enabled in the
    Home app. Best after item 2, since make-before-break exists precisely because HKSV recording is
    what cares about the refresh gap.
-4. **(David — 1 min)** `/volume1/homebridge/config.json` is mode **0777** (HomeKit pairing data).
-   ⚠️ `chmod` alone will not hold: it is the **volume's default ACL**, and the Homebridge UI rewrites
-   the file on every settings change. Durable fix is at the shared-folder/ACL level.
+4. ✅ **(David — DONE 2026-08-04, with caveats)** `/volume1/homebridge/config.json` was **0777**
+   (HomeKit pairing data) and is now **775**. World-**write** is gone, which was the worst of it.
+   Two residuals, neither urgent:
+   - ⚠️ **Still world-readable.** `775` is `rwxrwxr-x`, and [`INVARIANTS.md`](INVARIANTS.md) records
+     this file's standard as mode **600** — so it remains looser than what is already written down.
+   - ⚠️ **It may not hold.** The mode comes from the **volume's default ACL**, and the Homebridge UI
+     rewrites the file on every settings change. A `chmod` gets reverted; the durable fix is at the
+     shared-folder/ACL level. **Re-check after the next Homebridge settings change** — if it is back
+     to 0777, the ACL is the real target and this item reopens.
 5. *(Agent — now measurable, was confounded by the link)* **A/B `-reorder_queue_size 0`.** Production
    logs 2026-08-04 show ffmpeg repeatedly emitting `Non-monotonic DTS ... This may result in
    incorrect timestamps in the output file` while streaming normally. The flag disables RTP
