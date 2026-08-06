@@ -1,12 +1,12 @@
 import { loadConfig } from './config.js';
-import { logger } from './utils/logger.js';
+import { createChildLogger, setLogLevel } from './utils/logger.js';
 import { AlarmAuth } from './auth/alarm-auth.js';
 import { TokenManager } from './auth/token-manager.js';
 import { CameraManager } from './camera/camera-manager.js';
 import { Go2rtcApi } from './go2rtc/go2rtc-api.js';
 import { AlarmEventListener } from './events/alarm-event-listener.js';
 
-const log = logger.child({ component: 'main' });
+const log = createChildLogger('main');
 
 async function main(): Promise<void> {
   log.info('adc-video-bridge starting');
@@ -18,6 +18,8 @@ async function main(): Promise<void> {
     log.fatal('Config error: %s', err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
+
+  setLogLevel(config.logging.level);
 
   log.info({ cameraCount: config.cameras.length }, 'Config loaded');
 
@@ -61,9 +63,11 @@ async function main(): Promise<void> {
     const sendMotionToggle = async (hbName: string) => {
       const url = `${motionUrl}/motion?${encodeURIComponent(hbName)}`;
       try {
-        const res = await fetch(url);
-        const body = await res.json() as { error: boolean; message: string };
-        log.info({ camera: hbName, response: body.message }, 'Motion webhook sent');
+        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        log.info({ camera: hbName, status: res.status }, 'Motion webhook sent');
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log.warn({ camera: hbName }, 'Motion webhook failed: %s', msg);
@@ -97,8 +101,13 @@ async function main(): Promise<void> {
   }
 
   // Graceful shutdown
+  let shutdownStarted = false;
+  let statusTimer: ReturnType<typeof setInterval> | null = null;
   const shutdown = async (signal: string) => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
     log.info({ signal }, 'Shutting down...');
+    if (statusTimer) clearInterval(statusTimer);
     eventListener.stop();
     await cameraManager.stop();
     auth.destroy();
@@ -113,7 +122,7 @@ async function main(): Promise<void> {
   await cameraManager.start(config.cameras);
 
   // Periodic status logging
-  setInterval(() => {
+  statusTimer = setInterval(() => {
     const status = cameraManager.getStatus();
     log.info({ streams: status }, 'Stream status');
   }, 60_000);
