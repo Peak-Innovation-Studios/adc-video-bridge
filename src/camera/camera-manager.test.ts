@@ -390,6 +390,33 @@ describe('CameraManager backoff', () => {
       expect(manager.getStatus()).toEqual({ driveway: 'streaming' });
     });
 
+    it('getDiagnostics reports state, circuit and the last error', async () => {
+      autoEmitTokens();
+      await startWithCamera();
+      const stream = getStream();
+      stream.start.mockRejectedValue(new Error('camera offline'));
+
+      await driveUntilOpen();
+
+      const cam = manager.getDiagnostics().cameras.find((c) => c.name === 'driveway');
+      expect(cam).toBeDefined();
+      expect(cam!.streamCircuit).toBe('open');
+      expect(cam!.lastError).toContain('camera offline');
+      expect(cam!.consecutiveFailures).toBeGreaterThan(0);
+      expect(typeof cam!.nextProbeInMs).toBe('number');
+    });
+
+    // The endpoint serves this over the network, and camera IDs are treated as
+    // sensitive throughout this project.
+    it('getDiagnostics carries camera NAMES only, never IDs', async () => {
+      await startWithCamera();
+
+      const json = JSON.stringify(manager.getDiagnostics());
+
+      expect(json).toContain('driveway');
+      expect(json).not.toContain('cam-1');
+    });
+
     it('does not credit a torn-down stream when reconnect() resolves after it', async () => {
       autoEmitTokens();
       await startWithCamera();

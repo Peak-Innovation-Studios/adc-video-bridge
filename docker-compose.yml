@@ -75,7 +75,11 @@ services:
       # copies config.example.yaml into place before the first `up`.
       - ./config/config.yaml:/app/config/config.yaml:ro
       - ./secrets:/run/secrets:ro
-    # No ports: the bridge listens on nothing after the split.
+    # The bridge listens on nothing unless the optional status endpoint is
+    # configured. ADC_BRIDGE_STATUS_PORT is unset by default, which leaves this
+    # mapping inert — it only publishes when you opt in.
+    ports:
+      - "${ADC_BRIDGE_BIND_ADDRESS}:${ADC_BRIDGE_STATUS_PORT:-9090}:${ADC_BRIDGE_STATUS_PORT:-9090}"
     read_only: true
     tmpfs: [ "/tmp:rw,noexec,nosuid,nodev,size=128m" ]
     cap_drop: [ ALL ]

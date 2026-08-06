@@ -40,6 +40,17 @@ export interface AppConfig {
     homekitMotion?: boolean;
   };
   homebridge?: HomebridgeConfig;
+  /**
+   * Optional read-only status endpoint. Absent = no listener at all, which is
+   * the default and preserves the post-split property that the bridge listens
+   * on nothing.
+   */
+  status?: {
+    bindAddress: string;
+    port: number;
+    username?: string;
+    password?: string;
+  };
   logging: {
     level: string;
   };
@@ -191,6 +202,14 @@ export function loadConfig(): AppConfig {
       rtspUsername: readEnvironmentSecret('GO2RTC_RTSP_USERNAME') ?? fileConfig.go2rtc?.rtspUsername,
       rtspPassword: readEnvironmentSecret('GO2RTC_RTSP_PASSWORD') ?? fileConfig.go2rtc?.rtspPassword,
     },
+    status: fileConfig.status
+      ? {
+          bindAddress: fileConfig.status.bindAddress,
+          port: fileConfig.status.port ?? 9090,
+          username: readEnvironmentSecret('STATUS_USERNAME') ?? fileConfig.status.username,
+          password: readEnvironmentSecret('STATUS_PASSWORD') ?? fileConfig.status.password,
+        }
+      : undefined,
     homebridge: fileConfig.homebridge
       ? {
           motionUrl: fileConfig.homebridge.motionUrl,

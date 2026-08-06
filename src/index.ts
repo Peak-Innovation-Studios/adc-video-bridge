@@ -4,6 +4,7 @@ import { AlarmAuth } from './auth/alarm-auth.js';
 import { TokenManager } from './auth/token-manager.js';
 import { CameraManager } from './camera/camera-manager.js';
 import { Go2rtcApi } from './go2rtc/go2rtc-api.js';
+import { StatusServer } from './status/status-server.js';
 import { AlarmEventListener } from './events/alarm-event-listener.js';
 
 const log = createChildLogger('main');
@@ -130,6 +131,19 @@ async function main(): Promise<void> {
     });
   }
 
+  // Optional read-only status endpoint. Absent config = no listener.
+  let statusServer: StatusServer | null = null;
+  if (config.status) {
+    statusServer = new StatusServer({
+      bindAddress: config.status.bindAddress,
+      port: config.status.port,
+      username: config.status.username ?? '',
+      password: config.status.password ?? '',
+      getStatus: () => cameraManager.getDiagnostics(),
+    });
+    statusServer.start();
+  }
+
   // Graceful shutdown
   let shutdownStarted = false;
   let statusTimer: ReturnType<typeof setInterval> | null = null;
@@ -139,6 +153,7 @@ async function main(): Promise<void> {
     log.info({ signal }, 'Shutting down...');
     if (statusTimer) clearInterval(statusTimer);
     eventListener.stop();
+    if (statusServer) await statusServer.stop();
     await cameraManager.stop();
     auth.destroy();
     process.exit(0);

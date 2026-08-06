@@ -30,6 +30,7 @@ export class CameraManager {
   private activeStarts = new Map<string, number>();
   private startSeq = 0;
   private failureCount = new Map<string, number>();
+  private lastError = new Map<string, { message: string; at: number }>();
   private breakers = new Map<string, CircuitBreaker>();
   private running = false;
 
@@ -89,6 +90,43 @@ export class CameraManager {
       status[stream.cameraName] = paused ? `${stream.state} (circuit open)` : stream.state;
     }
     return status;
+  }
+
+  /**
+   * Operational snapshot for the status endpoint.
+   *
+   * 🔴 Deliberately carries camera NAMES only, never camera IDs — the IDs are
+   * treated as sensitive throughout this project and this data is served over
+   * the network.
+   */
+  getDiagnostics(): {
+    running: boolean;
+    cameras: Array<{
+      name: string;
+      state: string;
+      streamCircuit: string;
+      tokenCircuit: string;
+      consecutiveFailures: number;
+      nextProbeInMs: number;
+      lastError?: string;
+      lastErrorAgoMs?: number;
+    }>;
+  } {
+    const cameras = [];
+    for (const [id, stream] of this.streams) {
+      const breaker = this.breakers.get(id);
+      const err = this.lastError.get(id);
+      cameras.push({
+        name: stream.cameraName,
+        state: stream.state,
+        streamCircuit: breaker?.state ?? 'closed',
+        tokenCircuit: this.tokenManager.circuitState(id),
+        consecutiveFailures: breaker?.consecutiveFailures ?? 0,
+        nextProbeInMs: breaker?.retryAfterMs() ?? 0,
+        ...(err ? { lastError: err.message, lastErrorAgoMs: Date.now() - err.at } : {}),
+      });
+    }
+    return { running: this.running, cameras };
   }
 
   private async handleVideoToken(cameraId: string, config: EndToEndWebrtcConfig): Promise<void> {
@@ -168,6 +206,7 @@ export class CameraManager {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error({ camera: stream.cameraName }, 'Stream failed after all retries: %s', msg);
+      this.lastError.set(cameraId, { message: msg, at: Date.now() });
       breaker.recordFailure(msg);
 
       if (this.running) {
