@@ -30,9 +30,12 @@ baton, the baton wins.
 - **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run`
   **16 files / 237 tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp
   exception.
-- 🔴 **THE BRIDGE CONTAINER IS STOPPED (2026-08-06).** Stopped deliberately for the cold probe below,
-  and **not yet restarted**. Nothing recovers while it is down — video cannot return on its own.
-  `sudo docker-compose start adc-video-bridge` (David; needs sudo). go2rtc was left running.
+- ✅ **Bridge RUNNING again (2026-08-06)** — it was stopped for ~55 min for the cold probe below, and
+  has been restarted. Expected healthy-but-blocked reading right now: `state: idle`, both circuits
+  starting closed, `tokenFailures` climbing to 3 over ~20 min and then `tokenCircuit: open`. That is
+  the breaker working, not a new fault. ⚠️ A stopped bridge and a broken camera look identical from
+  outside — the endpoint is simply unreachable either way — so confirm it is up before diagnosing:
+  `curl -s -o /dev/null -w '%{http_code}' http://192.168.7.42:9090/` → `401` means running.
 - ✅ **DEPLOYED on Kaikoura and VERIFIED CURRENT (2026-08-06)** — rebuilt after the status-endpoint
   field rename, confirmed by the live endpoint emitting the six per-breaker field names.
   ⚠️ `src/` has since changed by **comments only** (`0247afe`), so a strict "did a COPY path change?"
