@@ -4,14 +4,6 @@ import { StatusServer } from './status-server.js';
 const BASE = { bindAddress: '127.0.0.1', port: 0, username: 'u', password: 'p' };
 
 describe('StatusServer construction', () => {
-  // Under host networking there is no compose ports: mapping left to confine
-  // this, so a wildcard bind is a real exposure, not a preference.
-  it.each(['0.0.0.0', '::', ''])('refuses to bind the wildcard %s', (bindAddress) => {
-    expect(
-      () => new StatusServer({ ...BASE, bindAddress, getStatus: () => ({}) }),
-    ).toThrow(/never a wildcard/);
-  });
-
   it('refuses to start without credentials', () => {
     expect(
       () => new StatusServer({ ...BASE, password: '', getStatus: () => ({}) }),
@@ -79,5 +71,39 @@ describe('StatusServer requests', () => {
     });
 
     expect(res.status).toBe(405);
+  });
+});
+
+describe('StatusServer failure containment', () => {
+  // A diagnostics endpoint must never be able to take down the bridge it
+  // reports on. Binding an address the container does not own is the realistic
+  // case: inside a bridge-network container the host's LAN address does not
+  // exist, and an http.Server 'error' event with no listener THROWS.
+  it('does not throw when the bind address is unavailable', async () => {
+    const s = new StatusServer({
+      bindAddress: '203.0.113.7', // TEST-NET-3, guaranteed not local
+      port: 0,
+      username: 'u',
+      password: 'p',
+      getStatus: () => ({}),
+    });
+
+    expect(() => s.start()).not.toThrow();
+    // Give the async listen() error a tick to surface as an event.
+    await new Promise((r) => setTimeout(r, 50));
+    await s.stop();
+  });
+
+  it('accepts a wildcard bind, which is correct behind a compose port mapping', () => {
+    expect(
+      () =>
+        new StatusServer({
+          bindAddress: '0.0.0.0',
+          port: 0,
+          username: 'u',
+          password: 'p',
+          getStatus: () => ({}),
+        }),
+    ).not.toThrow();
   });
 });

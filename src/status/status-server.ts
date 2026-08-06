@@ -4,7 +4,10 @@ import { createChildLogger } from '../utils/logger.js';
 const log = createChildLogger('status');
 
 export interface StatusServerOptions {
-  /** Address to bind. Never 0.0.0.0 — see the security note below. */
+  /**
+   * Address to bind INSIDE the container. Normally `0.0.0.0`: confinement comes
+   * from compose's `ports:` mapping, which binds the host side to one address.
+   */
   bindAddress: string;
   port: number;
   username: string;
@@ -22,9 +25,14 @@ export interface StatusServerOptions {
  * bounded, and none of them is optional:
  *
  *   1. **Disabled unless explicitly configured.** No accidental listener.
- *   2. **Bound to one address**, never `0.0.0.0`. The constructor rejects the
- *      wildcard rather than trusting the operator, because under host
- *      networking there is no compose `ports:` mapping left to confine it.
+ *   2. **Confined by compose's `ports:` mapping**, which binds the host side to
+ *      `ADC_BRIDGE_BIND_ADDRESS` — one address, never the wildcard. ⚠️ The
+ *      bind address here is the address INSIDE the container, and the bridge
+ *      runs on the default bridge network, where the host's LAN address does
+ *      not exist. Binding it there fails with EADDRNOTAVAIL. `0.0.0.0` is the
+ *      correct value and is safe precisely because the mapping confines it.
+ *      🔴 If you ever move this container to `network_mode: host`, that mapping
+ *      disappears and the wildcard becomes a real exposure — bind explicitly.
  *   3. **Authenticated**, with its own credentials — not the go2rtc or
  *      Alarm.com ones, so a leak here cannot move laterally.
  *
@@ -36,12 +44,6 @@ export class StatusServer {
   private readonly expected: string;
 
   constructor(private readonly opts: StatusServerOptions) {
-    if (opts.bindAddress === '0.0.0.0' || opts.bindAddress === '::' || opts.bindAddress === '') {
-      throw new Error(
-        'status.bindAddress must be a specific address, never a wildcard — under host ' +
-          'networking there is no port mapping left to confine it.',
-      );
-    }
     if (!opts.username || !opts.password) {
       throw new Error('status.username and status.password are required when the status server is enabled.');
     }
@@ -62,6 +64,20 @@ export class StatusServer {
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(this.opts.getStatus()));
+    });
+
+    // A diagnostics endpoint must never be able to take down the bridge it
+    // reports on. An http.Server 'error' event with NO listener throws, and
+    // `listen()` fails asynchronously — so a bad bind address (the realistic
+    // case: an address this container does not own) would crash the process
+    // and, under `restart: unless-stopped`, crash-loop it.
+    this.server.on('error', (err) => {
+      log.error(
+        { bindAddress: this.opts.bindAddress, port: this.opts.port },
+        'Status endpoint failed to start, continuing without it: %s',
+        err instanceof Error ? err.message : String(err),
+      );
+      this.server = null;
     });
 
     this.server.listen(this.opts.port, this.opts.bindAddress, () => {

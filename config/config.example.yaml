@@ -39,10 +39,12 @@ logging:
 # Optional read-only status endpoint, so diagnosing the bridge does not require
 # `docker-compose logs` (and therefore sudo) on the deployment host. Omit this
 # whole block to keep the bridge listening on nothing, which is the default.
-# 🔴 bindAddress must be a specific address — the code rejects 0.0.0.0, because
-# under host networking there is no compose port mapping left to confine it.
-# Credentials are its OWN, not the go2rtc or Alarm.com ones, so a leak here
-# cannot move laterally. Supply them via STATUS_USERNAME / STATUS_PASSWORD.
+# ⚠️ bindAddress is the address INSIDE the container. The bridge runs on the
+# default bridge network, where the host's LAN address does NOT exist — binding
+# it there fails with EADDRNOTAVAIL and you get no endpoint. Use "0.0.0.0";
+# confinement comes from compose's ports: mapping, which binds the host side to
+# ADC_BRIDGE_BIND_ADDRESS. Credentials are its OWN, not the go2rtc or Alarm.com
+# ones, so a leak here cannot move laterally — set STATUS_USERNAME/PASSWORD.
 #status:
-#  bindAddress: "192.168.1.10"
+#  bindAddress: "0.0.0.0"
 #  port: 9090
