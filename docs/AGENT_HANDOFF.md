@@ -30,8 +30,13 @@ baton, the baton wins.
 - **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run`
   **16 files / 237 tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp
   exception.
+- 🔴 **THE BRIDGE CONTAINER IS STOPPED (2026-08-06).** Stopped deliberately for the cold probe below,
+  and **not yet restarted**. Nothing recovers while it is down — video cannot return on its own.
+  `sudo docker-compose start adc-video-bridge` (David; needs sudo). go2rtc was left running.
 - ✅ **DEPLOYED on Kaikoura and VERIFIED CURRENT (2026-08-06)** — rebuilt after the status-endpoint
   field rename, confirmed by the live endpoint emitting the six per-breaker field names.
+  ⚠️ `src/` has since changed by **comments only** (`0247afe`), so a strict "did a COPY path change?"
+  check says rebuild; it is a no-op and no rebuild is warranted.
   ⚠️ Do not trust a remembered commit: the host `dist/` is stale by design (the Dockerfile builds
   *inside* the image), so it proves nothing. Check the container itself for a file only current
   code has:
@@ -56,6 +61,12 @@ baton, the baton wins.
   completed `SESSION_STARTED`, and sent no video** — a strictly later failure than "never dials in".
   📖 **Evidence, the three measured states, and the deduction: `Journal.md` 2026-08-06.** Do not
   re-derive it from the endpoint; two of the three states report an all-clear.
+  🔑 **TWO EXPERIMENTS RULED OUR CODE OUT — do not re-run them.** (1) One login then four
+  `liveVideoHighestResSources` calls 15s apart: no block on any. Retrying does not wake it.
+  (2) **Bridge stopped completely for ~55 min, then probed cold: still no block.** So this is not
+  our retry cadence, our session-holding, or anything else we do at runtime. ⚠️ Residual we cannot
+  exclude: a platform penalty with a horizon longer than an hour. It changes nothing actionable —
+  no code change recovers this either way.
   Per [`INVARIANTS.md`](INVARIANTS.md), that null means *"Direct has been failing for this camera"*
   and clears when connectivity is fixed. 🔴 **Do NOT build the Janus proxy path in response.**
   ➡️ **A Brinks/Alarm.com support call, not a code change.** Wording to use:
