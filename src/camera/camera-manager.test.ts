@@ -46,6 +46,8 @@ function createTokenManagerStub() {
     fetchVideoToken: vi.fn().mockResolvedValue(null),
     fetchVideoTokenSilent: vi.fn().mockResolvedValue(null),
     circuitState: vi.fn().mockReturnValue('closed' as const),
+    circuitFailures: vi.fn().mockReturnValue(0),
+    circuitRetryAfterMs: vi.fn().mockReturnValue(0),
   });
   return stub as unknown as TokenManager & typeof stub;
 }
@@ -402,8 +404,33 @@ describe('CameraManager backoff', () => {
       expect(cam).toBeDefined();
       expect(cam!.streamCircuit).toBe('open');
       expect(cam!.lastError).toContain('camera offline');
-      expect(cam!.consecutiveFailures).toBeGreaterThan(0);
-      expect(typeof cam!.nextProbeInMs).toBe('number');
+      expect(cam!.streamFailures).toBeGreaterThan(0);
+      expect(typeof cam!.streamNextProbeInMs).toBe('number');
+    });
+
+    it("reports each breaker's OWN failure count and cooldown", async () => {
+      // Measured in production 2026-08-06: the payload showed
+      // `tokenCircuit: open` beside `nextProbeInMs: 0`. That 0 came from the
+      // STREAM breaker — closed and idle because no tokens ever arrive — while
+      // the breaker actually blocking was the token one, whose cooldown was not
+      // in the payload at all. It reads as "paused, probing right now" when the
+      // next token probe can be an hour away, and it is most misleading in
+      // exactly the state where an operator asks "when does it retry?".
+      await startWithCamera();
+      tokenManager.circuitState.mockReturnValue('open');
+      tokenManager.circuitFailures.mockReturnValue(3);
+      tokenManager.circuitRetryAfterMs.mockReturnValue(1_800_000);
+
+      const cam = manager.getDiagnostics().cameras.find((c) => c.name === 'driveway');
+
+      expect(cam!.tokenCircuit).toBe('open');
+      expect(cam!.tokenFailures).toBe(3);
+      expect(cam!.tokenNextProbeInMs).toBe(1_800_000);
+      // The stream breaker is closed and idle here; its numbers stay its own
+      // and must not be reported as if they described the open circuit.
+      expect(cam!.streamCircuit).toBe('closed');
+      expect(cam!.streamFailures).toBe(0);
+      expect(cam!.streamNextProbeInMs).toBe(0);
     });
 
     // The endpoint serves this over the network, and camera IDs are treated as

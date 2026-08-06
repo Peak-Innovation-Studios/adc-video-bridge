@@ -98,6 +98,16 @@ export class CameraManager {
    * 🔴 Deliberately carries camera NAMES only, never camera IDs — the IDs are
    * treated as sensitive throughout this project and this data is served over
    * the network.
+   *
+   * 🔑 The failure count and cooldown are reported PER BREAKER and named for it.
+   * They used to be the bare `consecutiveFailures` / `nextProbeInMs`, sourced
+   * from the stream breaker alone — so when the TOKEN circuit was the open one
+   * the payload paired `tokenCircuit: open` with `nextProbeInMs: 0` from a
+   * stream breaker that was closed and idle. That reads as "paused, probing
+   * right now" while the real next probe could be an hour away, and it misled
+   * exactly when someone was asking "when does it retry?" (measured
+   * 2026-08-06). An unqualified name is what made the misread possible, so the
+   * fix is the name, not a comment warning about it.
    */
   getDiagnostics(): {
     running: boolean;
@@ -105,9 +115,11 @@ export class CameraManager {
       name: string;
       state: string;
       streamCircuit: string;
+      streamFailures: number;
+      streamNextProbeInMs: number;
       tokenCircuit: string;
-      consecutiveFailures: number;
-      nextProbeInMs: number;
+      tokenFailures: number;
+      tokenNextProbeInMs: number;
       lastError?: string;
       lastErrorAgoMs?: number;
     }>;
@@ -120,9 +132,11 @@ export class CameraManager {
         name: stream.cameraName,
         state: stream.state,
         streamCircuit: breaker?.state ?? 'closed',
+        streamFailures: breaker?.consecutiveFailures ?? 0,
+        streamNextProbeInMs: breaker?.retryAfterMs() ?? 0,
         tokenCircuit: this.tokenManager.circuitState(id),
-        consecutiveFailures: breaker?.consecutiveFailures ?? 0,
-        nextProbeInMs: breaker?.retryAfterMs() ?? 0,
+        tokenFailures: this.tokenManager.circuitFailures(id),
+        tokenNextProbeInMs: this.tokenManager.circuitRetryAfterMs(id),
         ...(err ? { lastError: err.message, lastErrorAgoMs: Date.now() - err.at } : {}),
       });
     }

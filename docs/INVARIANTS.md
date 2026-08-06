@@ -91,10 +91,13 @@ why upstream `Omar-L#2`'s "older camera models" framing is incomplete: `Journal.
 
 Measured 2026-08-06, each of these cost time in one session:
 
-- **`consecutiveFailures` and `nextProbeInMs` come from the STREAM breaker only**, never the token
-  one (`camera-manager.ts` `getDiagnostics()`). So `tokenCircuit: open` alongside
-  `consecutiveFailures: 0` is **not** a contradiction — they describe different breakers. The stream
-  breaker reads clean precisely *because* no tokens arrive, so no stream attempt ever runs.
+- **Every failure count and cooldown is named for its own breaker**: `streamFailures` /
+  `streamNextProbeInMs` and `tokenFailures` / `tokenNextProbeInMs`.
+  ⚠️ **Fixed 2026-08-06 — you need this to decode anything captured BEFORE that.** Older payloads,
+  logs and notes carry a bare `consecutiveFailures` / `nextProbeInMs` sourced from the **stream**
+  breaker alone. So in an old capture, `tokenCircuit: open` beside `nextProbeInMs: 0` is neither a
+  contradiction nor "probing right now": the stream breaker was closed and idle *because* no tokens
+  ever arrived, and the token breaker's real cooldown — up to an hour — was not in the payload at all.
 - **`lastError` is written only when `stream.start()` throws, and is NEVER cleared.** So an absent
   `lastError` does not mean healthy — it means the process restarted, or nothing was ever attempted.
   Used deliberately, it is a reliable **restart detector**.

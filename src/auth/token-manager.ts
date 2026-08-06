@@ -136,6 +136,20 @@ export class TokenManager extends EventEmitter {
     return this.breakers.get(cameraId)?.state ?? 'closed';
   }
 
+  /**
+   * Consecutive failures on a camera's token loop, and how long until its next
+   * probe. Reported separately from the stream breaker's equivalents: when this
+   * loop is the one that is open, the stream breaker is closed and idle, so its
+   * numbers describe nothing and reporting them here would be actively wrong.
+   */
+  circuitFailures(cameraId: string): number {
+    return this.breakers.get(cameraId)?.consecutiveFailures ?? 0;
+  }
+
+  circuitRetryAfterMs(cameraId: string): number {
+    return this.breakers.get(cameraId)?.retryAfterMs() ?? 0;
+  }
+
   /** Stop all timers and clean up. */
   stop(): void {
     this.running = false;
