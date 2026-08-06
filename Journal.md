@@ -8,6 +8,55 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-04 (Phase 2) — "Didn't this work in the spike?" — yes, and why that did not transfer
+
+**Claude Code (Opus 5).** Worth writing down because it is the obvious question, the answer is
+"yes", and the reason it did not carry over is structural rather than a regression.
+
+| | Spike (2026-08-03) | Phase 2 (2026-08-04) |
+|---|---|---|
+| Where it ran | **Host process**, spare ports 1985/8555 | Container, `network_mode: host` |
+| go2rtc API auth | **None** — throwaway config | `api.username` set → HAP got **401** |
+| Video source | **Consumed production's working RTSP** | Bridge publishes; camera will not dial in |
+| Result | Paired, recorded, measured | Pairs (after a patch), no video |
+
+### The two things the spike skipped are the two things that blocked Phase 2
+
+**API authentication.** A hand-run go2rtc on spare ports had no `api.username`, so `middlewareAuth`
+was never installed and HAP sailed straight through. Production has auth, HAP is served on the API
+port, and the middleware has no path exemption — so `/pair-setup` returned 401 and the Home app
+failed to add the accessory with no diagnostic. That is not a regression from the spike; it is a
+condition the spike never exercised. `patches/go2rtc-hap-auth-exempt.patch` is what lets both exist
+at once, which the spike never had to reconcile.
+
+**The camera session.** The spike consumed the RTSP stream production was *already publishing* — it
+needed no camera session of its own, and the camera was healthy that day. In Phase 2, go2rtc **is**
+production, the bridge publishes into it, and the camera has not dialed in. The spike sat downstream
+of the problem we now have.
+
+Also skipped, and separately expensive: the container's read-only rootfs versus go2rtc persisting
+pairing keys into its own config, and `srtp.listen` — which a minimal spike config left at its
+default and the hardened one had explicitly disabled as "unused".
+
+### 🔑 The generalisable lesson
+
+**The things that make a spike cheap are exactly the constraints production imposes.** No container,
+no auth, no deployment change, consume an existing stream — every one of those is a production
+requirement removed. So a spike is strong evidence about the **feature** and no evidence at all
+about the **integration**.
+
+The spike's findings all still hold and are still the reason to do this: HKSV recording does not
+re-encode, 0.7% CPU, ~22 MB RSS, zero ffmpeg. Every blocker since has come from integration, not
+from the feature.
+
+⚠️ The standing decision **did** call part of this — *"Adoption is not a swap — the spike ran on the
+HOST, not in Docker, which is why it was easy"* — but it flagged only mDNS. The same "run it bare"
+choice also skipped authentication, the camera path, the read-only filesystem, and SRTP. **When a
+spike is deliberately unrepresentative, enumerate everything it skipped, not just the part that
+looks hardest at the time.**
+
+---
+
 ## 2026-08-04 (later still) — Native HKSV Phase 0: splitting go2rtc out, and nine defects the reviews caught
 
 **Claude Code (Opus 5).** Merged as 14 commits. Phase 0 only — **nothing is deployed and HKSV is
