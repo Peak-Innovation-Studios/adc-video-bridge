@@ -8,6 +8,113 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-06 (later) — Two new cameras answered in a minute what a day of probing could not
+
+**Claude Code (Opus 5).** David pushed back: *"we had the video working with the spike, it's not the
+camera, why can't we get video this new way?"* Right to push. The answer took two experiments, a
+correction to something I had asserted, and then — decisively — a fact that had nothing to do with
+any of it.
+
+### The decisive evidence, and it was not any of my tests
+
+David connected two indoor cameras and they failed identically. One login, one videoSource call per
+camera:
+
+| name | model | e2e | proxy | errorEnum |
+|---|---|---|---|---|
+| Front | ADC-V723 | **null** | set | 0 |
+| Kitchen | ADC-V515 | **null** | set | 0 |
+| Sunroom | ADC-V515 | **null** | set | 0 |
+
+**3 of 3, two models, and two of them connected that day.** The bridge is configured for one camera
+and has never contacted the other two. No mechanism we control reaches them. Alarm.com's own web
+player was also failing for *every* camera at the same time.
+
+🔑 **The evidence that settled it came from widening the population, not from deepening the
+analysis.** Everything I did — a wake-probe, a cold probe, reading the token path, the status
+endpoint — examined one camera harder. Two cameras that had never met our code answered the question
+in under a minute. When a hypothesis is "X caused this", the cheapest disproof is usually an instance
+of the symptom that X could not have touched, and that is a question about *scope*, not about depth.
+
+### The two experiments, which were right and were still not enough
+
+Both were aimed at "could our code have caused this?", and both came back negative:
+
+1. **Wake-probe.** One login, four `liveVideoHighestResSources` calls 15s apart. `README` says that
+   call is what wakes the camera, so if retrying could recover the state, the block would have
+   appeared. It did not, on any call.
+2. **Cold probe.** The bridge stopped completely for ~55 minutes, then a single probe. Still no
+   block. That ruled out our retry cadence and our session-holding.
+
+⚠️ But the cold probe had a stated residual I could not close: *a platform penalty with a horizon
+longer than an hour*. Fifty-five minutes cannot disprove a multi-day demotion that our earlier
+retrying might have triggered. The new cameras closed it instantly — a penalty cannot reach a device
+that was not on the account.
+
+### A defect I reported, then had to narrow
+
+I found that `retry()` re-attempts only on a **throw**: `return await fn()` means a `null` return is
+a *successful* return, so a response with no e2e block gets exactly one call and then waits 600s. I
+reported that as "the wake ladder never runs".
+
+That conflated two failure modes. The wake ladder in `CameraStream.start()` handles
+`Camera <id> has not yet dialed in` — a **signaling** failure that happens *after* a token with a
+valid e2e block was obtained. A missing block is a different condition at a different layer, and
+that ladder does run when it applies.
+
+So the real defect was smaller and entirely about what the code *claims*: `maxAttempts: 3` sitting
+above a null-check reads as though the important failure is retried three times. **The behaviour was
+correct — a missing block is a persistent platform state, and the escalating breaker cooldown is the
+right response.** Fixing it by routing null through `retry()` would have tripled our call rate on an
+account that may already have been degraded, for a state I had *measured* retries do not recover.
+Recorded at the call site and in `INVARIANTS.md` instead.
+
+### How the app actually gets video
+
+Worth knowing, and it kills the "camera is offline" reading outright:
+
+```
+janusGatewayUrl        = wss://adcwebrtcproxy-na02.devicetask.com:8989/janus
+proxyStreamTimeoutTime = 180        supportsAudio = false
+proxyWebrtcConnectionInfo = SET     endToEndWebrtcConnectionInfo = null
+```
+
+The app never talks to the camera. It pulls from a media relay in Alarm.com's cloud that the camera
+pushes into. So the cameras are **online and reaching Alarm.com** — they are simply being served the
+documented failure fallback (3-minute sessions, no audio) while Direct is not provisioned at all.
+⚠️ Per `INVARIANTS.md` the janus fields are present *always*; the signal is the **pair** — proxy set
+**and** e2e null.
+
+### ⚠️ Two of my own diagnostic guards failed silently, in the same shape
+
+Both were background watchers, and both printed a confident conclusion having measured nothing:
+
+- A precheck used `curl -s -w '%{http_code}' … || echo "000"`. On a refused connection curl prints
+  `000` **and** exits non-zero, so the fallback ran too and the variable held `000000`. The equality
+  test failed and it reported "bridge is STILL RUNNING" about a bridge that was stopped.
+- A consumer-watcher's parse step returned nothing, so neither exit branch could fire; it timed out
+  and printed *"No consumer seen"* with `live=` and `consumers=` **empty**. That is what a watcher
+  which never took a reading prints — not evidence.
+
+🔑 **A command that emits output on its failure path defeats `cmd || fallback`**, because both run
+and the results concatenate. `%{http_code}` always prints, which is exactly what makes it unsafe as
+a guard; the exit code was the real signal, sitting right there. More generally: I armed both
+watchers without once running their guard against a known state. *Test that the check can fail* is
+in `lessons/verification.md`; what I skipped is the cheaper half — **run it once against a state
+whose answer you already know.**
+
+### Where it ends
+
+Downstream is **half-verified**: a synthetic SMPTE-bars stream published into go2rtc was accepted and
+parsed (`medias=1`), so RTSP ingest is healthy. HAP/SRTP/HKSV is still unverified — the Home app was
+never opened during either window, and the watcher meant to catch it was the broken one above.
+
+Brinks are scheduling a **virtual technician session**. The evidence to put in front of them is the
+3-of-3 table plus `errorEnum: 0` with a null e2e block, which says their service reports success
+while omitting the configuration.
+
+---
+
 ## 2026-08-06 — The blocker moved, and the status endpoint reported "calm" the whole way
 
 **Claude Code (Opus 5).** "The video still isn't coming through." It still isn't — but it is failing

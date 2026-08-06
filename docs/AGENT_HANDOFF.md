@@ -16,9 +16,10 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-06 — Deferred review nits cleared and deployed. **There is still no video, and
-  the failure MOVED during 2026-08-05/06** — it is no longer "never dials in". See the blocker below;
-  the old wording is now wrong in a way that would misdirect a support call. Narrative: `Journal.md`.
+- **Updated:** 2026-08-06 (later) — **SETTLED: the outage is account-wide on Alarm.com's side.** Not
+  the camera, not our code — 3 of 3 cameras return a null e2e block, including two connected that day
+  that our bridge has never contacted. Brinks are scheduling a virtual technician session.
+  Narrative: `Journal.md` 2026-08-06 (later).
 - **Branch / HEAD:** `git fetch && git status -sb && git log --oneline -1`. `main` deploys by hand.
   💡 "Do I need a rebuild?" is answerable from git — but **derive it from the `COPY` lines, not from
   this summary.** As of 2026-08-06 the bridge image takes `package.json`, `package-lock.json`,
@@ -57,28 +58,27 @@ baton, the baton wins.
   circuit state, failure count and cooldown (`streamCircuit`/`streamFailures`/`streamNextProbeInMs`,
   `tokenCircuit`/`tokenFailures`/`tokenNextProbeInMs`), plus the last error with its age. This
   replaces the `docker-compose logs` round-trip that cost three sudo prompts in one session.
-- 🔴 **THE ONLY BLOCKER: Alarm.com now issues NO end-to-end WebRTC config for this camera**
-  (`endToEndWebrtcConnectionInfo: null`, `errorEnum: 0`, login fine, proxy config still populated —
-  confirmed twice an hour apart via `probe.js`). Still not ours, but ⚠️ **no longer the same symptom
-  as 2026-08-04.** In the one 2026-08-06 window where a config *was* issued, the camera **dialed in,
-  completed `SESSION_STARTED`, and sent no video** — a strictly later failure than "never dials in".
-  📖 **Evidence, the three measured states, and the deduction: `Journal.md` 2026-08-06.** Do not
-  re-derive it from the endpoint; two of the three states report an all-clear.
-  🔑 **TWO EXPERIMENTS RULED OUR CODE OUT — do not re-run them.** (1) One login then four
-  `liveVideoHighestResSources` calls 15s apart: no block on any. Retrying does not wake it.
-  (2) **Bridge stopped completely for ~55 min, then probed cold: still no block.** So this is not
-  our retry cadence, our session-holding, or anything else we do at runtime. ⚠️ Residual we cannot
-  exclude: a platform penalty with a horizon longer than an hour. It changes nothing actionable —
-  no code change recovers this either way.
-  Per [`INVARIANTS.md`](INVARIANTS.md), that null means *"Direct has been failing for this camera"*
-  and clears when connectivity is fixed. 🔴 **Do NOT build the Janus proxy path in response.**
-  ➡️ **A Brinks/Alarm.com support call, not a code change.** Wording to use:
-  *"Alarm.com returns `endToEndWebrtcConnectionInfo: null` for this camera — no end-to-end WebRTC
-  configuration at all — while proxy config is still populated. Earlier the same field was populated,
-  and in the one window where a session did establish, the camera completed signaling and delivered
-  no video. The Brinks app still streams it over proxy."*
-  ⚠️ Do not re-diagnose from our logs — [`INVARIANTS.md`](INVARIANTS.md) records the three theories
-  already raised and retracted, and its `endToEndWebrtcConnectionInfo: null` entry covers this exactly.
+- 🔴 **THE ONLY BLOCKER — SETTLED: Alarm.com provisions NO end-to-end WebRTC for this ACCOUNT.**
+  Not the camera, not our code, and 🔴 **not worth re-investigating.** Measured 2026-08-06, one
+  login, one videoSource call per camera:
+
+  | name | model | e2e | proxy | errorEnum |
+  |---|---|---|---|---|
+  | Front | ADC-V723 | **null** | set | 0 |
+  | Kitchen | ADC-V515 | **null** | set | 0 |
+  | Sunroom | ADC-V515 | **null** | set | 0 |
+
+  **3 of 3, two models — and Kitchen/Sunroom were connected that day, which our bridge has never
+  contacted** (it is configured for one camera). Alarm.com's own web player was failing for every
+  camera at the same time. `errorEnum: 0` beside a null block means their service reports success
+  while omitting the configuration — that pairing is the quotable line for the technician session.
+  📖 **Everything else is in `Journal.md` 2026-08-06 and 2026-08-06 (later)**: the three earlier
+  states, the two experiments that ruled our code out (do not re-run them), and how the app still
+  streams via Alarm.com's Janus relay on their 3-minute no-audio fallback — so the cameras are
+  ONLINE and reaching Alarm.com; only Direct is unprovisioned.
+  🔴 **Do NOT build the Janus proxy path in response** — [`INVARIANTS.md`](INVARIANTS.md); tracked
+  upstream as Omar-L#2. ⚠️ Its janus fields are in the payload **always**; the signal is the pair,
+  proxy SET **and** e2e null.
 - ⚠️ **`patches/go2rtc-hap-auth-exempt.patch` is load-bearing.** Without it HomeKit cannot pair at
   all while go2rtc API auth is on. Applied with plain `git apply` in `Dockerfile.go2rtc`, so a patch
   that stops applying **fails the build loudly**. 🔴 Report upstream on
@@ -90,16 +90,19 @@ baton, the baton wins.
   each cost time on 2026-08-06; all six are recorded there rather than repeated here.
 - **⬆️ Eight upstream PRs and two issues open at Omar-L**, all awaiting his review. Nothing blocked on
   us. See [`UPSTREAM.md`](UPSTREAM.md).
-- **Whose turn:** **David** — call Brinks/Alarm.com, using the 2026-08-06 wording in the blocker
-  above, not the older "never dials in". Every layer we control is built, deployed and verified;
-  video appears on its own once Alarm.com issues an e2e config again, with **no redeploy needed**.
+- **Whose turn:** **BRINKS.** The support call happened 2026-08-06 and they are scheduling a
+  **virtual technician session**. Nothing is on us and nothing is on David until that session — take
+  the 3-of-3 table above to it, plus `errorEnum: 0` beside a null e2e block, which says their service
+  reports success while omitting the configuration. Every layer we control is built, deployed and
+  verified; video appears on its own once Alarm.com provisions Direct again, **no redeploy needed**.
 
 ### What's left (priority order)
 
-1. 🔴 **(David — SUPPORT CALL, gates everything)** Alarm.com issues no end-to-end WebRTC config for
-   this camera (`endToEndWebrtcConnectionInfo: null`), and in the one 2026-08-06 window where it did,
-   the session established and **no media followed**. Proxy still works (the app streams). Nothing in
-   our code can fix it and everything else is blocked behind it. Full evidence in the blocker above.
+1. 🔴 **(BRINKS — virtual technician session being scheduled; gates everything)** Alarm.com issues no
+   end-to-end WebRTC config for **any** camera on the account (3 of 3, two models, two of them added
+   2026-08-06 and never touched by our code). Proxy still works, so the cameras are online. Nothing
+   in our code can fix it, nothing further is worth measuring from our side, and everything else is
+   blocked behind it. Full evidence in the blocker above.
 2. 🔴 *(Agent — BLOCKED on video; both need a real camera to pick a timeout)* **Two observability
    defects, found 2026-08-06. Both let a dead stream look calm:**
    - **No media watchdog after `SESSION_STARTED`** — a trackless session is recorded as a *success*
