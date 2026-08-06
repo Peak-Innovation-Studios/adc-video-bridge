@@ -44,27 +44,16 @@ baton, the baton wins.
   (credentials are in `.env` on the NAS). Returns per-camera state, both circuit states, consecutive
   failures, next-probe time, and the last error with its age. This replaces the `docker-compose logs`
   round-trip that cost three sudo prompts in one session.
-- 🔴 **THE ONLY BLOCKER: Alarm.com now issues NO end-to-end WebRTC config for this camera.** Still
-  not ours, but **no longer the same symptom** — three distinct states were measured in one day, and
-  quoting the oldest one on a support call would send it down the wrong path:
-
-  | # | `state` | `tokenCircuit` | `lastError` | What it proves |
-  |---|---|---|---|---|
-  | 1 | `idle` | closed, 3 fails | `has not yet dialed in` | e2e config WAS issued; sessions attempted and refused |
-  | 2 | `connecting` (frozen) | **open** | none | config issued, `connect()` **resolved**, **no media ever followed** |
-  | 3 | `idle` (current) | closed, 0 fails | none | **no e2e config at all** — nothing is even attempted |
-
-  🔑 **State 2 is the load-bearing one.** `fails=0` with no `lastError` proves `start()` never threw;
-  `connecting` proves `tryConnect()` ran. A rejection would have shown `idle` between retries then
-  `error` + `lastError` within ~3 min. **So the camera dialed in, completed `SESSION_STARTED`, and
-  sent no video.** That is a *later* failure than "never dials in".
-
-  Confirmed twice, an hour apart, by `probe.js`: `endToEndWebrtcConnectionInfo: data: null` with
-  `errorEnum: 0` and login succeeding, while `proxyWebrtcConnectionInfo` stays populated.
-  Per [`INVARIANTS.md`](INVARIANTS.md) that null means *"Direct has been failing for this camera"*
+- 🔴 **THE ONLY BLOCKER: Alarm.com now issues NO end-to-end WebRTC config for this camera**
+  (`endToEndWebrtcConnectionInfo: null`, `errorEnum: 0`, login fine, proxy config still populated —
+  confirmed twice an hour apart via `probe.js`). Still not ours, but ⚠️ **no longer the same symptom
+  as 2026-08-04.** In the one 2026-08-06 window where a config *was* issued, the camera **dialed in,
+  completed `SESSION_STARTED`, and sent no video** — a strictly later failure than "never dials in".
+  📖 **Evidence, the three measured states, and the deduction: `Journal.md` 2026-08-06.** Do not
+  re-derive it from the endpoint; two of the three states report an all-clear.
+  Per [`INVARIANTS.md`](INVARIANTS.md), that null means *"Direct has been failing for this camera"*
   and clears when connectivity is fixed. 🔴 **Do NOT build the Janus proxy path in response.**
-
-  ➡️ **Still a Brinks/Alarm.com support call, not a code change.** Current wording:
+  ➡️ **A Brinks/Alarm.com support call, not a code change.** Wording to use:
   *"Alarm.com returns `endToEndWebrtcConnectionInfo: null` for this camera — no end-to-end WebRTC
   configuration at all — while proxy config is still populated. Earlier the same field was populated,
   and in the one window where a session did establish, the camera completed signaling and delivered
@@ -92,20 +81,15 @@ baton, the baton wins.
    this camera (`endToEndWebrtcConnectionInfo: null`), and in the one 2026-08-06 window where it did,
    the session established and **no media followed**. Proxy still works (the app streams). Nothing in
    our code can fix it and everything else is blocked behind it. Full evidence in the blocker above.
-2. 🔴 *(Agent — BLOCKED on video, both need a real camera to pick a timeout)* **Two observability
-   defects found 2026-08-06 while diagnosing the above. Both let a dead stream look calm**, which is
-   why the diagnosis took a session rather than a glance:
-   - **No media watchdog after `SESSION_STARTED`.** `connect()` resolves on session start, not on
-     media, and `_state` becomes `'streaming'` only in `onTrackReady`. A session that starts and
-     never delivers a track is recorded as a **success** — `breaker.recordSuccess()` runs — so the
-     stream breaker is *reset by the very failure it exists to catch*, and `state` sits at
+2. 🔴 *(Agent — BLOCKED on video; both need a real camera to pick a timeout)* **Two observability
+   defects, found 2026-08-06. Both let a dead stream look calm:**
+   - **No media watchdog after `SESSION_STARTED`** — a trackless session is recorded as a *success*
+     (`breaker.recordSuccess()`), resetting the breaker that should catch it, and `state` sits at
      `'connecting'` forever. Fix shape: fail the attempt if no track arrives within N seconds.
-   - **A camera that is never attempted reports `idle` with zero errors.** `lastError` is written
-     only when `start()` throws; when ADC issues no config, `start()` is never called. The most
-     serious state produces the calmest possible output, for ~30 min until the token breaker opens
-     (`VIDEO_TOKEN_FAILURE_THRESHOLD = 3` × `VIDEO_TOKEN_REFRESH_MS = 600s`).
-   🔑 Both are the trap `README.md` already documents one layer up — *"did not produce a usable
-   result"* is the failure, not *"threw"*. The lesson was never applied downward.
+   - **A camera never attempted reports `idle` with zero errors** for ~30 min, until the token
+     breaker opens (`VIDEO_TOKEN_FAILURE_THRESHOLD = 3` × `VIDEO_TOKEN_REFRESH_MS = 600s`).
+   🔑 Both are the trap `README.md` documents one layer up — *"did not produce a usable result"* is
+   the failure, not *"threw"* — never applied downward. 📖 Reasoning: `Journal.md` 2026-08-06.
 3. *(Agent — do this when video returns)* **Verify HKSV actually records without transcoding:**
    `[hksv] flush fragment` lines with sequential `seq` and ~67 KB fragments, an `hksv` consumer
    alongside `homekit` from one producer, and **no ffmpeg beyond the bridge's one**. Compare against

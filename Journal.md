@@ -8,6 +8,107 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-06 — The blocker moved, and the status endpoint reported "calm" the whole way
+
+**Claude Code (Opus 5).** "The video still isn't coming through." It still isn't — but it is failing
+**differently** than it was the night before, and the baton's wording ("the camera never dials in")
+had become wrong in the specific way that would misdirect a support call. Three distinct states were
+measured in one day. The endpoint built to make this diagnosable reported an all-clear through two
+of them.
+
+### Three states in one day, and only the middle one is load-bearing
+
+| # | `state` | `tokenCircuit` | `lastError` | What it proves |
+|---|---|---|---|---|
+| 1 | `idle` | closed, 3 fails | `has not yet dialed in` | e2e config WAS issued; sessions attempted and refused |
+| 2 | `connecting` (frozen) | **open** | none | config issued, `connect()` **resolved**, no media ever followed |
+| 3 | `idle` | closed, 0 fails | none | **no e2e config at all** — nothing is even attempted |
+
+State 3 is fully accounted for: `probe.js` returns `endToEndWebrtcConnectionInfo: data: null` with
+`errorEnum: 0` and login succeeding, while `proxyWebrtcConnectionInfo` stays populated — confirmed
+twice, an hour apart. With no config, `handleVideoToken` never fires, `stream.start()` never runs,
+and the stream sits at `idle` recording nothing. go2rtc agrees: the `front` stream has no producer.
+
+**State 2 is the finding.** It can be produced exactly one way. `fails=0` with no `lastError` proves
+`start()` never threw; `connecting` proves `tryConnect()` ran. A rejecting `connect()` would have
+shown `idle` between ladder retries and then `error` + a populated `lastError` within ~3 minutes, and
+we watched far longer than that seeing only `connecting`. **So the camera dialed in, completed
+`SESSION_STARTED`, and then sent no video.** That is a strictly later failure than "never dials in",
+and it holds under either code version, so the deploy state does not weaken it.
+
+Per `INVARIANTS.md`, a null `endToEndWebrtcConnectionInfo` means *"Direct has been failing for this
+camera"* and clears when connectivity is fixed. So the arc across the day is Alarm.com progressively
+giving up on Direct for this camera — not a protocol change, and still not our code.
+
+### 🔑 Two defects that let a dead stream look calm
+
+Both were found by asking why the endpoint looked healthy while nothing worked, and both are the same
+trap `README.md` already documents **one layer up** — that the breaker must treat *"did not produce a
+usable result"* as the failure rather than *"threw"*, because ADC answers an unreachable camera with
+HTTP 200 and simply omits the block. That lesson was never carried downward:
+
+1. **No media watchdog after `SESSION_STARTED`.** `connect()` resolves on session start, not on
+   media, and `_state` becomes `'streaming'` only in `onTrackReady`. A session that starts and never
+   delivers a track is therefore recorded as a **success** — `breaker.recordSuccess()` runs — so the
+   stream breaker is *reset by the very failure it exists to catch*, and the stream sits at
+   `'connecting'` indefinitely.
+2. **A camera that is never attempted reports `idle` with zero errors.** `lastError` is written only
+   when `start()` throws; when ADC issues no config, `start()` is never called. The most serious
+   state the system can be in produces the calmest output it can emit, for ~30 minutes until the
+   token breaker opens (threshold 3 × a 600s refresh).
+
+🔑 **The generalisable form: a status field that is only written on a thrown error cannot report the
+failures that do not throw** — and those are the ones this integration actually has. "Nothing is
+wrong" and "nothing is happening" rendered identically.
+
+### The hypothesis I had to kill before the real answer appeared
+
+I first theorised that `PeerSession.connect()` could hang unbounded, which would have explained a
+frozen `connecting` neatly. It was wrong: `signaling-client.ts` has a 30s timeout, and — the detail
+that decides it — that timeout is cleared on `SESSION_STARTED`, **not** on `HELLO`, so the whole
+handshake is properly bounded. Had it been cleared on `HELLO`, the wait for `SESSION_STARTED` would
+have been unbounded and the hang would have been real.
+
+Killing that hypothesis is what produced the answer, because ruling out "still connecting" left only
+"connected, and no media" — which is a much more specific and more useful thing to tell Brinks.
+**The wrong hypothesis was not wasted work; being precise about why it was wrong is what narrowed
+it.** Cost: reading two functions.
+
+Method note worth keeping: I committed to a falsifiable prediction — with
+`VIDEO_TOKEN_FAILURE_THRESHOLD = 3` and a 600s refresh, `tokenCircuit` should open ~20–30 min after
+a restart while `state` stays `idle`. Stating the number that would break the model is cheap, and it
+is the difference between a diagnosis and a story that fits.
+
+### A restart is not a rebuild, and the host `dist/` cannot tell you which happened
+
+The bridge was restarted to pick up the day's commits, which does **not** deploy new code — the
+container keeps the image it was built from. When I went to verify, the obvious check misled: the
+host's `dist/` was a day old, which looks like proof that nothing was rebuilt. It is not evidence at
+all — `Dockerfile` builds *inside* the image, so the host `dist/` is stale by design even after a
+correct rebuild. Only the container can answer:
+`sudo docker exec adc-video-bridge ls dist/utils/table.js` (a file only the current code has). It
+came back present: the rebuild took.
+
+⚠️ Two host facts cost time and are now in `INVARIANTS.md`: this Synology has **Compose v1**
+(`docker compose` does not exist), and `node` is installed but **not on a non-interactive `ssh`
+PATH**, so `ssh kaikoura 'node …'` fails with `No such file or directory` — which reads as a
+statement about the host and is actually a statement about the shell. That is the same error shape
+`INVARIANTS.md` already names for ADC's payload: **reading a field as a claim about the camera when
+it is a claim about the plumbing.** Third occurrence of that shape in this project.
+
+### Where it ends
+
+Current code is deployed and verified in the container; build clean, 16 files / 236 tests, audit
+passing. Nothing in the day's commits touches signaling, tokens or media, so none of them is
+implicated in the outage.
+
+Still a Brinks/Alarm.com call, with sharper wording than yesterday's: *Alarm.com returns
+`endToEndWebrtcConnectionInfo: null` for this camera while proxy config stays populated; earlier the
+same field was populated, and in the one window where a session did establish, the camera completed
+signaling and delivered no video.*
+
+---
+
 ## 2026-08-05 — Cleared the deferred nits, and a push that lied about happening
 
 **Claude Code (Opus 5).** A quiet session by design: the camera still has not dialed in, so
