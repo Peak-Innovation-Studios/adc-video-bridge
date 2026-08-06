@@ -8,6 +8,70 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-04 (Phases 1 & 2) — Deployed the split, shipped native HKSV, and crash-looped the bridge
+
+**Claude Code (Opus 5).** Phase 1 (deploy the split) and Phase 2 (native HomeKit) both landed. The
+accessory pairs, pairing persists, SRTP is up, motion works end to end. **There is still no video,
+and the cause is the camera** — unchanged all day and now well evidenced.
+
+### Four blockers, each hidden behind the one in front of it
+
+Every layer was independently correct; each failure only became visible once its predecessor was
+cleared. That is the shape worth remembering.
+
+1. **HomeKit could not pair.** HAP is served on the **API port** (`Port: uint16(api.Port)`) and
+   go2rtc's `middlewareAuth` has **no path exemption**, so `/pair-setup` returned 401 — which HAP
+   structurally cannot satisfy. API auth and native HomeKit were mutually exclusive. Fixed by
+   `patches/go2rtc-hap-auth-exempt.patch`, exempting only `/pair-setup` and `/pair-verify`; both
+   carry their own cryptography, and everything after pair-verify runs inside the encrypted HAP
+   connection `pkg/hksv` hijacks, so it never re-enters that mux.
+2. **Paired, then "No Response".** `srtp: listen: ""` left `srtp.Server` nil and `streamHandler`
+   refuses every stream with `can't work without SRTP server`. The accessory looks perfectly healthy
+   and never sends a frame. ⚠️ This was flagged in the Phase 0 final review as a "Phase-2 landmine"
+   and recorded **only in the SDD ledger — which lives in a gitignored worktree deleted at merge.**
+   It cost a debugging cycle to rediscover.
+3. **Recording would never have fired.** `motion: api` needs something to call
+   `POST /api/homekit/motion?id=<stream>` with Basic auth. The bridge's webhook builds
+   `${motionUrl}/motion?<name>` with no credentials — three mismatches. Also: the whole motion block
+   was gated on `homebridge.motionUrl`, so it would have **stopped running entirely** at cutover.
+4. **No video.** The camera. Unchanged.
+
+### 🔑 I crash-looped production, and the lesson is about half-fixes
+
+Building a status endpoint (so diagnosing the bridge would stop needing sudo), I set
+`bindAddress` to the host's LAN address — but the bridge runs on the **default bridge network**,
+where that address does not exist. I had imported a rule from go2rtc, which is on host networking
+with no port mapping and therefore genuinely must bind explicitly. The bridge is the opposite case:
+`0.0.0.0` is correct precisely *because* compose's `ports:` mapping confines the host side.
+
+Worse: the validation **threw from the constructor**, `main()` treated it as fatal, and
+`restart: unless-stopped` restarted it into the same failure. For ~16 minutes the bridge was not
+attempting the camera at all while appearing to run.
+
+I had already written the right principle — *a diagnostics endpoint must never take down the thing
+it reports on* — put it in a comment, and tested it. Then implemented it for **one** of the two ways
+it can fail: I reasoned about `listen()`, which fails asynchronously, and never considered the
+synchronous constructor. **Stating a principle and enforcing it at one call site feel like the same
+act and are not.** The fix that holds is `startStatusServer()`, where the guarantee lives in a single
+function that cannot be bypassed.
+
+### What the endpoint bought, and it was worth the scar
+
+`GET :9090` now returns per-camera state, both circuit states, consecutive failures, next-probe
+time, and the last error with its age — camera **names only, never IDs**, asserted by a test. That
+turned "is the camera dialing in?" from a sudo round-trip into a two-second query, which is what
+finally made the evidence conclusive: a **fresh process, clean circuit, zero backoff** still gets
+`has not yet dialed in` while the Brinks app streams the camera fine.
+
+### Where it ends
+
+Combined with Alarm.com's **own web player** failing earlier, the evidence says end-to-end WebRTC is
+unavailable for every client while proxy streaming works. That is a Brinks/Alarm.com support
+conversation, and the wording that gets past first-line is: *the camera streams in the app but never
+dials in to the e2e WebRTC signaling server.*
+
+---
+
 ## 2026-08-04 (Phase 2) — "Didn't this work in the spike?" — yes, and why that did not transfer
 
 **Claude Code (Opus 5).** Worth writing down because it is the obvious question, the answer is
