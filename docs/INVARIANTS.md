@@ -87,6 +87,35 @@ Proxy is their documented **failure fallback** (3-min timeout, no audio), so tha
 ⚠️ **Do not build the Janus proxy path in response to this symptom.** Full reasoning, sources, and
 why upstream `Omar-L#2`'s "older camera models" framing is incomplete: `Journal.md` 2026-08-03.
 
+### 🔎 Reading the status endpoint — three fields that are routinely misread
+
+Measured 2026-08-06, each of these cost time in one session:
+
+- **`consecutiveFailures` and `nextProbeInMs` come from the STREAM breaker only**, never the token
+  one (`camera-manager.ts` `getDiagnostics()`). So `tokenCircuit: open` alongside
+  `consecutiveFailures: 0` is **not** a contradiction — they describe different breakers. The stream
+  breaker reads clean precisely *because* no tokens arrive, so no stream attempt ever runs.
+- **`lastError` is written only when `stream.start()` throws, and is NEVER cleared.** So an absent
+  `lastError` does not mean healthy — it means the process restarted, or nothing was ever attempted.
+  Used deliberately, it is a reliable **restart detector**.
+- **`state: 'connecting'` that does not move is a REPORT OF SUCCESS, not of progress.**
+  `connect()` resolves at `SESSION_STARTED`, not on media, and `_state` becomes `'streaming'` only in
+  `onTrackReady`. A session that starts and never delivers a track therefore sits at `'connecting'`
+  forever *and* is recorded as a success by the stream breaker. See the handoff backlog — there is no
+  media watchdog yet.
+
+### 🔴 `node` on Kaikoura is NOT on a non-interactive ssh PATH — use the full path
+
+`ssh kaikoura 'node dist/probe.js …'` fails with `No such file or directory`, which reads as "node
+is not installed on the NAS". It is: `/usr/local/bin/node` (plus DSM's `Node.js_v20` / `v22`
+packages). Always use the absolute path from a non-interactive shell.
+
+⚠️ Related, same host: this Synology has **Compose v1**. `docker compose` does not exist —
+it is `docker-compose`, or address the container directly (`container_name: adc-video-bridge`).
+And the host `dist/` is **stale by design** — the Dockerfile builds inside the image — so it is
+never evidence about what the container runs. Check the container:
+`sudo docker exec adc-video-bridge ls dist/utils/table.js`.
+
 ### Do not re-diagnose "stream dies after ~37s"
 
 Fixed. A stale FFmpeg `exit` callback cleared the **replacement** child's reference. Two halves must
