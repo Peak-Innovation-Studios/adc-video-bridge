@@ -104,6 +104,18 @@ export class TokenManager extends EventEmitter {
     }
 
     try {
+      // ⚠️ `maxAttempts` applies to THROWN errors only — transport faults,
+      // 5xx, a dropped connection. `retry()` does `return await fn()`, so a
+      // `null` return is a *successful* return and is handed straight back
+      // after ONE call. Read quickly, this line looks like it retries the
+      // no-WebRTC-block case three times. It does not, and that is deliberate:
+      // a missing block is a persistent platform state, not a transient fault.
+      // 🔴 Do not "fix" this by routing null through retry(). Measured
+      // 2026-08-06 against the live camera: four calls at 15s spacing all
+      // returned no block, so retrying does not recover it — it would only
+      // triple our call rate on an account Alarm.com may already have
+      // demoted. The escalating breaker cooldown below is the correct
+      // response. See INVARIANTS.md, "A missing e2e block is not retried".
       const config = await retry(
         () => this.fetchVideoSource(cameraId),
         { maxAttempts: 3, label: `videoToken:${cameraId}` },

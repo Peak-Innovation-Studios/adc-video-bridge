@@ -119,6 +119,28 @@ And the host `dist/` is **stale by design** — the Dockerfile builds inside the
 never evidence about what the container runs. Check the container:
 `sudo docker exec adc-video-bridge ls dist/utils/table.js`.
 
+### 🔴 A missing e2e block is NOT retried, and must not be made to retry
+
+`fetchVideoTokenSilent()` wraps the fetch in `retry({ maxAttempts: 3 })`. That budget covers
+**thrown** errors only — `retry()` does `return await fn()`, so a `null` return is a *successful*
+return and comes straight back after **one** call. The line reads like it retries the
+no-WebRTC-block case three times. It does not.
+
+**This is correct, not a bug.** A missing `endToEndWebrtcConnectionInfo` is a persistent platform
+state ("Direct has been failing for this camera"), not a transient fault, so the right response is
+the escalating breaker cooldown — which is exactly what happens.
+
+⚠️ **Measured 2026-08-06**, one login then four `liveVideoHighestResSources` calls 15s apart against
+the live camera: **every call returned no block** (`errorEnum: 0`, only `proxyWebrtcConnectionInfo`
+in `included[]`). Retrying does not recover this state. Making null go through `retry()` would
+triple the call rate on an account Alarm.com may already have demoted, and `retry()`'s 1s/2s backoff
+is far too fast to wake anything even in principle.
+
+🔑 Do not confuse this with the **dial-in wake ladder** in `CameraStream.start()`. That handles
+`Camera <id> has not yet dialed in` — a *signaling* failure that occurs **after** a token with a
+valid e2e block was obtained. Different condition, different layer; that ladder works and does run.
+Conflating the two is what made this look like a missing-retry bug in the first place.
+
 ### Do not re-diagnose "stream dies after ~37s"
 
 Fixed. A stale FFmpeg `exit` callback cleared the **replacement** child's reference. Two halves must
