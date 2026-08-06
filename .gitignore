@@ -4,9 +4,15 @@ node_modules/
 # Build output
 dist/
 
-# Credentials and sensitive config
-config/config.yaml
-config/go2rtc.yaml
+# Credentials and sensitive config.
+# 🔴 Match by PATTERN, never by filename. These were two exact names until
+# 2026-08-06, when `config/go2rtc.yaml.bak-pre-hksv` and `.bak-pre-srtp` — real
+# files on the NAS carrying HomeKit `pairings` and `device_private` — turned out
+# to match neither, and so were untracked-but-stageable by `git add -A`.
+# The trailing `*` catches backups and any future real yaml; the negation keeps
+# the two tracked examples. Same shape as the `.env.*` / `!.env.example` pair.
+config/*.yaml*
+!config/*.example.yaml
 .env
 .env.*
 !.env.example

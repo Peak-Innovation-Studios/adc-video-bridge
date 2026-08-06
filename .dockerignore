@@ -3,8 +3,12 @@
 .env
 .env.*
 !.env.example
-config/config.yaml
-config/go2rtc.yaml
+# Pattern, not filenames — see .gitignore for why (config/*.bak-pre-* carried
+# HomeKit secrets and matched neither exact name). Defence in depth: nothing in
+# either Dockerfile COPYs config/, so this keeps secrets out of the build
+# CONTEXT sent to the daemon, not out of the image.
+config/*.yaml*
+!config/*.example.yaml
 secrets/
 node_modules/
 dist/
