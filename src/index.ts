@@ -9,6 +9,36 @@ import { AlarmEventListener } from './events/alarm-event-listener.js';
 
 const log = createChildLogger('main');
 
+/**
+ * Start the optional status endpoint, or return null.
+ *
+ * 🔴 Never throws. A diagnostics endpoint must not be able to take down the
+ * bridge it reports on — and the constructor is synchronous, so guarding only
+ * `listen()` was not enough. Production crash-looped on exactly this: a bad
+ * `status.bindAddress` threw from the constructor, `main()` treated it as
+ * fatal, and `restart: unless-stopped` did the rest.
+ */
+export function startStatusServer(
+  status: { bindAddress: string; port: number; username?: string; password?: string },
+  getStatus: () => unknown,
+): StatusServer | null {
+  try {
+    const server = new StatusServer({
+      bindAddress: status.bindAddress,
+      port: status.port,
+      username: status.username ?? '',
+      password: status.password ?? '',
+      getStatus,
+    });
+    server.start();
+    return server;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error('Status endpoint not started, continuing without it: %s', msg);
+    return null;
+  }
+}
+
 async function main(): Promise<void> {
   log.info('adc-video-bridge starting');
 
@@ -132,17 +162,9 @@ async function main(): Promise<void> {
   }
 
   // Optional read-only status endpoint. Absent config = no listener.
-  let statusServer: StatusServer | null = null;
-  if (config.status) {
-    statusServer = new StatusServer({
-      bindAddress: config.status.bindAddress,
-      port: config.status.port,
-      username: config.status.username ?? '',
-      password: config.status.password ?? '',
-      getStatus: () => cameraManager.getDiagnostics(),
-    });
-    statusServer.start();
-  }
+  const statusServer = config.status
+    ? startStatusServer(config.status, () => cameraManager.getDiagnostics())
+    : null;
 
   // Graceful shutdown
   let shutdownStarted = false;

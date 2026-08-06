@@ -126,3 +126,29 @@ describe('index startup wiring', () => {
     expect(go2rtcCtor).toHaveBeenCalledWith('http://192.168.7.42:1984', undefined);
   });
 });
+
+describe('status endpoint misconfiguration', () => {
+  // The bridge crash-looped in production because a bad status config threw
+  // from the StatusServer CONSTRUCTOR, which is synchronous and was not
+  // guarded. Fixing listen() was not enough: NO status misconfiguration may
+  // ever take down the bridge it exists to report on.
+  it('does not let a status-server construction failure become fatal', async () => {
+    const { startStatusServer } = await import('./index.js');
+    expect(() =>
+      startStatusServer(
+        { bindAddress: '0.0.0.0', port: 9090, username: '', password: '' },
+        () => ({}),
+      ),
+    ).not.toThrow();
+  });
+
+  it('returns null when the status server could not be started', async () => {
+    const { startStatusServer } = await import('./index.js');
+    expect(
+      startStatusServer(
+        { bindAddress: '0.0.0.0', port: 9090, username: '', password: '' },
+        () => ({}),
+      ),
+    ).toBeNull();
+  });
+});
