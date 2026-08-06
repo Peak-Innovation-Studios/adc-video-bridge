@@ -586,6 +586,25 @@ describe('CameraStream.tryConnect', () => {
     expect(staleClose).toHaveBeenCalledTimes(1);
     expect((stream as any).pending).toBeNull();
   });
+
+  it('reports error, not connecting, when connect() rejects', async () => {
+    // start() corrects the state in its own catch, so this is invisible from
+    // there. reconnect()'s fallback path calls tryConnect() DIRECTLY with no
+    // such catch: a rejection there leaves the stream advertising
+    // 'connecting' forever, with nothing negotiating and reconnect() refusing
+    // to run again ("Cannot reconnect: expected 'streaming'").
+    vi.spyOn(stream as any, 'allocateUdpPort').mockResolvedValue(12345);
+    const connectSpy = vi
+      .spyOn(PeerSession.prototype as any, 'connect')
+      .mockRejectedValue(new Error('signaling refused'));
+
+    try {
+      await expect((stream as any).tryConnect(makeConfig())).rejects.toThrow('signaling refused');
+      expect(stream.state).toBe('error');
+    } finally {
+      connectSpy.mockRestore();
+    }
+  });
 });
 
 describe('CameraStream make-before-break', () => {
@@ -600,6 +619,26 @@ describe('CameraStream make-before-break', () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
+  });
+
+  it('counts the first packet after a cutover as packet 1, not a continuation', () => {
+    const socket = (stream as any).videoSocket;
+    const active: any = { id: 1, close: vi.fn().mockResolvedValue(undefined) };
+    const pending: any = { id: 2 };
+    (stream as any).active = active;
+    (stream as any).pending = pending;
+    // rtpCount is reset only by stop(), which a make-before-break reconnect
+    // deliberately never calls — so the counter carries across the cutover
+    // and the "RTP packets sent to ffmpeg" confirmation, which only fires at
+    // packet 1 and 100, never fires again for the life of the process. That
+    // log line is the evidence that media actually resumed on the new
+    // session, so losing it costs exactly the signal a cutover needs.
+    (stream as any).rtpCount = 4_812;
+
+    (stream as any).handleRtp(pending, Buffer.from([7]));
+
+    expect((stream as any).rtpCount).toBe(1);
+    expect(socket.send).toHaveBeenCalledTimes(1);
   });
 
   it('does not forward pending RTP before cutover', () => {

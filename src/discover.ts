@@ -1,5 +1,8 @@
 import { loadConfig } from './config.js';
 import { AlarmAuth } from './auth/alarm-auth.js';
+import { formatRow, rowWidth } from './utils/table.js';
+
+const COLUMN_WIDTHS = [20, 20, 16, 10];
 
 async function main(): Promise<void> {
   let config;
@@ -26,15 +29,15 @@ async function main(): Promise<void> {
 
   // Print table
   console.log('Cameras found:\n');
-  console.log('  %-20s %-20s %-16s %-10s', 'ID', 'Description', 'Model', 'Live View');
-  console.log('  ' + '-'.repeat(70));
+  console.log('  ' + formatRow(['ID', 'Description', 'Model', 'Live View'], COLUMN_WIDTHS));
+  console.log('  ' + '-'.repeat(rowWidth(COLUMN_WIDTHS)));
   for (const cam of cameras) {
     console.log(
-      '  %-20s %-20s %-16s %-10s',
-      cam.id,
-      cam.description,
-      cam.deviceModel,
-      cam.supportsLiveView ? 'yes' : 'no',
+      '  ' +
+        formatRow(
+          [cam.id, cam.description, cam.deviceModel, cam.supportsLiveView ? 'yes' : 'no'],
+          COLUMN_WIDTHS,
+        ),
     );
   }
 

@@ -20,8 +20,15 @@ export type StreamState = 'idle' | 'connecting' | 'streaming' | 'error';
 
 export type TokenFetcher = () => Promise<EndToEndWebrtcConfig | null>;
 
-/** How an overlap between the active and pending sessions was resolved. */
-export type OverlapOutcome = 'cutover' | 'kept' | 'fallback';
+/**
+ * How an overlap between the active and pending sessions was resolved.
+ *
+ * There is deliberately no 'fallback' member. The fallback to break-before-make
+ * is not an outcome of the overlap — it is what reconnect() does after a 'kept'
+ * outcome when activeDied is set, so it is derived from the pair rather than
+ * signalled separately.
+ */
+export type OverlapOutcome = 'cutover' | 'kept';
 
 /**
  * Manages a single camera's WebRTC-to-RTSP pipeline:
@@ -216,8 +223,13 @@ export class CameraStream {
       await this.tryConnect(config);
     }
     // Otherwise result === 'cutover': cutOver() already logged and handled
-    // everything, and activeDied cannot be true here (cutOver's own
-    // _state === 'streaming' guard means the two never coincide).
+    // everything, and neither branch above runs. activeDied is deliberately
+    // NOT consulted on this path. cutOver's `_state === 'streaming'` guard
+    // proves only that the two cannot coincide at the instant it settles —
+    // it says nothing about *here*, since the newly promoted active session
+    // can fail in the turn between that resolve and this line, setting the
+    // flag with nothing left to fall back to. handleSessionFailed() owns
+    // that case, and reconnect() resets the flag before the next overlap.
   }
 
   /** Tear down the entire pipeline. */
@@ -271,7 +283,18 @@ export class CameraStream {
 
     const session = new PeerSession(this.cameraName, this.sessionCallbacks);
     this.active = session;
-    await session.connect(config);
+    try {
+      await session.connect(config);
+    } catch (err) {
+      // start() corrects this in its own catch, but reconnect()'s fallback
+      // path calls tryConnect() directly. Without this, a rejection there
+      // leaves _state at 'connecting' with nothing negotiating — and
+      // reconnect() then refuses to run ever again, since it requires
+      // 'streaming'. The stream is stuck, and the status endpoint reports a
+      // connection attempt that does not exist.
+      this._state = 'error';
+      throw err;
+    }
   }
 
   /** Forward RTP from the active session to ffmpeg over the loopback UDP socket. */
@@ -307,6 +330,11 @@ export class CameraStream {
     this.active = session;
     this.pending = null;
     this.clearOverlapTimer();
+    // A cutover deliberately never calls stop(), which is the only other
+    // place this is reset — so without this the counter runs on from the old
+    // session and the "RTP packets sent to ffmpeg" line (packets 1 and 100)
+    // never fires again. That line is the evidence media actually resumed.
+    this.rtpCount = 0;
     this._state = 'streaming';
     log.info(
       { camera: this.cameraName, from: previous?.id, to: session.id },

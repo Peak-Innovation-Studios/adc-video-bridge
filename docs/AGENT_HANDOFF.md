@@ -24,7 +24,7 @@ baton, the baton wins.
   `tsconfig.json`, `src/`, `patches/` and `entrypoint.sh`.
 - **Working tree:** `git status --short` **and `git stash list`**. Both empty at handoff.
 - **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run`
-  **15 files / 229 tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp
+  **16 files / 236 tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp
   exception.
 - ✅ **DEPLOYED AND HEALTHY on Kaikoura** (`656baed`): two containers, go2rtc bound to
   **`192.168.7.42` only** (not `0.0.0.0`), `401` unauthenticated / `200` authenticated, HomeKit
@@ -76,11 +76,18 @@ baton, the baton wins.
    `Non-monotonic DTS ...`. Test only once video is stable, or it measures the link.
 6. *(Agent, low)* go2rtc stream auto-configuration; `src/discover.ts` already generates both blocks.
 7. *(Agent, low)* Audio passthrough. ⚠️ A camera on Proxy has no audio at all.
-8. *(Agent, trivial)* Deferred review nits: dead `'fallback'` member of `OverlapOutcome`; a false
-   comment near `cutOver`; `rtpCount` not reset across reconnect; a `tryConnect()` rejection leaving
-   `_state` `'connecting'`. ⚠️ `onFailed` fires on `'disconnected'` too, so a transient ICE blip
-   forces a full teardown — only observable against a real camera.
-9. *(Trivial)* `src/discover.ts` prints `%-20s` literally.
+8. *(Agent — BLOCKED on video, do not fix blind)* `onFailed` fires on `'disconnected'` as well as
+   `'failed'` ([`peer-session.ts:235`](../src/camera/peer-session.ts)), so a transient ICE blip
+   forces a full teardown. `'disconnected'` is the recoverable state in WebRTC and `'failed'` the
+   terminal one, so the shape of the fix (debounce, and act only if it has not recovered) is not in
+   doubt — but the timeout is a *tuning* value, and choosing it without a real camera would be
+   guessing. ⚠️ Deliberately not attempted 2026-08-05.
+   ✅ The other four deferred review nits are **DONE** (2026-08-05): dead `'fallback'` member of
+   `OverlapOutcome` removed; the false "activeDied cannot be true here" comment in `reconnect()`
+   corrected; `rtpCount` now reset in `cutOver()`; `tryConnect()` sets `_state = 'error'` on
+   rejection instead of stranding it at `'connecting'`.
+9. ✅ **DONE (2026-08-05)** — `src/discover.ts` printed `%-20s` literally (`util.format` has no
+   width syntax). Now uses a tested `src/utils/table.ts`.
 
 ### Do not touch / gotchas
 
