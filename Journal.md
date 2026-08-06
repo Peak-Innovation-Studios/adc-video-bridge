@@ -8,6 +8,105 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-05 — Cleared the deferred nits, and a push that lied about happening
+
+**Claude Code (Opus 5).** A quiet session by design: the camera still has not dialed in, so
+everything downstream of video stayed blocked and the work was the two backlog items that were not.
+Both are done. The findings worth keeping are one tooling trap and one recurring documentation
+failure — neither of which was the task.
+
+### 🔑 `git push` reported "Everything up-to-date" for a push that had just succeeded
+
+Pushing the docs commit left over from the 2026-08-04 handoff, `git push origin main` printed
+`Everything up-to-date` for a branch that was demonstrably 1 ahead. I nearly reported that an
+earlier session had already pushed it. GitHub's activity API records the push landing at
+`04:09:19Z` with that exact SHA — it was mine, and it worked.
+
+The output passes through the RTK proxy, which rewrites `git …` and compresses what comes back.
+In the same batch a `dotfiles` push rendered its real `e2ec35b..26aaa18` line, so **the corruption
+is intermittent**, which is the dangerous kind: the output is right often enough to be believed.
+
+What makes this worth a journal entry rather than a shrug is which local check *cannot* catch it.
+`git reflog show origin/<branch>` logs `update by push` both when your push sent the commits **and**
+when it merely caught a stale tracking ref up to somebody else's — identical text, opposite
+meanings. It agreed with whichever story I brought to it. Only `git ls-remote` (what is actually
+there) and the activity API (who put it there, when) can distinguish the two.
+
+Generalised and filed in `~/.claude/lessons/verification.md`: for any proxied or summarised command,
+verify the **effect** on the system, never the report of the effect. Same shape as the `wrangler`
+lesson already sitting two rows above it — deployed the wrong Worker, reported success.
+
+### Two of the four "nits" were real bugs, and both only bite during recovery
+
+The list read as trivia. Two of the four were not:
+
+- **`rtpCount` was never reset on a cutover.** `stop()` was the only reset, and make-before-break
+  deliberately never calls it — that is the entire point of the design. So the counter ran on from
+  the retired session, and the `RTP packets sent to ffmpeg` line, which fires at info level only at
+  packets 1 and 100, never fired again for the life of the process. That line is the evidence media
+  actually resumed on the new session, so the cost was precisely the signal a cutover needs.
+- **`tryConnect()` left `_state` at `'connecting'` when `connect()` rejected.** Invisible from
+  `start()`, which corrects it in its own catch. But `reconnect()`'s fallback path calls
+  `tryConnect()` **directly**, with no such catch — so a rejection there stranded the stream
+  advertising a negotiation nothing was driving, and `reconnect()` then refused to run ever again
+  because it requires `'streaming'`. A stuck stream, reported as busy.
+
+Both are only reachable while recovering from another failure, which is why neither showed up in
+normal operation. The pattern is now familiar in this codebase: **the happy path is well covered
+and the recovery paths are where the defects live.** Reading callers found these; exercising the
+entry point would not have.
+
+The RED step earned its keep on the first one. The failing test read `expected 4813 to be 1` — not
+`4812`. That digit is the proof: the counter had been incremented *past* the stale value, so the
+cutover genuinely inherited the old session's count rather than merely leaving a field unset. A test
+written after the fix would have shown a green tick and proved neither.
+
+The other two were as advertised: an unreachable `'fallback'` member of `OverlapOutcome`, and a
+comment claiming `activeDied` "cannot be true" on the cutover path. The guard proves that only at
+the instant `cutOver` settles — the newly promoted session can fail in the turn between that
+`resolve` and the read. Harmless, since both branches are guarded on `result === 'kept'`, but the
+comment asserted a stronger invariant than the code has.
+
+`src/discover.ts` was the simplest and had a second defect hiding behind the reported one:
+`console.log('%-20s', v)` does not merely fail to pad — `util.format` has no width or flag syntax at
+all, so the specifier was emitted verbatim and the values appended after the whole format string.
+Replacing it with a tested `src/utils/table.ts` exposed the separator rule as `'-'.repeat(70)` under
+a 69-character header; it is now derived from the column widths.
+
+### The review that recorded these nits is gone, and this is the second time
+
+A `grep` across `Journal.md` and `docs/` found only the baton's own one-line summary. "A false
+comment near `cutOver`" is enough to know something is wrong and not enough to know *what* — I had
+to re-derive the finding and can only say which comment I judged false, not which one the reviewer
+did.
+
+⚠️ **This is the same failure as Phase 2's SRTP landmine**, which was flagged in a Phase 0 review and
+recorded only in an SDD ledger inside a gitignored worktree deleted at merge (see the 2026-08-04
+Phases 1 & 2 entry). Different mechanism, identical outcome: **the verdict survived and the
+reasoning did not.** A deferred finding costs a session to re-derive later, so it must carry enough
+of its own evidence to be actionable cold — a summary that only a reader who already knows the
+answer can decode is not a record.
+
+### What I did not do
+
+`onFailed` fires on `'disconnected'` as well as `'failed'` (`peer-session.ts:235`), so a transient
+ICE blip forces a full teardown. `'disconnected'` is the recoverable WebRTC state and `'failed'` the
+terminal one, so the *shape* of the fix is not in doubt — debounce, act only if it has not
+recovered. The timeout is a tuning value, and choosing one with no camera to tune against would be
+guessing dressed as a fix. Left in the baton, marked blocked, with that reasoning attached rather
+than a bare "TODO" — see the section above for why.
+
+### Where it ends
+
+Build clean, **16 files / 236 tests** (up from 15 / 229), audit passing. `main` is `81718bd` and
+pushed. Kaikoura still runs `656baed`, and this commit touches `src/`, so it needs a hand rebuild to
+land — no urgency, since none of these four fixes affect the dial-in that is blocking video.
+
+The blocker is where it was: the camera streams in the Brinks app and never dials in to the
+end-to-end WebRTC signaling server. Still a support call, not a code change.
+
+---
+
 ## 2026-08-04 (Phases 1 & 2) — Deployed the split, shipped native HKSV, and crash-looped the bridge
 
 **Claude Code (Opus 5).** Phase 1 (deploy the split) and Phase 2 (native HomeKit) both landed. The
