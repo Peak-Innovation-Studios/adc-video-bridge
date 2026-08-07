@@ -107,23 +107,74 @@ an optimisation for those cameras; it is the only path.
 was inherited from the browser integration this project was ported from, which only ever saw the web
 API. It is true of that API and false of the platform.
 
-### ⚠️ The camera's local RTSP port is HTTPS, not RTSP — unfinished
+### ✅ SOLVED — the local port is RTSP tunnelled over HTTPS, and stock ffmpeg speaks it
 
-Probed 2026-08-07 from the NAS, same subnet. The port from `LocalRtspEndpoint` is open and the
-credentials are accepted, but:
+Measured 2026-08-07. **All three cameras deliver live 1080p H.264 with no cloud, no WebRTC and no
+video token** — including both ADC-V515s, which `SupportsWebRTC: false` puts permanently out of the
+bridge's reach. This is the whole command:
+
+```bash
+ffprobe -rtsp_transport https -i "rtsp://<user>:<pass>@<lan-ip>:<port>/s1"
+```
+
+🔑 **The URL scheme and the transport must disagree, and that is the entire trick.**
+`rtsps://` makes ffmpeg put `rtsps://…/s1` in the RTSP *request line*; the camera runs LIVE555, which
+cannot parse that scheme into a stream name and answers **`404 Stream Not Found`** — which reads
+exactly like a wrong path and is not one. Use `rtsp://` in the URL and carry TLS in
+`-rtsp_transport https`. ⚠️ `-rtsp_transport http` fails (`Error reading HTTP response: End of file`):
+the TLS requirement is real, not incidental.
+
+What the port actually serves, measured through a hand-written tunnel client:
 
 | probe | result |
 |---|---|
-| plaintext RTSP `OPTIONS` | connects, then **silence** (waiting for TLS) |
-| `openssl s_client` | **TLS** — self-signed `CN=www.alarm.com`, expired Dec 2024 |
-| RTSP `OPTIONS` inside TLS | **`HTTP/1.1 400 Bad Request — Bad request: [OPTIONS]`** |
-| `GET /s1` + Basic auth inside TLS | **404, not 401** — credentials accepted, path is not HTTP |
-| `ffprobe rtsp://` and `rtsps://` | `Invalid data found when processing input` |
+| `GET /` inside TLS | **200 OK** — it is an ordinary HTTPS server |
+| `GET /s1` inside TLS, plain | 404 — `/s1` is not an HTTP resource |
+| `GET /s1` + `Accept: application/x-rtsp-tunnelled` + `x-sessioncookie` | **200, `Content-Type: application/x-rtsp-tunnelled`** |
+| RTSP `OPTIONS` through the tunnel | **200** — `OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE, GET_PARAMETER, SET_PARAMETER` |
+| RTSP `DESCRIBE rtsp://…/s1` | **401**, `Digest realm="RTSP Server"` → **200 + SDP** once answered |
 
-➡️ Most likely **RTSP tunnelled over HTTP** (QuickTime scheme: `GET` with `x-sessioncookie` plus a
-`POST` reverse channel). Unproven — that is the spike, see the handoff backlog.
+SDP: `LIVE555 Streaming Media v2015.04.22`, one `m=video` track (`track1`), H.264
+`packetization-mode=1`, `profile-level-id=4D4028` (Main 4.0), 1920×1080 @ 10 fps.
+⚠️ **There is no `m=audio` line at all** — audio passthrough is not merely unimplemented here, the
+stream does not carry it. Consistent with "none of these cameras have microphones".
+
+🔎 **Two earlier readings of this port were wrong, and both failed the same way — a probe that
+omitted the protocol's own handshake was read as evidence about the target.**
+- *"`GET /s1` 404s, so the path is not HTTP"* — it 404s only **without** `Accept:
+  application/x-rtsp-tunnelled`. That header is what switches the same path into tunnel mode.
+- *"404 not 401, so the credentials were accepted"* — `GET /` returns 200 unauthenticated, so this
+  server emits 404s without ever consulting auth. Those responses said nothing about credentials.
+
+⚠️ **`Content-Base: rtsp://0.0.0.0/s1/`** comes back in the DESCRIBE — a LIVE555 quirk when the
+server does not know its own address. ffmpeg handles it; a hand-rolled client that follows
+`Content-Base` for the `SETUP` control URI will dial 0.0.0.0.
+
 🔴 **Credentials, MAC addresses, LAN/WAN IPs, camera session tokens and camera names from those
 captures must NEVER be committed.** `CLAUDE.md` forbids it and the captures are full of them.
+
+### ⚠️ What the local-RTSP spike did NOT prove — this is the adoption backlog
+
+The things that made the spike cheap are exactly the production constraints it removed:
+
+- **The endpoints came from a saved capture, not from live code.** They live on `mobile.alarm.com`,
+  a different API from the `www.alarm.com/web/api/…` surface this bridge speaks. Nothing in `src/`
+  can fetch them. That client is the single largest piece of adoption work.
+- **Endpoint stability is untested.** LAN IPs are DHCP and the ports look UPnP-assigned (sequential,
+  one per camera, mirrored onto `PublicRtspEndpoint`). Whether either survives a camera or router
+  reboot is unknown, so "fetch once at startup" may be wrong.
+- **Credential rotation is untested.** The per-camera `Login`/`Password` are unrelated to
+  `CameraSessionToken` (which does carry an expiry), but nothing establishes that they are durable.
+- **No lifecycle work at all** — no reconnect, no circuit breaker, no media watchdog, no bridge code
+  changed. The spike ran a bounded `ffmpeg -t`.
+- **go2rtc was fed by an ffmpeg *push*, exactly as the bridge does today.** Whether go2rtc can pull
+  the tunnel *natively* was not tested; it likely needs an `ffmpeg:` source with custom input args.
+- **HKSV recording is still unproven** (backlog item 4) — only ingest was demonstrated here.
+- **TLS is unauthenticated in practice**: self-signed `CN=www.alarm.com`, expired Dec 2024. ffmpeg
+  does not verify by default, which is why this works; anything that turns verification on breaks it.
+- 🔴 **`PublicRtspEndpoint` exposes these same ports on the WAN address.** Digest-auth RTSP over an
+  expired self-signed cert, reachable from the internet, almost certainly via UPnP. Not probed from
+  outside. Worth a deliberate decision rather than an inherited default.
 
 ### 🔑 `endToEndWebrtcConnectionInfo: null` does NOT mean Alarm.com dropped end-to-end WebRTC
 

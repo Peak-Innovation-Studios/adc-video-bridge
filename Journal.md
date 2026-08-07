@@ -8,6 +8,75 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-07 (later) — The spike lands: live 1080p off all three cameras, no cloud
+
+**Claude Code (Opus 5).** The morning's entry ended with local RTSP "reachable, credentialed, and
+unproven". It is now proven. All three cameras — including both ADC-V515s that `SupportsWebRTC:
+false` puts permanently beyond this bridge — deliver live 1920×1080 H.264 with **stock ffmpeg, no
+custom code, no Alarm.com call, no video token, no WebRTC**.
+
+### The whole answer
+
+```bash
+ffprobe -rtsp_transport https -i "rtsp://<user>:<pass>@<lan-ip>:<port>/s1"
+```
+
+The standing hypothesis — RTSP tunnelled over HTTP, QuickTime scheme — was right. Confirming it took
+one header: `GET /s1` with `Accept: application/x-rtsp-tunnelled` returns `200 Content-Type:
+application/x-rtsp-tunnelled` where the same `GET /s1` without it returns 404. Through that tunnel
+the port is an unremarkable LIVE555 RTSP server: `OPTIONS` → 200 with the full method set,
+`DESCRIBE` → 401 `Digest realm="RTSP Server"` → 200 and an SDP.
+
+### The trap that made ffmpeg look like it could not do this
+
+ffmpeg *could* do it the whole time. `ffprobe -rtsp_transport https -i rtsps://…` fails with **`404
+Stream Not Found`**, which reads unmistakably like a wrong path — I had already burned probes on
+`/s0`, `/live`, `/h264`, `/stream1`. It is not a path problem. `rtsps://` makes ffmpeg write
+`OPTIONS rtsps://…/s1` into the RTSP *request line*, and LIVE555 cannot parse that scheme into a
+stream name. Give ffmpeg `rtsp://` and put the TLS in the transport flag and it connects.
+
+🔑 **The URL scheme and the transport had to disagree.** Nothing in the error said so; a trace of
+what ffmpeg actually put on the wire did, in one line.
+
+### Two of yesterday's readings of this port were wrong, in the same shape
+
+- *"`GET /s1` returns 404, so the path is not an HTTP resource."* It returns 404 only without the
+  tunnel's own `Accept` header — the one thing that makes the request mean anything.
+- *"404 rather than 401, so the credentials were accepted."* `GET /` returns **200** with no auth at
+  all. This server issues 404s without consulting credentials, so that response carried no
+  information about them.
+
+Both are the same error: **a probe that omits the protocol's handshake produces a response about the
+probe, and I read it as a response about the target.** It is the near neighbour of the trap this
+repo already documents one layer up — *"did not produce a usable result" is the failure, not
+"threw"* — and I did not recognise it because the probe returned a clean, confident HTTP status.
+
+### How far it was carried
+
+Not just a `DESCRIBE`. 6-second `-c copy` captures off all three cameras (real varying imagery —
+mean luma 90–125 with frame-to-frame motion, not a black or frozen frame); then the same pull run
+**from Kaikoura** on ffmpeg 7.1.5 and pushed into the live go2rtc `front` stream, which registered
+the producer as `video, recvonly, H264`. That lands it on the downstream half already verified end
+to end on 2026-08-06. Nothing downstream has to work for the first time.
+
+### What this does not mean
+
+It is a spike, and the things that made it cheap are the production constraints it removed: the
+endpoints came from a saved capture, not from live code, and they live on `mobile.alarm.com` — an
+API `src/` cannot call. Endpoint and credential stability are both untested; the ports look
+UPnP-assigned. No lifecycle, no reconnect, no watchdog, no bridge code changed. The full list is in
+`docs/INVARIANTS.md` → "What the local-RTSP spike did NOT prove", and that list *is* the adoption
+backlog.
+
+⚠️ One finding that is not about video: `PublicRtspEndpoint` publishes these same per-camera ports on
+the WAN address — digest-auth RTSP behind a self-signed certificate that expired in Dec 2024,
+reachable from the internet, almost certainly created by UPnP. Not probed from outside. It deserves
+a decision rather than continued inheritance.
+
+The Brinks defect is unchanged and still real. It is simply no longer in the critical path.
+
+---
+
 ## 2026-08-07 — The founding premise is wrong: these cameras have local RTSP
 
 **Claude Code (Opus 5).** David ran Proxyman against the Brinks iOS app. What came back reframes the

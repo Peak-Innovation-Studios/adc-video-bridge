@@ -16,20 +16,30 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-07 — 🔴 **THE README'S FOUNDING PREMISE IS WRONG.** Alarm.com's **mobile** API
-  exposes per-camera **local RTSP endpoints with credentials**; their app streams
-  `connectionType: DIRECT, protocolType: RTSP`, no WebRTC. ⚠️ **ADC-V515 reports
-  `SupportsWebRTC: false`** — this bridge can never serve the two indoor cameras by any WebRTC fix.
-  Video is still down; the Brinks defect is real but no longer the only route.
-  📖 Narrative: `Journal.md` 2026-08-07.
+- **Updated:** 2026-08-07 (later) — ✅ **THE LOCAL-RTSP SPIKE LANDED.** All three cameras deliver live
+  **1920×1080 H.264 with stock ffmpeg**, no cloud, no WebRTC, no video token — including both
+  ADC-V515s, which `SupportsWebRTC: false` puts permanently beyond this bridge. Carried as far as a
+  live push into the go2rtc `front` stream from Kaikoura, so it meets the downstream half already
+  verified 2026-08-06. 📖 Narrative: `Journal.md` 2026-08-07 (later).
+  ```
+  ffprobe -rtsp_transport https -i "rtsp://<user>:<pass>@<lan-ip>:<port>/s1"
+  ```
+  🔑 **The scheme and the transport must disagree** — `rtsps://` fails with `404 Stream Not Found`,
+  which reads exactly like a wrong path and is not one. Full detail + the two probe readings it
+  overturned: [`INVARIANTS.md`](INVARIANTS.md) → "the local port is RTSP tunnelled over HTTPS".
+  ⚠️ **It is a spike, not an integration.** What it skipped is written down as a list, and that list
+  *is* the backlog: [`INVARIANTS.md`](INVARIANTS.md) → "What the local-RTSP spike did NOT prove".
 - **Branch / HEAD:** `git fetch && git status --short && git log --oneline -1`. `main` deploys BY HAND
   over SSH; every `docker-compose` command needs David's sudo password, so an agent cannot rebuild.
   💡 "Do I need a rebuild?" — derive it from the `COPY` lines, not from any summary. The bridge image
   takes `package.json`, `package-lock.json`, `tsconfig.json`, `src/`, `entrypoint.sh`; go2rtc takes
   `patches/` plus a pinned commit. ⚠️ Match by PREFIX (`^src/`), not `^src/$` — that anchor silently
   reports "no change".
-- **Working tree:** `git status --short` **and `git stash list`**. Both empty at handoff, both repos
-  in sync with origin. ⚠️ The NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate* clone.
+- **Working tree:** `git status --short` **and `git stash list`**. 🔴 **UNCOMMITTED, and it is MINE
+  (Claude, this session) — docs only, no `src/` change, no rebuild warranted:** `README.md`,
+  `Journal.md`, `docs/INVARIANTS.md`, `docs/AGENT_HANDOFF.md`. Left uncommitted deliberately —
+  David had not asked for a commit. Review and commit as one unit; nothing else is in flight.
+  ⚠️ The NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate* clone.
 - **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **16 files / 237
   tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
 - ✅ **Bridge RUNNING, deployed build current.** Expected healthy-but-blocked reading: `state: idle`,
@@ -68,24 +78,40 @@ baton, the baton wins.
   PATH — full path required. ⚠️ **Do not `setsid`/`nohup` detach long runs; hold the ssh connection.**
 - **⬆️ Omar-L merged #26 and #29; six PRs still open.** 🔴 **Do NOT "sync fork"** — it conflicts in 3
   files and gains nothing. Wait for all six, reconcile once: [`UPSTREAM.md`](UPSTREAM.md).
-- **Whose turn:** **AGENT — start the local-RTSP spike (item 1).** Brinks' technician session is still
-  pending and their defect is real, but it is no longer the critical path, and it cannot help the two
-  ADC-V515s at all.
+- **Whose turn:** **DAVID — one decision, then it is the agent's again (item 1).** The spike proved
+  the video path; what it cannot decide is whether this project *pivots* to local RTSP (and what
+  then happens to the WebRTC half). Item 1a is the fastest route back to working video and needs
+  David's sudo regardless.
 
 ### What's left (priority order)
 
-1. 🔴 **(Agent — SPIKE, the highest-value work available) Reach the cameras' LOCAL RTSP.**
-   `mobile.alarm.com` hands out `LocalRtspEndpoint` + credentials per camera; the port is reachable
-   from the NAS and the credentials are accepted, but it serves **HTTPS, not RTSP** — probably
-   HTTP-tunnelled RTSP. Full probe results: [`INVARIANTS.md`](INVARIANTS.md) → "the camera's local
-   RTSP port is HTTPS". 🔑 If it lands it removes the cloud dependency, the token refresh, the proxy
-   demotion and this entire outage — and it is the **only** possible path for the two ADC-V515s.
-   ⚠️ Treat as a spike: no credentials, MACs, IPs, tokens or camera names into the repo, ever.
+1. 🔴 **Adopt local RTSP — the spike is done, the integration is not.**
+   ⚠️ Read [`INVARIANTS.md`](INVARIANTS.md) → "What the local-RTSP spike did NOT prove" first; it is
+   the full list, and these are its two largest items.
+   - **1a. (David — needs sudo; fastest path to video today)** Point go2rtc at a camera directly
+     instead of waiting on the bridge. ⚠️ go2rtc's *native* RTSP client was **not** tested against
+     the tunnel and probably cannot do it — expect to need an `ffmpeg:` source carrying
+     `-rtsp_transport https`. That is a `config/go2rtc.yaml` edit plus a restart, no rebuild.
+     🔎 An agent can draft and validate the source string; only the restart needs David.
+   - **1b. (Agent — the real work)** A `mobile.alarm.com` client. The endpoints and per-camera
+     credentials exist **only** on that API — a legacy RPC-over-HTTP surface (`Action=` form POSTs)
+     that nothing in `src/` speaks — and today they come from a saved capture, not from live code.
+     ⚠️ Endpoint stability is untested: LAN IPs are DHCP and the ports look UPnP-assigned, so
+     "fetch once at startup" may be wrong. Credential rotation is untested too.
+   🔑 If this lands it removes the cloud dependency, the token refresh, the proxy demotion and this
+   entire outage — and it is the **only** possible path for the two ADC-V515s.
+   ⚠️ No credentials, MACs, IPs, tokens or camera names into the repo, ever.
 2. 🔴 **(BRINKS — virtual technician session being scheduled; still a real defect on their side)** Alarm.com issues no
    end-to-end WebRTC config for **any** camera on the account (3 of 3, two models, two of them added
    2026-08-06 and never touched by our code). Proxy still works, so the cameras are online. Nothing
-   in our code can fix it, nothing further is worth measuring from our side, and everything else is
-   blocked behind it. Full evidence in the blocker above.
+   in our code can fix it and nothing further is worth measuring from our side. ⚠️ **No longer the
+   critical path** — item 1 routes around it entirely, and cannot help the two V515s regardless.
+   Full evidence in the blocker above.
+
+2b. 🔴 **(David — a decision, not code)** `PublicRtspEndpoint` publishes each camera's port on the
+   **WAN** address: digest-auth RTSP behind a self-signed certificate that expired Dec 2024,
+   reachable from the internet, almost certainly created by UPnP. Found in passing 2026-08-07; not
+   probed from outside. Worth deciding on deliberately rather than inheriting.
 3. 🔴 *(Agent — BLOCKED on video; both need a real camera to pick a timeout)* **Two observability
    defects, found 2026-08-06. Both let a dead stream look calm:**
    - **No media watchdog after `SESSION_STARTED`** — a trackless session is recorded as a *success*
