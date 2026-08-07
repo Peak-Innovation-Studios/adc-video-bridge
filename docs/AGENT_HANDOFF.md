@@ -16,19 +16,26 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-07 (later) — ✅ **THE LOCAL-RTSP SPIKE LANDED.** All three cameras deliver live
-  **1920×1080 H.264 with stock ffmpeg**, no cloud, no WebRTC, no video token — including both
-  ADC-V515s, which `SupportsWebRTC: false` puts permanently beyond this bridge. Carried as far as a
-  live push into the go2rtc `front` stream from Kaikoura, so it meets the downstream half already
-  verified 2026-08-06. 📖 Narrative: `Journal.md` 2026-08-07 (later).
+- **Updated:** 2026-08-07 (evening) — ✅ **VIDEO IS BACK, AND THE OUTAGE IS OVER.** All three cameras
+  are live in HomeKit over their own **local RTSP**, pulled by go2rtc's **native** client and muxed to
+  HKSV in process — **zero ffmpeg in the media path**. The two ADC-V515s work for the first time ever;
+  `SupportsWebRTC: false` had put them permanently beyond this bridge. The Alarm.com WebRTC blocker is
+  real and unchanged, and no longer on the critical path.
+  📖 Narrative: `Journal.md` 2026-08-07 (evening).
+- **How it works now:** `src/rtsp/tunnel-relay.ts` presents each camera's RTSP-over-HTTPS tunnel as
+  ordinary RTSP on a published port; go2rtc pulls it. Enabled per camera by a `localRtsp` block.
+  🔑 A camera with `localRtsp` is **excluded from the WebRTC path** — both publish into the same
+  go2rtc stream name, and running both interleaves rather than erroring.
+  Design + the six traps: [`INVARIANTS.md`](INVARIANTS.md) → "Two ways to feed go2rtc from the
+  tunnel". Runbook: [`SETUP.md`](SETUP.md) → "Step 2b".
+- 🔑 **RUN THIS BEFORE DEBUGGING ANY CONFIG PROBLEM — it is new, and it exists because of this
+  session's mistakes:**
   ```
-  ffprobe -rtsp_transport https -i "rtsp://<user>:<pass>@<lan-ip>:<port>/s1"
+  npm run verify:config -- /volume1/docker/adc-video-bridge
   ```
-  🔑 **The scheme and the transport must disagree** — `rtsps://` fails with `404 Stream Not Found`,
-  which reads exactly like a wrong path and is not one. Full detail + the two probe readings it
-  overturned: [`INVARIANTS.md`](INVARIANTS.md) → "the local port is RTSP tunnelled over HTTPS".
-  ⚠️ **It is a spike, not an integration.** What it skipped is written down as a list, and that list
-  *is* the backlog: [`INVARIANTS.md`](INVARIANTS.md) → "What the local-RTSP spike did NOT prove".
+  Checks the seams BETWEEN `config.yaml`, `go2rtc.yaml` and `.env`, which no single file's validation
+  can see: unpublished relay ports, `homekit:` blocks with no matching stream, duplicate YAML keys,
+  empty stream sources, pin rules, wildcard binds. Exits non-zero on anything blocking.
 - **Branch / HEAD:** `git fetch && git status --short && git log --oneline -1`. `main` deploys BY HAND
   over SSH; every `docker-compose` command needs David's sudo password, so an agent cannot rebuild.
   💡 "Do I need a rebuild?" — derive it from the `COPY` lines, not from any summary. The bridge image
@@ -36,108 +43,100 @@ baton, the baton wins.
   `patches/` plus a pinned commit. ⚠️ Match by PREFIX (`^src/`), not `^src/$` — that anchor silently
   reports "no change".
 - **Working tree:** `git status --short` **and `git stash list`**. Nothing of mine is in flight;
-  this session's work is committed and pushed (verified with `git ls-remote origin refs/heads/main`,
-  not with the printed push output — RTK has reported "Everything up-to-date" for a push that
-  succeeded). ⚠️ Confirm with the commands, not with this line.
-  🔴 **`src/` CHANGED this session** (`src/rtsp/tunnel-relay.ts`, `src/config.ts`, `src/index.ts`),
-  so the next deploy **DOES need `--build`** — unlike every previous handoff, where a pull was enough.
+  committed and pushed (verify with `git ls-remote origin refs/heads/main`, **not** the printed push
+  output — RTK has reported "Everything up-to-date" for a push that succeeded).
   ⚠️ Pushing does NOT deploy. The NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate*
-  clone and must be pulled and rebuilt by hand.
-- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **17 files / 261
+  clone, pulled and rebuilt by hand. This NAS has **Compose v1** (`docker-compose`, hyphen).
+- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **19 files / 286
   tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
-  🔑 The relay's three structural guards were **mutation-checked**, not just written: reverting each
-  one kills its own test and leaves the rest green — which is the point, because the base64 bug
-  passes 8 of 12 tests including the whole handshake.
-- ✅ **Bridge RUNNING, deployed build current.** Expected healthy-but-blocked reading: `state: idle`,
-  `tokenFailures` climbing to 3 over ~20 min, then `tokenCircuit: open` — the breaker working, not a
-  fault. ⚠️ A stopped bridge and a broken camera look identical from outside; confirm it is up first:
-  `curl -s -o /dev/null -w '%{http_code}' http://192.168.7.42:9090/` → `401` means running.
-  ⚠️ Never infer the deployed version from the host `dist/` (the Dockerfile builds *inside* the image):
-  `sudo docker exec adc-video-bridge ls dist/utils/table.js`. `src/` has since changed by **comments
-  only** — no rebuild warranted. This NAS has **Compose v1** (`docker-compose`, hyphen).
-- ✅ **The whole DOWNSTREAM half is verified end to end (2026-08-06)** with a synthetic colour-bars
-  stream, no camera needed: RTSP ingest → go2rtc → HAP → live SRTP (`fmt=homekit proto=rtp medias=3`)
-  → picture in the Home app. 🔑 So when video returns, **nothing downstream has to work for the first
-  time.** Reusable recipe: [`INVARIANTS.md`](INVARIANTS.md) → "Smoke-test the whole downstream half".
-- 🔑 **THE STATUS ENDPOINT IS THE FIRST THING TO CHECK — no sudo needed.**
+  🔑 The relay's structural guards were **mutation-checked**, not just written: reverting each kills
+  its own test and leaves the rest green. ⚠️ Calibration — the base64 bug passes **8 of 12** tests
+  including the entire handshake. A passing handshake test proves nothing here.
+- ✅ **DEPLOYED AND HEALTHY.** Confirmed by measurement, not inference: three relays `listening: true`
+  having served real traffic, `producers=1` on all three go2rtc streams, and all three HomeKit
+  accessories advertising over mDNS (`dns-sd -B _hap._tcp local`) and paired.
+  ⚠️ `connections: 0` and `consumers: 0` on an idle system is **correct** — go2rtc pulls lazily and
+  disconnects when nothing is watching. It is not a fault.
+- 🔑 **THE STATUS ENDPOINT IS THE FIRST THING TO CHECK — no sudo needed.** Now includes `relays`.
   ```
-  curl -s --user "$STATUS_USERNAME:$STATUS_PASSWORD" http://192.168.7.42:9090/ | jq
+  ssh kaikoura 'cd /volume1/docker/adc-video-bridge && set -a && . ./.env && set +a && \
+    curl -s --user "$STATUS_USERNAME:$STATUS_PASSWORD" http://192.168.7.42:9090/'
   ```
-  (credentials in `.env` on the NAS). Per-camera state plus, for **each** breaker, its own circuit,
-  failure count and cooldown. 🔎 Three of its fields are routinely misread — see
-  [`INVARIANTS.md`](INVARIANTS.md) → "Reading the status endpoint" before drawing conclusions.
-- 🔴 **BLOCKER (Alarm.com's side, real, but NOT the only route): no end-to-end WebRTC for web/API
-  clients.** All 3 cameras return `endToEndWebrtcConnectionInfo: null` with `errorEnum: 0`. Ruled out
-  by measurement — per-camera state, our code (bridge stopped ~55 min), CGNAT, symmetric NAT (STUN:
-  same mapped port to 4 destinations), camera power-cycle, and browser environment.
-  🔑 **ARTIFACT TO READ OUT:** their **own web player** calls the same endpoint and gets the same null
-  block, then falls back to Janus proxy and times out at 3 min — *"The stream has timed out."*
-  Their **mobile** API mints signalling tokens for the same camera at the same moment.
-  ➡️ **ASK:** *"clear/reset the Direct-vs-Proxy determination for these cameras — and why does the web
-  API issue no e2e config when the mobile API does?"*
+  ⚠️ `$STATUS_USERNAME` only expands if `.env` is sourced, and there is **no `jq` on the NAS** — pipe
+  it back to the Mac. 🔎 Three of its fields are routinely misread — see [`INVARIANTS.md`](INVARIANTS.md)
+  → "Reading the status endpoint" before drawing conclusions.
+- 🔴 **TRIAGE RULE, learned the hard way: port 9090 REFUSING means the BRIDGE IS DOWN — stop looking
+  at relay ports.** A config error and an unpublished port are indistinguishable from a client; both
+  present as `Connection refused` on 8561-8563 with nothing mentioning the real cause. If 9090 answers
+  401 but a relay port refuses, *then* suspect `ADC_BRIDGE_RTSP_PORTS`.
+  ⚠️ The bridge can crash-loop **after** logging three healthy `RTSP tunnel relay listening` lines and
+  a successful Alarm.com login. The logs read as a clean startup right up to the fatal.
+- ⚠️ **The Alarm.com WebRTC defect is unchanged and still real** — all 3 cameras return
+  `endToEndWebrtcConnectionInfo: null` with `errorEnum: 0`, their own web player times out at 3
+  minutes, their mobile API mints signalling tokens for the same camera at the same moment. It is
+  simply **no longer blocking anything**. Full evidence in `Journal.md` 2026-08-06/07.
   🔴 **Do NOT build the Janus proxy path** ([`INVARIANTS.md`](INVARIANTS.md); Omar-L#2).
 - 🔴 **NEVER commit** credentials, MACs, LAN/WAN IPs, session tokens, camera **names** or IDs from the
-  Proxyman captures. `CLAUDE.md` forbids it; camera names were committed in error earlier this session
-  and removed from current content (they remain in history).
-- **Sudo-free diagnosis on Kaikoura:** the status endpoint above, then `/usr/local/bin/node
-  dist/probe.js <cameraId>` after `set -a; . ./.env; set +a`. 🔎 `node` is NOT on a non-interactive ssh
-  PATH — full path required. ⚠️ **Do not `setsid`/`nohup` detach long runs; hold the ssh connection.**
-- **⬆️ Omar-L merged #26 and #29; six PRs still open.** 🔴 **Do NOT "sync fork"** — it conflicts in 3
-  files and gains nothing. Wait for all six, reconcile once: [`UPSTREAM.md`](UPSTREAM.md).
-- **Whose turn:** 🔴 **DAVID — item 1a, and it is the only thing between here and working video.**
-  The code is written, tested and live-fired against real cameras; what is left is filling in three
-  config files with values only David holds (they are in the Proxyman captures) and one
-  `docker-compose up -d --build`, which needs his sudo. Everything else in the backlog is optional
-  or follows from that.
+  Proxyman captures. ⚠️ **A leak check that reports without BLOCKING is not a check** — a fixture
+  carrying the real camera username was committed this session while the scan printed the finding and
+  the commit proceeded anyway. Camera names were committed in error earlier too. Both remain in history.
+- **Whose turn:** **DAVID**, and nothing is urgent — video works. Two things worth doing when
+  convenient: **(a)** power-cycle one camera so the agent can re-read its endpoint (that single test
+  decides whether item 3 is needed at all), and **(b)** confirm HKSV actually *records* on motion,
+  which is still unproven.
 
 ### What's left (priority order)
 
-1. 🔴 **Adopt local RTSP — the spike is done, the integration is not.**
-   ⚠️ Read [`INVARIANTS.md`](INVARIANTS.md) → "What the local-RTSP spike did NOT prove" first; it is
-   the full list, and these are its two largest items.
-   - ✅ **1a′. DONE — the relay is BUILT and live-fired.** `src/rtsp/tunnel-relay.ts`, enabled per
-     camera with a `localRtsp` block. Measured against a real camera and the real pinned go2rtc:
-     **61.9 s of continuous 1920×1080 H.264, 17.3 MB through go2rtc's own muxer, 0 ffmpeg
-     processes.** Recipe: [`SETUP.md`](SETUP.md) → "Step 2b". Design + the five traps:
-     [`INVARIANTS.md`](INVARIANTS.md) → "Two ways to feed go2rtc from the tunnel", Option B.
-   - 🔴 **1a. (DAVID — needs sudo; this is the whole remaining gap to live video.)** Fill in
-     `config/config.yaml` (`localRtsp` per camera), `.env` (`ADC_BRIDGE_RTSP_PORTS`) and
-     `config/go2rtc.yaml` (stream URL with the CAMERA's credentials), then
-     **`docker-compose up -d --build`** — `src/` changed, so this one does need a rebuild.
-     ⚠️ The endpoint values are in David's Proxyman captures and must never reach the repo.
-     💡 Option A (an `ffmpeg:` source, config-only, no rebuild) is still documented as the zero-code
-     fallback if the relay misbehaves.
-   - **1b. (Agent — but the case for it WEAKENED 2026-08-07)** A `mobile.alarm.com` client. The
-     endpoints and per-camera credentials exist **only** on that API — a legacy RPC-over-HTTP surface
-     (`Action=` form POSTs) that nothing in `src/` speaks — so today they are typed in by hand.
-     🔑 **A camera's port survived an IP change**, so ports are device-assigned rather than
-     lease-derived, and the IPs are now pinned by DHCP reservation. Both halves of the endpoint are
-     therefore stable under the drift we have actually observed.
-     ❓ **One unknown left, and it decides this item: does the port survive a camera REBOOT?**
-     One power-cycle answers it. If it holds, this client may never be needed.
-     ⚠️ It is also not cheap: the captures hold no login exchange, so it starts with obtaining one,
-     and carries account-lockout risk. Do the power-cycle test first.
-     💡 What IS worth building either way: a consistency check that `localRtsp.listenPort`,
-     `ADC_BRIDGE_RTSP_PORTS` and the `go2rtc.yaml` stream names agree — today they can disagree
-     silently and the stream just reports offline.
-   - **1c. (David — after 1a)** **Pair the two new cameras by hand in the Home app.** Each go2rtc
-     camera is its own HomeKit accessory with its own PIN; nothing is inherited from Homebridge or
-     from the already-paired one.
-   🔑 If this lands it removes the cloud dependency, the token refresh, the proxy demotion and this
-   entire outage — and it is the **only** possible path for the two ADC-V515s.
-   ⚠️ No credentials, MACs, IPs, tokens or camera names into the repo, ever.
-2. 🔴 **(BRINKS — virtual technician session being scheduled; still a real defect on their side)** Alarm.com issues no
+1. ✅ **DONE — local RTSP is ADOPTED and deployed.** All three cameras live in HomeKit via
+   `src/rtsp/tunnel-relay.ts`, go2rtc's native client, in-process HKSV, no ffmpeg. Both V515s work.
+   Runbook: [`SETUP.md`](SETUP.md) → "Step 2b". Design + traps: [`INVARIANTS.md`](INVARIANTS.md).
+   ⚠️ What it still does NOT do: fetch its own endpoints (item 3), and prove HKSV *records* (item 2).
+
+2. 🔴 **(David + Agent — the highest-value thing left) Verify HKSV actually RECORDS on motion.**
+   Live view is proven; motion-triggered *recording* is not, and it is the reason this project exists.
+   ✅ `homekitMotion: true` is set and `src/index.ts` calls `go2rtc.setMotion()`, so the trigger path
+   is wired — ⚠️ but a comment in the deployed `go2rtc.yaml` still claims "nothing calls that yet",
+   which is **stale**; do not re-diagnose from it.
+   Look for `[hksv] flush fragment` with sequential `seq` and ~67 KB fragments, an `hksv` consumer
+   alongside `homekit` from one producer, and **no ffmpeg beyond the bridge's own**. Compare CPU
+   against the spike's 0.7% / ~22 MB.
+
+3. **(Agent — and one test by David may DELETE this item)** A `mobile.alarm.com` client, so endpoints
+   and per-camera credentials are fetched rather than typed in by hand. They exist **only** on that
+   API — a legacy RPC-over-HTTP surface (`Action=` form POSTs) nothing in `src/` speaks.
+   🔑 **A camera's port survived an IP change**, so ports are device-assigned rather than
+   lease-derived, and the IPs are now pinned by DHCP reservation. Both halves are stable under the
+   drift actually observed.
+   ❓ **The one unknown that decides it: does the port survive a camera REBOOT?** One power-cycle,
+   then re-read that camera's endpoint. If it holds, this client may never be needed.
+   ⚠️ Not cheap: the captures contain **no login exchange**, so it starts with obtaining one, and it
+   carries account-lockout risk. Do the power-cycle test first.
+   🔎 What the captures DO show: `GetAllFences` authenticates with a persistent `Password` +
+   `DeviceUid` and **no** session token, which suggests a durable device credential rather than a
+   per-session login. If that holds there may be no login flow to reverse at all.
+
+4. **(David — a decision, not code)** `PublicRtspEndpoint` publishes each camera's port on the **WAN**
+   address: digest-auth RTSP behind a self-signed certificate that expired Dec 2024, reachable from
+   the internet, almost certainly created by UPnP. Not probed from outside. Worth deciding on
+   deliberately rather than inheriting. ⚠️ More pointed now that local RTSP is the production path.
+
+5. **(Agent, small)** `api.local_auth: false` in the deployed `config/go2rtc.yaml`; the example and
+   `SECURITY_AUDIT.md` both specify `true`. Exposure is nil today only because `api.listen` is the LAN
+   address — so the protection comes from the bind address, not the setting. `npm run verify:config`
+   warns about it.
+
+6. **(Agent, small)** Make the pre-commit leak scan **BLOCK** rather than report. A fixture carrying
+   the real camera username was committed this session while the scan printed the finding and the
+   commit proceeded anyway.
+
+7. ⚠️ **(BRINKS — technician session still pending; a real defect on their side, no longer blocking)** Alarm.com issues no
    end-to-end WebRTC config for **any** camera on the account (3 of 3, two models, two of them added
    2026-08-06 and never touched by our code). Proxy still works, so the cameras are online. Nothing
    in our code can fix it and nothing further is worth measuring from our side. ⚠️ **No longer the
    critical path** — item 1 routes around it entirely, and cannot help the two V515s regardless.
    Full evidence in the blocker above.
 
-2b. 🔴 **(David — a decision, not code)** `PublicRtspEndpoint` publishes each camera's port on the
-   **WAN** address: digest-auth RTSP behind a self-signed certificate that expired Dec 2024,
-   reachable from the internet, almost certainly created by UPnP. Found in passing 2026-08-07; not
-   probed from outside. Worth deciding on deliberately rather than inheriting.
-3. 🔴 *(Agent — BLOCKED on video; both need a real camera to pick a timeout)* **Two observability
+8. *(Agent — now UNBLOCKED, a real camera is available)* **Two observability
    defects, found 2026-08-06. Both let a dead stream look calm:**
    - **No media watchdog after `SESSION_STARTED`** — a trackless session is recorded as a *success*
      (`breaker.recordSuccess()`), resetting the breaker that should catch it, and `state` sits at
@@ -146,22 +145,17 @@ baton, the baton wins.
      breaker opens (`VIDEO_TOKEN_FAILURE_THRESHOLD = 3` × `VIDEO_TOKEN_REFRESH_MS = 600s`).
    🔑 Both are the trap `README.md` documents one layer up — *"did not produce a usable result"* is
    the failure, not *"threw"* — never applied downward. 📖 Reasoning: `Journal.md` 2026-08-06.
-4. *(Agent — do this when video returns)* **Verify HKSV actually RECORDS without transcoding.**
-   ⚠️ Live view and the whole downstream path are already verified (2026-08-06, synthetic stream);
-   what remains unproven is motion-triggered *recording*:
-   `[hksv] flush fragment` lines with sequential `seq` and ~67 KB fragments, an `hksv` consumer
-   alongside `homekit` from one producer, and **no ffmpeg beyond the bridge's one**. Compare against
-   the spike's 0.7% CPU / ~22 MB.
-5. *(David — after 4 verifies)* **Remove the Homebridge camera accessory** and its config. Until
+9. *(David — after item 2 verifies)* **Remove the Homebridge camera accessory** and its config. Until
    then both accessories exist deliberately — that is the documented cutover.
-6. **(David — 1 min)** `/volume1/homebridge/config.json` is **775**; world-read remains, and
+10. **(David — 1 min)** `/volume1/homebridge/config.json` is **775**; world-read remains, and
    `INVARIANTS.md` sets 600 as the standard. ⚠️ Re-check after any Homebridge settings change: the
    volume's default ACL is 0777 and the UI rewrites the file.
-7. *(Agent, low)* **A/B `-reorder_queue_size 0`** — production logs show repeated
+11. *(Agent, low)* **A/B `-reorder_queue_size 0`** — production logs show repeated
    `Non-monotonic DTS ...`. Test only once video is stable, or it measures the link.
-8. *(Agent, low)* go2rtc stream auto-configuration; `src/discover.ts` already generates both blocks.
-9. *(Agent, low)* Audio passthrough. ⚠️ A camera on Proxy has no audio at all.
-10. *(Agent — BLOCKED on video, do not fix blind)* `onFailed` fires on `'disconnected'` as well as
+12. *(Agent, low)* go2rtc stream auto-configuration; `src/discover.ts` already generates both blocks.
+13. *(Agent, low)* Audio passthrough. ⚠️ **The local RTSP stream has no `m=audio` line at all**,
+    so on this path audio is not merely unimplemented — the camera does not send it.
+14. *(Agent — WebRTC path only; unblocked but low value now)* `onFailed` fires on `'disconnected'` as well as
    `'failed'` ([`peer-session.ts:235`](../src/camera/peer-session.ts)), so a transient ICE blip
    forces a full teardown. `'disconnected'` is the recoverable state in WebRTC and `'failed'` the
    terminal one, so the shape of the fix (debounce, and act only if it has not recovered) is not in
@@ -171,8 +165,6 @@ baton, the baton wins.
    `OverlapOutcome` removed; the false "activeDied cannot be true here" comment in `reconnect()`
    corrected; `rtpCount` now reset in `cutOver()`; `tryConnect()` sets `_state = 'error'` on
    rejection instead of stranding it at `'connecting'`.
-11. ✅ **DONE (2026-08-05)** — `src/discover.ts` printed `%-20s` literally (`util.format` has no
-    width syntax). Now uses a tested `src/utils/table.ts`.
 
 ### Do not touch / gotchas
 

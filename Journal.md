@@ -8,6 +8,81 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-07 (evening) — Video is back, on local RTSP, with no ffmpeg in the media path
+
+**Claude Code (Opus 5).** All three cameras are live in HomeKit over their own local RTSP, pulled by
+go2rtc's native client, muxed to HKSV in process. **Zero ffmpeg processes.** The two ADC-V515s —
+which `SupportsWebRTC: false` put permanently beyond this bridge — are working for the first time.
+
+The relay (`src/rtsp/tunnel-relay.ts`) is ~330 lines and it worked on the first live-fire. Everything
+that went wrong afterwards went wrong at a **seam**: between a test double and the real thing,
+between two config files, between a container and the host. That is the whole story of this session.
+
+### Three test doubles, three hidden bugs, one lesson
+
+The unit suite went 12/12 green and then the relay failed on the first packet against a real camera.
+Twice more after that. Each time the bug lived exactly where a double stood in:
+
+| double | what it hid |
+|---|---|
+| plain-TCP `connect` injected for TLS | **Node refuses `servername` for an IP literal** and throws outright. A camera address is always an IP, so *every* tunnel failed at connect time. The TLS function was never executed by any test. |
+| no test for reachable-but-silent | the open-timeout callback destroyed a socket declared with `const` **below** it. When the timer won the race — an unreachable camera, which is what the timeout is *for* — it threw a `ReferenceError` out of a timer callback, where nothing catches it. Under `restart: unless-stopped`, one offline camera would have crash-looped the bridge. |
+| `CameraManager.start` mocked to resolve | the real one **throws on an empty list**. Routing every `localRtsp` camera away from the WebRTC half produces an empty list legitimately. It crash-looped production. |
+
+🔑 **A green suite is a claim about everything except the layer the tests replaced.** The seam exists
+where the real thing is awkward, and awkward is where the bugs are. Every fix now has a test whose
+double is *faithful* — the `CameraManager` mock throws on empty exactly as the real one does — and
+each was mutation-checked.
+
+⚠️ The base64 bug is the one to remember for calibration: reverting it fails **4 of 12** tests and
+**8 still pass, including the entire handshake**. A passing handshake test would have been pure
+reassurance.
+
+### The third failure is the interesting one, because everything worked
+
+The bridge crash-looped with all three relays bound and logging
+`RTSP tunnel relay listening`, and Alarm.com login succeeding. The logs read as a clean startup right
+up to the fatal. From the outside — `docker-compose ps`, the Home app — it looked like it was up.
+🔑 **Triage rule that would have saved twenty minutes: port 9090 refusing means the BRIDGE is down.
+Stop looking at relay ports.** A config error and an unpublished port are indistinguishable from a
+client.
+
+### Two YAML traps, both silent, both structural
+
+- **A missing `cameras:` key.** The pasted camera block became a root-level sequence beside mappings —
+  invalid YAML. `loadConfig()` threw, `main()` exited 1, `restart: unless-stopped` did the rest. My
+  fault: the block I generated was indented to sit *under* the key and I never included the key.
+- **`streams:` defined twice** in `go2rtc.yaml` — a new block added rather than the old one replaced.
+  YAML forbids duplicate keys; one silently wins. The old one did, so go2rtc saw a single stream with
+  an empty source and **skipped the other two HomeKit accessories entirely**, logging one `warn` line.
+  Symptom three layers away: "the cameras don't show up in the Home app."
+
+Both produced `Connection refused` or a missing accessory — never anything mentioning YAML. That is
+what `npm run verify:config` now exists for: it checks the seams *between* `config.yaml`,
+`go2rtc.yaml` and `.env`, which no single file's own validation can see. Written from these exact
+mistakes, it reproduced the duplicate-`streams:` blocker on its first run against the live deployment.
+
+### A measured finding that may delete a backlog item
+
+A camera moved LAN address the same day as the capture and **kept its per-camera port exactly**. So
+the port is device-assigned, not derived from the DHCP lease, despite looking UPnP-ish. David then
+pinned the IPs with DHCP reservations. Both halves of the endpoint are therefore stable under the
+drift we have actually observed — which substantially weakens the case for a `mobile.alarm.com`
+client. ❓ One unknown left: whether the port survives a camera **reboot**. One power-cycle answers it.
+
+⚠️ Diagnosis note: a camera at a stale address **hangs**, it does not refuse — and the stale ARP entry
+still shows the old address with the right MAC, actively pointing at the wrong host. Find it by MAC
+after a ping sweep, or scan the subnet for the port.
+
+### One thing I got wrong that is not a bug
+
+I committed the real per-camera RTSP username in a test fixture. My leak scan **caught it** and my
+command structure committed anyway — the scan ran, the guard did not. Low severity (a stock shared
+account name, no password beside it) but `CLAUDE.md` forbids it and it is in history now. A check
+that reports without blocking is not a check.
+
+---
+
 ## 2026-08-07 (later) — The spike lands: live 1080p off all three cameras, no cloud
 
 **Claude Code (Opus 5).** The morning's entry ended with local RTSP "reachable, credentialed, and
