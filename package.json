@@ -18,7 +18,8 @@
     "audit:prod": "node scripts/audit-production.mjs",
     "clean": "rm -rf dist",
     "probe": "tsx src/probe.ts",
-    "ws-probe": "tsx src/ws-probe.ts"
+    "ws-probe": "tsx src/ws-probe.ts",
+    "verify:config": "tsx src/verify-config-cli.ts"
   },
   "engines": {
     "node": ">=20.0.0"
