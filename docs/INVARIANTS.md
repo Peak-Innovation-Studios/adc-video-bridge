@@ -97,6 +97,37 @@ Proxy is their documented **failure fallback** (3-min timeout, no audio), so tha
 ⚠️ **Do not build the Janus proxy path in response to this symptom.** Full reasoning, sources, and
 why upstream `Omar-L#2`'s "older camera models" framing is incomplete: `Journal.md` 2026-08-03.
 
+### ⚠️ `supportsAudio: false` is NOT a proxy indicator on this account
+
+It sits inside `proxyWebrtcConnectionInfo`, which makes it look like a property of the proxy path
+(Alarm.com's KB does say Proxy carries no audio). But **none of the cameras on this account have
+microphones**, so the field reads `false` on any transport. It cannot distinguish them.
+Offered as a test on 2026-08-06 and withdrawn. The 3-minute `proxyStreamTimeoutTime: 180` is the
+only usable proxy signature — nothing camera-side ends a stream at exactly 180s.
+
+### ❓ OPEN: which transport the Brinks MOBILE APP uses is UNCONFIRMED
+
+The web player is settled — it gets `endToEndWebrtcConnectionInfo: null` and times out at 3 minutes
+(measured 2026-08-06, from their own client). The **app** streamed past 4 minutes with no visible
+interruption, which is *suggestive* of a different transport and **is not evidence**:
+
+🔴 **"No stutter observed" does not distinguish the two hypotheses.** Mobile players buffer 2–3
+seconds, so a proxy session that silently re-establishes at 180s is **invisible however carefully
+you watch**. An unobserved event and a non-event look identical from outside.
+
+Standing judgement (not a measurement): **probably proxy with a seamless reconnect.** A better
+reconnect UX in a phone app than in a web player is an ordinary asymmetry; Alarm.com deliberately
+granting Direct to one of its own first-party clients and withholding it from the other is not.
+
+⚠️ Do not spend more time on this from our side — every remaining discriminator is either invisible
+(the app's traffic is behind probable certificate pinning) or smaller than a playback buffer.
+➡️ It is a question **for Brinks**, answerable from their logs: *"your web player times out at 3
+minutes while your app streams continuously — different transports, or does the app re-establish
+silently?"*
+🔑 It does not affect the case either way. *App on proxy too* ⇒ no client gets Direct.
+*App on Direct* ⇒ their app gets Direct and their own website does not. Both are valid complaints,
+and the web-player artifact stands independently of both.
+
 ### 🔎 Reading the status endpoint — three fields that are routinely misread
 
 Measured 2026-08-06, each of these cost time in one session:

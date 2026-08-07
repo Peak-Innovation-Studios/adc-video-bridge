@@ -79,6 +79,11 @@ baton, the baton wins.
   ➡️ **Positive evidence, not a failure report:** their client *succeeds* and still gets a null field,
   so it cannot be pinned on our code, the network, or a browser setting.
   ➡️ **THE ASK:** *"clear/reset the Direct-vs-Proxy connection-type determination for these cameras."*
+  ➡️ **SECOND QUESTION FOR THEM:** *"your web player times out at 3 min on this account while your
+  mobile app streams continuously — different transports, or does the app re-establish silently?"*
+  ❓ The app's transport is **UNCONFIRMED and not worth more of our time** — "no stutter observed" is
+  not evidence, since a buffer hides a reconnect. Either answer is a valid complaint and neither
+  weakens the web-player artifact. Detail: [`INVARIANTS.md`](INVARIANTS.md) → "OPEN: which transport".
   🔑 The demotion looks **self-perpetuating** — it clears when a Direct attempt succeeds, but nothing
   can attempt Direct: their clients use proxy, ours needs the config the demotion withholds.
   🔴 **Do NOT build the Janus proxy path** ([`INVARIANTS.md`](INVARIANTS.md); Omar-L#2). It is the
