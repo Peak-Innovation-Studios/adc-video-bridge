@@ -34,8 +34,8 @@ api:
 srtp:
   listen: "\${GO2RTC_BIND}:8443"
 streams:
-  front: rtsp://vieweruser:AAAA1111BBBB2222@\${GO2RTC_BIND}:8561/s1
-  backyard: rtsp://vieweruser:CCCC3333DDDD4444@\${GO2RTC_BIND}:8562/s1
+  front: rtsp://camuser:AAAA1111BBBB2222@\${GO2RTC_BIND}:8561/s1
+  backyard: rtsp://camuser:CCCC3333DDDD4444@\${GO2RTC_BIND}:8562/s1
 homekit:
   front:
     pin: "37030214"
@@ -84,14 +84,14 @@ describe('verifyConfigs — the failures that actually happened', () => {
   });
 
   it('catches a homekit block with no matching stream', () => {
-    const orphan = GO2RTC.replace('  backyard: rtsp://vieweruser:CCCC3333DDDD4444@${GO2RTC_BIND}:8562/s1\n', '');
+    const orphan = GO2RTC.replace('  backyard: rtsp://camuser:CCCC3333DDDD4444@${GO2RTC_BIND}:8562/s1\n', '');
     const blocking = run({ go2rtcYaml: orphan }).blocking.join('\n');
     expect(blocking).toMatch(/homekit "backyard" has no matching stream/);
     expect(blocking).toMatch(/missing stream: backyard/);
   });
 
   it('catches an empty stream source', () => {
-    const empty = GO2RTC.replace('front: rtsp://vieweruser:AAAA1111BBBB2222@${GO2RTC_BIND}:8561/s1', 'front: ""');
+    const empty = GO2RTC.replace('front: rtsp://camuser:AAAA1111BBBB2222@${GO2RTC_BIND}:8561/s1', 'front: ""');
     expect(run({ go2rtcYaml: empty }).blocking.join('\n')).toMatch(/stream "front" has an empty source/);
   });
 
