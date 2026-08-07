@@ -198,6 +198,18 @@ export function verifyConfigs(input: VerifyInput): VerifyResult {
       );
       continue;
     }
+    // 🔴 A pin that parsed as a NUMBER is a YAML problem, not a value problem:
+    // go2rtc unmarshals `pin` into a string field, and an unquoted 8-digit pin
+    // becomes an int. Worse, an unquoted pin with a LEADING ZERO silently loses
+    // it — `09526946` parses as 9526946, seven digits. Quote it, or write it
+    // with dashes, which can never be read as a number.
+    if (typeof block?.pin === 'number') {
+      blocking.push(
+        `homekit "${key}" pin parsed as a NUMBER — quote it or write it as XXX-XX-XXX. ` +
+          'go2rtc expects a string, and an unquoted leading zero is dropped silently.',
+      );
+      continue;
+    }
     const raw = block?.pin === undefined ? '' : String(block.pin);
     if (!raw) {
       blocking.push(`homekit "${key}" has no pin — go2rtc falls back to its published default, leaving the accessory unprotected.`);

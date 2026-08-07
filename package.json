@@ -19,7 +19,8 @@
     "clean": "rm -rf dist",
     "probe": "tsx src/probe.ts",
     "ws-probe": "tsx src/ws-probe.ts",
-    "verify:config": "tsx src/verify-config-cli.ts"
+    "verify:config": "tsx src/verify-config-cli.ts",
+    "homekit:label": "tsx src/homekit-label-cli.ts"
   },
   "engines": {
     "node": ">=20.0.0"

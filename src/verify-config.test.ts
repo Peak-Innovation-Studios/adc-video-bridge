@@ -132,6 +132,18 @@ describe('verifyConfigs — HomeKit pin rules', () => {
     expect(run({ go2rtcYaml: reused }).blocking.join('\n')).toMatch(/reuses the pin/);
   });
 
+  it('rejects a pin that YAML parsed as a number', () => {
+    // Unquoted digits become an int, which go2rtc cannot unmarshal into its
+    // string field — and an unquoted leading zero is dropped silently.
+    const unquoted = GO2RTC.replace('pin: "37030214"', 'pin: 37030214');
+    expect(run({ go2rtcYaml: unquoted }).blocking.join('\n')).toMatch(/parsed as a NUMBER/);
+  });
+
+  it('accepts a dashed unquoted pin, which YAML cannot read as a number', () => {
+    const dashed = GO2RTC.replace('pin: "37030214"', 'pin: 370-30-214');
+    expect(run({ go2rtcYaml: dashed }).blocking).toEqual([]);
+  });
+
   it('rejects a missing pin, which would fall back to the published default', () => {
     const nopin = GO2RTC.replace('    pin: "37030214"\n', '');
     expect(run({ go2rtcYaml: nopin }).blocking.join('\n')).toMatch(/has no pin/);
