@@ -88,8 +88,10 @@ baton, the baton wins.
   🔎 **Before reading any of it, see [`INVARIANTS.md`](INVARIANTS.md) → "Reading the status endpoint"
   and "`node` … is NOT on a non-interactive ssh PATH".** Three status fields and three host quirks
   each cost time on 2026-08-06; all six are recorded there rather than repeated here.
-- **⬆️ Eight upstream PRs and two issues open at Omar-L**, all awaiting his review. Nothing blocked on
-  us. See [`UPSTREAM.md`](UPSTREAM.md).
+- **⬆️ Omar-L is merging: #26 and #29 landed 2026-08-06, six PRs still open.** Nothing blocked on us.
+  🔴 **Do NOT "sync fork" as they land** — it conflicts in 3 files and gains no content (our `main` is
+  effectively a superset). Wait until all six merge, then reconcile once. Full reasoning and the
+  dry-run result: [`UPSTREAM.md`](UPSTREAM.md).
 - **Whose turn:** **BRINKS.** The support call happened 2026-08-06 and they are scheduling a
   **virtual technician session**. Nothing is on us and nothing is on David until that session — take
   the 3-of-3 table above to it, plus `errorEnum: 0` beside a null e2e block, which says their service

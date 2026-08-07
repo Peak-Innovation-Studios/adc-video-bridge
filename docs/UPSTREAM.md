@@ -15,24 +15,45 @@ most of what made the baton long. The baton keeps a one-line pointer and the cur
 
 ---
 
-## Open pull requests
+## Pull requests — 2 merged, 6 open (as of 2026-08-06)
 
 Omar-L asked for help making the fork more stable. All of these branch off `upstream/main` and
-contain **no internal docs**.
+contain **no internal docs**. ⚠️ Status goes stale — re-check with
+`gh pr list --repo Omar-L/adc-video-bridge --state all`.
 
-| PR | branch | note |
-|---|---|---|
-| [#23](https://github.com/Omar-L/adc-video-bridge/pull/23) | `upstream-fix/webrtc-track-subscription` | placeholder track wins a one-shot guard |
-| [#24](https://github.com/Omar-L/adc-video-bridge/pull/24) | `upstream-fix/stale-ffmpeg-exit` | **stacked on #23** — conflicts standalone |
-| [#26](https://github.com/Omar-L/adc-video-bridge/pull/26) | `upstream-fix/pin-actions` | CI hardening |
-| [#28](https://github.com/Omar-L/adc-video-bridge/pull/28) | `upstream-fix/network-hardening` | 🔴 **carries `6a4f5a4`** — must not ship without it |
-| [#29](https://github.com/Omar-L/adc-video-bridge/pull/29) | `upstream-fix/log-redaction` | redaction, log level, shutdown |
-| [#30](https://github.com/Omar-L/adc-video-bridge/pull/30) | `upstream-fix/config-validation` | validation + `ADC_*_FILE` |
-| [#31](https://github.com/Omar-L/adc-video-bridge/pull/31) | `upstream-fix/container-hardening` | non-root, read-only, digest pins |
-| [#32](https://github.com/Omar-L/adc-video-bridge/pull/32) | `upstream-fix/circuit-breaker` | closes `#9`; verified 108→136 tests on THEIR tree |
+| PR | branch | status | note |
+|---|---|---|---|
+| [#23](https://github.com/Omar-L/adc-video-bridge/pull/23) | `upstream-fix/webrtc-track-subscription` | open | placeholder track wins a one-shot guard |
+| [#24](https://github.com/Omar-L/adc-video-bridge/pull/24) | `upstream-fix/stale-ffmpeg-exit` | open | **stacked on #23** — conflicts standalone |
+| [#26](https://github.com/Omar-L/adc-video-bridge/pull/26) | `upstream-fix/pin-actions` | ✅ **MERGED** | CI hardening |
+| [#28](https://github.com/Omar-L/adc-video-bridge/pull/28) | `upstream-fix/network-hardening` | open | 🔴 **carries `6a4f5a4`** — must not ship without it |
+| [#29](https://github.com/Omar-L/adc-video-bridge/pull/29) | `upstream-fix/log-redaction` | ✅ **MERGED** | redaction, log level, shutdown |
+| [#30](https://github.com/Omar-L/adc-video-bridge/pull/30) | `upstream-fix/config-validation` | open | validation + `ADC_*_FILE` |
+| [#31](https://github.com/Omar-L/adc-video-bridge/pull/31) | `upstream-fix/container-hardening` | open | non-root, read-only, digest pins |
+| [#32](https://github.com/Omar-L/adc-video-bridge/pull/32) | `upstream-fix/circuit-breaker` | open | closes `#9`; verified 108→136 tests on THEIR tree |
 
 ⚠️ **#28 and #23/#24 all touch `camera-stream.ts`**, and **#32 touches `alarm-event-listener.ts` and
 `camera-manager.ts`** — whichever merges last needs a trivial rebase.
+
+### 🔴 Do NOT "sync fork" as PRs merge — wait until all six land, then reconcile once
+
+Measured 2026-08-06 with `git merge-tree main upstream/main` (a dry run that touches nothing):
+merging `upstream/main` **conflicts** in `.github/workflows/ci.yml`, `src/index.ts` and
+`src/utils/logger.ts`. GitHub's "Sync fork" button cannot do it.
+
+🔑 **The conflicts exist BECAUSE the PRs were split correctly.** Each branches off `upstream/main`
+rather than being carved out of our `main`, which is what makes them reviewable — and what leaves
+the same change existing twice as two unrelated commits descending from one ancestor. Git cannot
+know they are the same intent. This is the standing tax of a fork that upstreams its own work; it
+will recur on **every** merged PR, and more are coming that touch the same files.
+
+**There is nothing to gain content-wise.** Tree-to-tree, our `main` is effectively a superset:
+`logger.ts` is `+15/-0` (we contain their version entirely), `index.ts` `+82/-9`, `ci.yml` `+10/-1`.
+Syncing buys only a reconnected history for future merges.
+
+⚠️ Before any reconciliation, inspect the **9 lines in `index.ts` and 1 in `ci.yml`** that upstream
+has and we do not — they are the only places their tree carries something ours lacks, and a
+`-s ours` merge would silently discard them. Not yet checked.
 
 ## Open issues and other contributions
 
