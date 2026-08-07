@@ -79,6 +79,11 @@ baton, the baton wins.
   🔴 **Do NOT build the Janus proxy path in response** — [`INVARIANTS.md`](INVARIANTS.md); tracked
   upstream as Omar-L#2. ⚠️ Its janus fields are in the payload **always**; the signal is the pair,
   proxy SET **and** e2e null.
+  ✅ **Network path ELIMINATED (2026-08-06).** The Brinks app streams on cellular **and on the same
+  WiFi** where Alarm.com's website fails, so two first-party clients disagree on one network — which
+  no DNS/firewall/routing theory explains. `INVARIANTS.md` says to suspect the network when
+  first-party clients differ; suspected, tested, ruled out. What remains is **transport**: app uses
+  the Janus proxy (works), website and our bridge use end-to-end (no config, fails).
 - ⚠️ **`patches/go2rtc-hap-auth-exempt.patch` is load-bearing.** Without it HomeKit cannot pair at
   all while go2rtc API auth is on. Applied with plain `git apply` in `Dockerfile.go2rtc`, so a patch
   that stops applying **fails the build loudly**. 🔴 Report upstream on

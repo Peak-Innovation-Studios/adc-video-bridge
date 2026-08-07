@@ -85,6 +85,37 @@ documented failure fallback (3-minute sessions, no audio) while Direct is not pr
 ⚠️ Per `INVARIANTS.md` the janus fields are present *always*; the signal is the **pair** — proxy set
 **and** e2e null.
 
+### The last alternative, eliminated by one question
+
+`INVARIANTS.md` carries a rule from an earlier session: *if Alarm.com's own web player and phone app
+disagree, suspect the **network path**, because two first-party clients differing cannot be explained
+by any server-side or protocol theory.* With the app streaming and the website failing for every
+camera, that rule was pointing somewhere I was not looking.
+
+It resolved in one question: **the app works on cellular *and* on the same WiFi the failing website
+is on.** Two first-party clients disagreeing on one network cannot be a network fault — the app
+proves that path to Alarm.com is fine. So the rule was right to send us there, and the answer is no.
+
+What remains is the only explanation consistent with all of it — the clients use **different
+transports**, and only one is broken:
+
+| client | transport | result |
+|---|---|---|
+| Brinks app | Janus proxy relay | ✅ works |
+| Alarm.com website | end-to-end WebRTC | ❌ fails |
+| our bridge | end-to-end WebRTC | ❌ fails |
+
+Everything that fails is on the path with no config; everything that works is on the path that has
+one. ⚠️ Worth closing before the technician session: confirm the website also fails in a second
+browser, so a WebRTC-blocking extension cannot be used to dismiss the report. Our own evidence does
+not depend on it — the null block comes from a Node script with no browser involved.
+
+🔑 **Considered inspecting the mobile app's API calls to explain the split, and did not.** It would
+need mitmproxy plus a CA on the phone, and Alarm.com very likely pins certificates, so the likely
+outcome is an hour of setup and no data. The cheaper instrument was the *failing* client: browser
+devtools on their website needs no tooling at all. **When two clients disagree, instrument the one
+that is broken — it is where the error detail lives, and it is usually the one you already control.**
+
 ### ⚠️ Two of my own diagnostic guards failed silently, in the same shape
 
 Both were background watchers, and both printed a confident conclusion having measured nothing:
