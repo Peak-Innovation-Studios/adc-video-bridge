@@ -8,6 +8,94 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-07 — The founding premise is wrong: these cameras have local RTSP
+
+**Claude Code (Opus 5).** David ran Proxyman against the Brinks iOS app. What came back reframes the
+whole project, and retires two days of diagnosis as having been aimed at the wrong layer.
+
+### The mobile app uses a different API, and it hands out local RTSP endpoints
+
+The app does not use `www.alarm.com/web/api/…` at all. It talks to **`mobile.alarm.com`** — a legacy
+RPC-over-HTTP surface where every call is a form POST with an `Action` parameter
+(`GetLiveVideoStream`, `GetAllSirenDevices`, `GetWebsocketAuthToken`, …), returning XML or JSON.
+
+Its camera-list response carries, **per camera**:
+
+```
+LocalRtspEndpoint      rtsp://<user>:<pass>@<lan-ip>:<port>/s1
+PublicRtspEndpoint     rtsp://<user>:<pass>@<wan-ip>:<port>/s1
+VpnRtspEndpoint        rtsp://<user>:<pass>@videostreamna02.alarm.com:8090/s1
+Login / Password       per-camera credentials
+SupportsRtspStreaming  true
+DirectConnectionMayWork true
+```
+
+And the app's own telemetry (posted to `adc-vid-rstats.devicetask.com`) says what it actually did:
+
+```
+protocolType     "RTSP"        connectionType "DIRECT"
+isWebRTCFallback false         errorType      "NONE"
+```
+
+🔑 **`README.md` opens by asserting cameras "cannot be accessed directly via RTSP — ADC re-provisions
+camera credentials via OpenVPN and randomly generates root passwords."** Every architectural choice
+in this repo descends from that sentence: WebRTC, the signalling client, werift, the 600s token
+refresh, three circuit breakers. **It is wrong** — or rather, it was true of the *web* API, which is
+all the browser integration we ported from could see. The design inherited that horizon.
+
+### The detail that changes the roadmap regardless
+
+| camera | model | `SupportsWebRTC` |
+|---|---|---|
+| doorbell | ADC-V723 | `true` |
+| indoor A | ADC-V515 | **`false`** |
+| indoor B | ADC-V515 | **`false`** |
+
+**The two indoor cameras cannot do WebRTC at all.** This bridge could never have served them — not
+today, not after Brinks fix anything. For those models local RTSP is not a nicer path, it is the
+only one.
+
+### What is NOT established — this is a spike, not a fix
+
+The local port is reachable from the NAS and the credentials are accepted, but **it is not plain
+RTSP**:
+
+- TCP connects, then silence to a plaintext `OPTIONS` — it is waiting for a TLS handshake.
+- It **is** TLS: self-signed `CN=www.alarm.com`, expired Dec 2024.
+- RTSP inside the TLS tunnel returns **`HTTP/1.1 400 Bad Request — Bad request: [OPTIONS]`**. So the
+  listener is an HTTP server, not RTSP.
+- `GET /s1` over TLS with Basic auth returns **404, not 401** — credentials accepted, path not an
+  HTTP resource.
+- `rtsp://` and `rtsps://` both fail in ffprobe with `Invalid data found`.
+
+Reading: probably **RTSP tunnelled over HTTP** (the QuickTime scheme — `GET` with `x-sessioncookie`
+plus a `POST` reverse channel). Unproven. That is the next piece of work, and it is real work.
+
+### 🔑 Three of my own conclusions died today, and the pattern is the same one
+
+- *"The app streaming proves e2e WebRTC works somewhere"* — no. The app was not using WebRTC at all.
+- *"`rlyviduscc` = the Relayed tier"* — no. It serves `GetSavedClipThumbnail.ashx`. I inferred a
+  protocol tier from three letters of a hostname.
+- *"The mobile API issues e2e credentials the web API withholds"* — true, but I read it as the app's
+  transport when the app never used those tokens; they exist for its *fallback* path.
+
+Each was me explaining the app's behaviour using the only mechanism I had modelled. **The app had a
+capability that was not in my model, so every explanation built from that model was wrong in the same
+direction.** The fix was not better reasoning about WebRTC — it was one capture showing what the app
+actually does.
+
+### Where it ends
+
+Video is still down and the Brinks complaint still stands: their **web** API returns
+`endToEndWebrtcConnectionInfo: null` while their **mobile** API mints signalling tokens for the same
+camera. That is a real defect on their side.
+
+But it is no longer the only route. Local RTSP is reachable, credentialed, and the only possible path
+for two of the three cameras. ⚠️ No credentials, MAC addresses, IP addresses, tokens or camera names
+from those captures appear in this repo, and they must not.
+
+---
+
 ## 2026-08-06 (later) — Two new cameras answered in a minute what a day of probing could not
 
 **Claude Code (Opus 5).** David pushed back: *"we had the video working with the spike, it's not the
@@ -22,9 +110,9 @@ camera:
 
 | name | model | e2e | proxy | errorEnum |
 |---|---|---|---|---|
-| Front | ADC-V723 | **null** | set | 0 |
-| Kitchen | ADC-V515 | **null** | set | 0 |
-| Sunroom | ADC-V515 | **null** | set | 0 |
+| doorbell | ADC-V723 | **null** | set | 0 |
+| indoor A | ADC-V515 | **null** | set | 0 |
+| indoor B | ADC-V515 | **null** | set | 0 |
 
 **3 of 3, two models, and two of them connected that day.** The bridge is configured for one camera
 and has never contacted the other two. No mechanism we control reaches them.

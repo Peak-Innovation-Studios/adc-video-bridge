@@ -11,7 +11,9 @@ Alarm.com Homebridge plugin.
 
 ## Problem
 
-Alarm.com cameras cannot be accessed directly via RTSP — ADC re-provisions camera credentials via OpenVPN and randomly generates root passwords. The existing [homebridge-node-alarm-dot-com](https://github.com/node-alarm-dot-com/homebridge-node-alarm-dot-com) plugin handles alarm panel/sensors/locks but has no video support.
+Alarm.com cameras cannot be accessed directly via RTSP **through the web API** — ADC re-provisions camera credentials via OpenVPN and randomly generates root passwords.
+
+> 🔴 **Corrected 2026-08-07.** This premise, which the whole architecture rests on, is true only of the *web* API this project was ported from. Alarm.com's **mobile** API returns per-camera `LocalRtspEndpoint` / `PublicRtspEndpoint` values with working credentials and `SupportsRtspStreaming: true`, and their iOS app streams `connectionType: DIRECT`, `protocolType: RTSP`. The local port is not plain RTSP (it is HTTPS, probably HTTP-tunnelled RTSP) and reaching it is unfinished work — but "cannot be accessed" is wrong. ⚠️ Note also that **ADC-V515 cameras report `SupportsWebRTC: false`**, so the WebRTC design below cannot serve them at all. See `docs/INVARIANTS.md` and `Journal.md` 2026-08-07. The existing [homebridge-node-alarm-dot-com](https://github.com/node-alarm-dot-com/homebridge-node-alarm-dot-com) plugin handles alarm panel/sensors/locks but has no video support.
 
 ## Solution
 

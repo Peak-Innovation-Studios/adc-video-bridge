@@ -89,6 +89,42 @@ actually be set up. Only the bridge reaching **`sessionStarted`** proves that.
 when it is a statement about ADC's own plumbing.** Before concluding anything about the camera from
 this payload, ask which component the field actually describes.
 
+### 🔴 The MOBILE API exposes local RTSP endpoints — the web API does not. The README premise was wrong
+
+Measured 2026-08-07 by proxying the Brinks iOS app. `mobile.alarm.com` is a **separate, legacy
+RPC-over-HTTP API** — form POSTs with an `Action` parameter, returning XML or JSON. It is not the
+`www.alarm.com/web/api/…` surface this project uses.
+
+Its camera list returns, per camera: `LocalRtspEndpoint`, `PublicRtspEndpoint`, `VpnRtspEndpoint`,
+`Login`, `Password`, `SupportsRtspStreaming: true`, `DirectConnectionMayWork: true`. The app's own
+telemetry then reports `protocolType: "RTSP"`, `connectionType: "DIRECT"`, `isWebRTCFallback: false`.
+
+⚠️ **`SupportsWebRTC` is per MODEL and it is FALSE on ADC-V515.** Only the ADC-V723 reports `true`.
+So the WebRTC bridge **cannot ever serve a V515**, no matter what Alarm.com fixes. Local RTSP is not
+an optimisation for those cameras; it is the only path.
+
+🔑 **Do not "correct" the README back.** Its original claim — cameras cannot be reached over RTSP —
+was inherited from the browser integration this project was ported from, which only ever saw the web
+API. It is true of that API and false of the platform.
+
+### ⚠️ The camera's local RTSP port is HTTPS, not RTSP — unfinished
+
+Probed 2026-08-07 from the NAS, same subnet. The port from `LocalRtspEndpoint` is open and the
+credentials are accepted, but:
+
+| probe | result |
+|---|---|
+| plaintext RTSP `OPTIONS` | connects, then **silence** (waiting for TLS) |
+| `openssl s_client` | **TLS** — self-signed `CN=www.alarm.com`, expired Dec 2024 |
+| RTSP `OPTIONS` inside TLS | **`HTTP/1.1 400 Bad Request — Bad request: [OPTIONS]`** |
+| `GET /s1` + Basic auth inside TLS | **404, not 401** — credentials accepted, path is not HTTP |
+| `ffprobe rtsp://` and `rtsps://` | `Invalid data found when processing input` |
+
+➡️ Most likely **RTSP tunnelled over HTTP** (QuickTime scheme: `GET` with `x-sessioncookie` plus a
+`POST` reverse channel). Unproven — that is the spike, see the handoff backlog.
+🔴 **Credentials, MAC addresses, LAN/WAN IPs, camera session tokens and camera names from those
+captures must NEVER be committed.** `CLAUDE.md` forbids it and the captures are full of them.
+
 ### 🔑 `endToEndWebrtcConnectionInfo: null` does NOT mean Alarm.com dropped end-to-end WebRTC
 
 Proxy is their documented **failure fallback** (3-min timeout, no audio), so that `null` means

@@ -16,10 +16,12 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-06 (later) — **SETTLED: the outage is account-wide on Alarm.com's side.** Not
-  the camera, not our code — 3 of 3 cameras return a null e2e block, including two connected that day
-  that our bridge has never contacted. Brinks are scheduling a virtual technician session.
-  Narrative: `Journal.md` 2026-08-06 (later).
+- **Updated:** 2026-08-07 — 🔴 **THE README'S FOUNDING PREMISE IS WRONG.** Alarm.com's **mobile** API
+  exposes per-camera **local RTSP endpoints with credentials**, and their app streams
+  `connectionType: DIRECT, protocolType: RTSP` — no WebRTC. ⚠️ **ADC-V515 reports
+  `SupportsWebRTC: false`**, so this bridge can never serve the two indoor cameras by any WebRTC fix.
+  Video is still down and the Brinks complaint still stands, but it is no longer the only route.
+  Narrative: `Journal.md` 2026-08-07.
 - **Branch / HEAD:** `git fetch && git status -sb && git log --oneline -1`. `main` deploys by hand.
   💡 "Do I need a rebuild?" is answerable from git — but **derive it from the `COPY` lines, not from
   this summary.** As of 2026-08-06 the bridge image takes `package.json`, `package-lock.json`,
@@ -63,11 +65,11 @@ baton, the baton wins.
 
   | ruled out | how |
   |---|---|
-  | per-camera state | 3 of 3 cameras `e2e: null`, 2 models; Kitchen/Sunroom added that day |
+  | per-camera state | 3 of 3 cameras `e2e: null`, 2 models; the two indoor cameras added that day |
   | our code | bridge stopped ~55 min → unchanged; new cameras never contacted by us |
   | CGNAT | real routable public IP, not `100.64/10` |
   | **symmetric NAT** | **STUN from the NAS: same mapped port to 4 destinations, port-preserving** |
-  | camera demotion | **Kitchen power-cycled — still `null`** (this DID clear it on 2026-08-03) |
+  | camera demotion | **an indoor camera power-cycled — still `null`** (this DID clear it on 2026-08-03) |
   | browser / client env | their own player gets the same answer — artifact below |
 
   🔑 **THE ARTIFACT TO READ OUT**, captured from Alarm.com's own web player:
@@ -112,12 +114,19 @@ baton, the baton wins.
 
 ### What's left (priority order)
 
-1. 🔴 **(BRINKS — virtual technician session being scheduled; gates everything)** Alarm.com issues no
+1. 🔴 **(Agent — SPIKE, the highest-value work available) Reach the cameras' LOCAL RTSP.**
+   `mobile.alarm.com` hands out `LocalRtspEndpoint` + credentials per camera; the port is reachable
+   from the NAS and the credentials are accepted, but it serves **HTTPS, not RTSP** — probably
+   HTTP-tunnelled RTSP. Full probe results: [`INVARIANTS.md`](INVARIANTS.md) → "the camera's local
+   RTSP port is HTTPS". 🔑 If it lands it removes the cloud dependency, the token refresh, the proxy
+   demotion and this entire outage — and it is the **only** possible path for the two ADC-V515s.
+   ⚠️ Treat as a spike: no credentials, MACs, IPs, tokens or camera names into the repo, ever.
+2. 🔴 **(BRINKS — virtual technician session being scheduled; still a real defect on their side)** Alarm.com issues no
    end-to-end WebRTC config for **any** camera on the account (3 of 3, two models, two of them added
    2026-08-06 and never touched by our code). Proxy still works, so the cameras are online. Nothing
    in our code can fix it, nothing further is worth measuring from our side, and everything else is
    blocked behind it. Full evidence in the blocker above.
-2. 🔴 *(Agent — BLOCKED on video; both need a real camera to pick a timeout)* **Two observability
+3. 🔴 *(Agent — BLOCKED on video; both need a real camera to pick a timeout)* **Two observability
    defects, found 2026-08-06. Both let a dead stream look calm:**
    - **No media watchdog after `SESSION_STARTED`** — a trackless session is recorded as a *success*
      (`breaker.recordSuccess()`), resetting the breaker that should catch it, and `state` sits at
@@ -126,22 +135,22 @@ baton, the baton wins.
      breaker opens (`VIDEO_TOKEN_FAILURE_THRESHOLD = 3` × `VIDEO_TOKEN_REFRESH_MS = 600s`).
    🔑 Both are the trap `README.md` documents one layer up — *"did not produce a usable result"* is
    the failure, not *"threw"* — never applied downward. 📖 Reasoning: `Journal.md` 2026-08-06.
-3. *(Agent — do this when video returns)* **Verify HKSV actually RECORDS without transcoding.**
+4. *(Agent — do this when video returns)* **Verify HKSV actually RECORDS without transcoding.**
    ⚠️ Live view and the whole downstream path are already verified (2026-08-06, synthetic stream);
    what remains unproven is motion-triggered *recording*:
    `[hksv] flush fragment` lines with sequential `seq` and ~67 KB fragments, an `hksv` consumer
    alongside `homekit` from one producer, and **no ffmpeg beyond the bridge's one**. Compare against
    the spike's 0.7% CPU / ~22 MB.
-4. *(David — after 3 verifies)* **Remove the Homebridge camera accessory** and its config. Until
+5. *(David — after 4 verifies)* **Remove the Homebridge camera accessory** and its config. Until
    then both accessories exist deliberately — that is the documented cutover.
-5. **(David — 1 min)** `/volume1/homebridge/config.json` is **775**; world-read remains, and
+6. **(David — 1 min)** `/volume1/homebridge/config.json` is **775**; world-read remains, and
    `INVARIANTS.md` sets 600 as the standard. ⚠️ Re-check after any Homebridge settings change: the
    volume's default ACL is 0777 and the UI rewrites the file.
-6. *(Agent, low)* **A/B `-reorder_queue_size 0`** — production logs show repeated
+7. *(Agent, low)* **A/B `-reorder_queue_size 0`** — production logs show repeated
    `Non-monotonic DTS ...`. Test only once video is stable, or it measures the link.
-7. *(Agent, low)* go2rtc stream auto-configuration; `src/discover.ts` already generates both blocks.
-8. *(Agent, low)* Audio passthrough. ⚠️ A camera on Proxy has no audio at all.
-9. *(Agent — BLOCKED on video, do not fix blind)* `onFailed` fires on `'disconnected'` as well as
+8. *(Agent, low)* go2rtc stream auto-configuration; `src/discover.ts` already generates both blocks.
+9. *(Agent, low)* Audio passthrough. ⚠️ A camera on Proxy has no audio at all.
+10. *(Agent — BLOCKED on video, do not fix blind)* `onFailed` fires on `'disconnected'` as well as
    `'failed'` ([`peer-session.ts:235`](../src/camera/peer-session.ts)), so a transient ICE blip
    forces a full teardown. `'disconnected'` is the recoverable state in WebRTC and `'failed'` the
    terminal one, so the shape of the fix (debounce, and act only if it has not recovered) is not in
@@ -151,7 +160,7 @@ baton, the baton wins.
    `OverlapOutcome` removed; the false "activeDied cannot be true here" comment in `reconnect()`
    corrected; `rtpCount` now reset in `cutOver()`; `tryConnect()` sets `_state = 'error'` on
    rejection instead of stranding it at `'connecting'`.
-10. ✅ **DONE (2026-08-05)** — `src/discover.ts` printed `%-20s` literally (`util.format` has no
+11. ✅ **DONE (2026-08-05)** — `src/discover.ts` printed `%-20s` literally (`util.format` has no
     width syntax). Now uses a tested `src/utils/table.ts`.
 
 ### Do not touch / gotchas
