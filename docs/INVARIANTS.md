@@ -244,9 +244,18 @@ The things that made the spike cheap are exactly the production constraints it r
 - **The endpoints came from a saved capture, not from live code.** They live on `mobile.alarm.com`,
   a different API from the `www.alarm.com/web/api/…` surface this bridge speaks. Nothing in `src/`
   can fetch them. That client is the single largest piece of adoption work.
-- **Endpoint stability is untested.** LAN IPs are DHCP and the ports look UPnP-assigned (sequential,
-  one per camera, mirrored onto `PublicRtspEndpoint`). Whether either survives a camera or router
-  reboot is unknown, so "fetch once at startup" may be wrong.
+- ⚠️ **Endpoint stability, PARTLY settled 2026-08-07 — and the two halves behave differently.**
+  - 🔑 **The PORT survived an IP change.** A camera moved to a new address the same day and kept its
+    per-camera port exactly, so the port is **device-assigned, not derived from the DHCP lease** —
+    despite looking UPnP-ish (sequential, one per camera, mirrored onto `PublicRtspEndpoint`).
+  - **The IP does drift**, and drifted within hours of the capture. Now pinned by DHCP reservation,
+    which is a fix outside this repo and invisible to it.
+  - ❓ **Still untested: whether the port survives a CAMERA REBOOT.** A lease change is not a reboot.
+    This is the one remaining unknown that decides whether a `mobile.alarm.com` client is needed at
+    all, and it costs one power-cycle to answer.
+  ⚠️ **A camera at a stale address presents as a hang, not a refusal** — TCP times out and `ffprobe`
+  sits there. Find it by MAC from the capture in `arp -an` after a ping sweep, or scan the subnet for
+  the port; the stale ARP entry for the OLD address survives and will point you at the wrong host.
 - **Credential rotation is untested.** The per-camera `Login`/`Password` are unrelated to
   `CameraSessionToken` (which does carry an expiry), but nothing establishes that they are durable.
 - ✅ **RESOLVED — the relay is built** (`src/rtsp/tunnel-relay.ts`, Option A/B section above), so

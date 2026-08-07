@@ -107,13 +107,19 @@ baton, the baton wins.
      ⚠️ The endpoint values are in David's Proxyman captures and must never reach the repo.
      💡 Option A (an `ffmpeg:` source, config-only, no rebuild) is still documented as the zero-code
      fallback if the relay misbehaves.
-   - **1b. (Agent — the real remaining work)** A `mobile.alarm.com` client. The endpoints and
-     per-camera credentials exist **only** on that API — a legacy RPC-over-HTTP surface (`Action=`
-     form POSTs) that nothing in `src/` speaks — so today they are typed in by hand.
-     ⚠️ Endpoint stability is untested: LAN IPs are DHCP and the ports look UPnP-assigned, so
-     "fetch once at startup" may be wrong. Credential rotation is untested too.
-     🔑 Cheapest way to settle it: DHCP-reserve the three cameras, power-cycle one, re-read its
-     endpoint. If the port holds, this whole item may be unnecessary.
+   - **1b. (Agent — but the case for it WEAKENED 2026-08-07)** A `mobile.alarm.com` client. The
+     endpoints and per-camera credentials exist **only** on that API — a legacy RPC-over-HTTP surface
+     (`Action=` form POSTs) that nothing in `src/` speaks — so today they are typed in by hand.
+     🔑 **A camera's port survived an IP change**, so ports are device-assigned rather than
+     lease-derived, and the IPs are now pinned by DHCP reservation. Both halves of the endpoint are
+     therefore stable under the drift we have actually observed.
+     ❓ **One unknown left, and it decides this item: does the port survive a camera REBOOT?**
+     One power-cycle answers it. If it holds, this client may never be needed.
+     ⚠️ It is also not cheap: the captures hold no login exchange, so it starts with obtaining one,
+     and carries account-lockout risk. Do the power-cycle test first.
+     💡 What IS worth building either way: a consistency check that `localRtsp.listenPort`,
+     `ADC_BRIDGE_RTSP_PORTS` and the `go2rtc.yaml` stream names agree — today they can disagree
+     silently and the stream just reports offline.
    - **1c. (David — after 1a)** **Pair the two new cameras by hand in the Home app.** Each go2rtc
      camera is its own HomeKit accessory with its own PIN; nothing is inherited from Homebridge or
      from the already-paired one.
