@@ -7,10 +7,38 @@ cameras:
     name: "front-door"
     homebridgeName: "Front Door"  # must match the camera name in homebridge-camera-ffmpeg
     quality: "hd"  # hd or sd
+    # OPTIONAL - the camera's own RTSP stream, tunnelled over HTTPS.
+    #
+    # Present = this camera is served by the local relay and is NOT started on
+    # the WebRTC path. That exclusion is deliberate: both publish into the same
+    # go2rtc stream name, and running both does not error, it interleaves.
+    #
+    # 🔑 Local RTSP is the ONLY path for ADC-V515 cameras, which report
+    # SupportsWebRTC: false and can never be served over WebRTC by any fix.
+    #
+    # host/port come from the mobile API's LocalRtspEndpoint - a per-camera
+    # HIGH port, not 554. There are deliberately no credentials here: the relay
+    # passes the camera's own Digest challenge through, so the camera username
+    # and password go in go2rtc.yaml's stream URL instead. See docs/SETUP.md.
+    # localRtsp:
+    #   host: "192.168.1.20"
+    #   port: 40001
+    #   listenPort: 8561      # must be inside ADC_BRIDGE_RTSP_PORTS in .env
+    #   # path: "/s1"         # default; every camera seen so far serves /s1
   # - id: "100652375-2049"
   #   name: "backyard"
   #   homebridgeName: "Backyard"
   #   quality: "hd"
+  #   localRtsp: { host: "192.168.1.21", port: 40002, listenPort: 8562 }
+
+# Shared settings for the local RTSP relays. Only read when at least one camera
+# has a localRtsp block.
+# ⚠️ bindAddress is the address INSIDE the container, same as status.bindAddress
+# below - the host's LAN address does not exist on the default bridge network.
+# Confinement comes from compose's ports: mapping.
+#localRtsp:
+#  bindAddress: "0.0.0.0"
+#  maxConnections: 8
 
 # go2rtc runs in its own container on network_mode: host; this bridge stays
 # on the default Docker network, so "localhost" here means the bridge's own

@@ -83,6 +83,22 @@ services:
     # own credentials. To remove the mapping entirely, delete these two lines.
     ports:
       - "${ADC_BRIDGE_BIND_ADDRESS}:${ADC_BRIDGE_STATUS_PORT:-9090}:${ADC_BRIDGE_STATUS_PORT:-9090}"
+      # Local RTSP relays, one per camera with a `localRtsp` block. go2rtc runs
+      # on network_mode: host and cannot reach this container's network
+      # namespace, so the relays have to be published — and bound to the LAN
+      # address, never the wildcard, exactly like the status port.
+      #
+      # ⚠️ The RANGE must cover every `localRtsp.listenPort` in config.yaml, and
+      # nothing checks that it does: a port configured but not published simply
+      # never receives a connection, and go2rtc reports the stream as offline
+      # with no error anywhere. Ports in the range with no relay behind them are
+      # harmless — they refuse connections.
+      #
+      # 🔑 These carry NO credentials of their own. The relay is a byte relay and
+      # the camera's own Digest challenge passes through it, so an unauthorized
+      # caller reaching one of these ports gets the camera's 401. That is why
+      # there is no username/password pair here to forget to set.
+      - "${ADC_BRIDGE_BIND_ADDRESS}:${ADC_BRIDGE_RTSP_PORTS:-8561-8563}:${ADC_BRIDGE_RTSP_PORTS:-8561-8563}"
     read_only: true
     tmpfs: [ "/tmp:rw,noexec,nosuid,nodev,size=128m" ]
     cap_drop: [ ALL ]

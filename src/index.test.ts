@@ -152,3 +152,64 @@ describe('status endpoint misconfiguration', () => {
     ).toBeNull();
   });
 });
+
+describe('local RTSP relay startup', () => {
+  // Same rule as the status endpoint, for the same reason: `restart:
+  // unless-stopped` turns one unbindable port into a crash loop, and the
+  // WebRTC cameras, motion fan-out and status endpoint are all still useful
+  // without a relay.
+  const cameraWith = (name: string, listenPort: number) => ({
+    id: `cam-${name}`,
+    name,
+    quality: 'hd' as const,
+    localRtsp: { host: '127.0.0.1', port: 40001, path: '/s1', listenPort },
+  });
+
+  it('does not let an unbindable relay port become fatal', async () => {
+    const { startTunnelRelays } = await import('./index.js');
+    const { createServer } = await import('node:net');
+
+    // Occupy a port, then ask a relay to bind the same one.
+    const blocker = createServer();
+    await new Promise<void>((r) => blocker.listen(0, '127.0.0.1', () => r()));
+    const taken = (blocker.address() as { port: number }).port;
+
+    const relays = await startTunnelRelays({
+      cameras: [cameraWith('front', taken)],
+      localRtsp: { bindAddress: '127.0.0.1' },
+    } as unknown as AppConfig);
+
+    expect(relays).toEqual([]);
+    await new Promise<void>((r) => blocker.close(() => r()));
+  });
+
+  it('starts the relays it can and skips the ones it cannot', async () => {
+    const { startTunnelRelays } = await import('./index.js');
+    const { createServer } = await import('node:net');
+
+    const blocker = createServer();
+    await new Promise<void>((r) => blocker.listen(0, '127.0.0.1', () => r()));
+    const taken = (blocker.address() as { port: number }).port;
+
+    const relays = await startTunnelRelays({
+      cameras: [cameraWith('blocked', taken), cameraWith('ok', 0)],
+      localRtsp: { bindAddress: '127.0.0.1' },
+    } as unknown as AppConfig);
+
+    expect(relays).toHaveLength(1);
+    expect(relays[0]!.getDiagnostics().name).toBe('ok');
+
+    await Promise.all(relays.map((r) => r.stop()));
+    await new Promise<void>((r) => blocker.close(() => r()));
+  });
+
+  it('starts no relay for cameras without a localRtsp block', async () => {
+    const { startTunnelRelays } = await import('./index.js');
+
+    const relays = await startTunnelRelays({
+      cameras: [{ id: 'cam-1', name: 'front', quality: 'hd' }],
+    } as unknown as AppConfig);
+
+    expect(relays).toEqual([]);
+  });
+});

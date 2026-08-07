@@ -36,11 +36,16 @@ baton, the baton wins.
   `patches/` plus a pinned commit. ⚠️ Match by PREFIX (`^src/`), not `^src/$` — that anchor silently
   reports "no change".
 - **Working tree:** `git status --short` **and `git stash list`**. Nothing of mine is in flight —
-  this session's work is committed (docs only, no `src/` change, **no rebuild warranted**) and
-  **NOT pushed**; David had not asked. ⚠️ Confirm with the commands, not with this line.
+  this session's work is committed and **NOT pushed**; David had not asked to push.
+  🔴 **`src/` CHANGED this session** (`src/rtsp/tunnel-relay.ts`, `src/config.ts`, `src/index.ts`),
+  so the next deploy **DOES need `--build`**, unlike every previous handoff. ⚠️ Confirm with the
+  commands, not with this line.
   ⚠️ The NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate* clone.
-- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **16 files / 237
+- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **17 files / 261
   tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
+  🔑 The relay's three structural guards were **mutation-checked**, not just written: reverting each
+  one kills its own test and leaves the rest green — which is the point, because the base64 bug
+  passes 8 of 12 tests including the whole handshake.
 - ✅ **Bridge RUNNING, deployed build current.** Expected healthy-but-blocked reading: `state: idle`,
   `tokenFailures` climbing to 3 over ~20 min, then `tokenCircuit: open` — the breaker working, not a
   fault. ⚠️ A stopped bridge and a broken camera look identical from outside; confirm it is up first:
@@ -77,30 +82,39 @@ baton, the baton wins.
   PATH — full path required. ⚠️ **Do not `setsid`/`nohup` detach long runs; hold the ssh connection.**
 - **⬆️ Omar-L merged #26 and #29; six PRs still open.** 🔴 **Do NOT "sync fork"** — it conflicts in 3
   files and gains nothing. Wait for all six, reconcile once: [`UPSTREAM.md`](UPSTREAM.md).
-- **Whose turn:** **DAVID — one decision, then it is the agent's again (item 1).** The spike proved
-  the video path; what it cannot decide is whether this project *pivots* to local RTSP (and what
-  then happens to the WebRTC half). Item 1a is the fastest route back to working video and needs
-  David's sudo regardless.
+- **Whose turn:** 🔴 **DAVID — item 1a, and it is the only thing between here and working video.**
+  The code is written, tested and live-fired against real cameras; what is left is filling in three
+  config files with values only David holds (they are in the Proxyman captures) and one
+  `docker-compose up -d --build`, which needs his sudo. Everything else in the backlog is optional
+  or follows from that.
 
 ### What's left (priority order)
 
 1. 🔴 **Adopt local RTSP — the spike is done, the integration is not.**
    ⚠️ Read [`INVARIANTS.md`](INVARIANTS.md) → "What the local-RTSP spike did NOT prove" first; it is
    the full list, and these are its two largest items.
-   - **1a. (David — needs sudo; fastest path to video today)** Point go2rtc at a camera directly
-     instead of waiting on the bridge: a `config/go2rtc.yaml` edit plus a restart, **no rebuild**.
-     ✅ The source string is written and TESTED — [`INVARIANTS.md`](INVARIANTS.md) → "Two ways to feed
-     go2rtc from the tunnel", Option A. 🔴 go2rtc **cannot** do this with a plain `rtsps://` source;
-     that was checked against the pinned commit's source, not assumed.
-   - **1a′. (Agent — the better runtime, needs code)** Option B in the same section: a
-     tunnel→plain-RTSP shim, so go2rtc uses its **native** client and in-process HKSV with **no
-     ffmpeg in the media path**. Proven with the real pinned go2rtc against a ~90-line prototype.
-     Prefer this once 1a has video flowing; it also retires the ffmpeg-argv password risk.
-   - **1b. (Agent — the real work)** A `mobile.alarm.com` client. The endpoints and per-camera
-     credentials exist **only** on that API — a legacy RPC-over-HTTP surface (`Action=` form POSTs)
-     that nothing in `src/` speaks — and today they come from a saved capture, not from live code.
+   - ✅ **1a′. DONE — the relay is BUILT and live-fired.** `src/rtsp/tunnel-relay.ts`, enabled per
+     camera with a `localRtsp` block. Measured against a real camera and the real pinned go2rtc:
+     **61.9 s of continuous 1920×1080 H.264, 17.3 MB through go2rtc's own muxer, 0 ffmpeg
+     processes.** Recipe: [`SETUP.md`](SETUP.md) → "Step 2b". Design + the five traps:
+     [`INVARIANTS.md`](INVARIANTS.md) → "Two ways to feed go2rtc from the tunnel", Option B.
+   - 🔴 **1a. (DAVID — needs sudo; this is the whole remaining gap to live video.)** Fill in
+     `config/config.yaml` (`localRtsp` per camera), `.env` (`ADC_BRIDGE_RTSP_PORTS`) and
+     `config/go2rtc.yaml` (stream URL with the CAMERA's credentials), then
+     **`docker-compose up -d --build`** — `src/` changed, so this one does need a rebuild.
+     ⚠️ The endpoint values are in David's Proxyman captures and must never reach the repo.
+     💡 Option A (an `ffmpeg:` source, config-only, no rebuild) is still documented as the zero-code
+     fallback if the relay misbehaves.
+   - **1b. (Agent — the real remaining work)** A `mobile.alarm.com` client. The endpoints and
+     per-camera credentials exist **only** on that API — a legacy RPC-over-HTTP surface (`Action=`
+     form POSTs) that nothing in `src/` speaks — so today they are typed in by hand.
      ⚠️ Endpoint stability is untested: LAN IPs are DHCP and the ports look UPnP-assigned, so
      "fetch once at startup" may be wrong. Credential rotation is untested too.
+     🔑 Cheapest way to settle it: DHCP-reserve the three cameras, power-cycle one, re-read its
+     endpoint. If the port holds, this whole item may be unnecessary.
+   - **1c. (David — after 1a)** **Pair the two new cameras by hand in the Home app.** Each go2rtc
+     camera is its own HomeKit accessory with its own PIN; nothing is inherited from Homebridge or
+     from the already-paired one.
    🔑 If this lands it removes the cloud dependency, the token refresh, the proxy demotion and this
    entire outage — and it is the **only** possible path for the two ADC-V515s.
    ⚠️ No credentials, MACs, IPs, tokens or camera names into the repo, ever.

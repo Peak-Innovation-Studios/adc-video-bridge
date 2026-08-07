@@ -47,6 +47,31 @@ srtp:
 
 # Each camera needs a matching stream entry.
 # Run "npx tsx src/discover.ts" to find your camera names.
+#
+# TWO SHAPES, depending on how the camera is reached:
+#
+#   1. WebRTC (the original path) — an empty value. The bridge PUSHES into this
+#      stream over RTSP, so go2rtc only has to hold the name.
+#
+#   2. Local RTSP via the bridge's relay — go2rtc PULLS, using its native RTSP
+#      client. No ffmpeg is involved in the media path at all: native H.264
+#      passthrough straight into in-process HKSV muxing.
+#
+#        front-door: rtsp://<camera-user>:<camera-pass>@${GO2RTC_BIND}:8561/s1
+#
+#      The host is ADC_BRIDGE_BIND_ADDRESS and the port is the camera's
+#      `localRtsp.listenPort` from config.yaml, published by docker-compose.
+#
+#      🔑 The CAMERA's credentials go here, not in config.yaml. The relay is a
+#      byte relay that passes the camera's Digest challenge straight through, so
+#      go2rtc authenticates to the camera end to end. This file is already a
+#      mode-600 secret holding the HomeKit device_private, and the
+#      credential-holding bridge container deliberately cannot read it.
+#
+#      🔴 go2rtc CANNOT reach these cameras directly. Its `rtsps://` is
+#      RTSP-over-TLS, and the cameras answer that with HTTP 400 — they speak
+#      RTSP tunnelled over HTTPS, which go2rtc has no support for. The relay
+#      exists precisely to bridge that gap. See docs/INVARIANTS.md.
 streams:
   front-door: ""
   # backyard: ""

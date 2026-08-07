@@ -114,6 +114,66 @@ log:
   level: info
 ```
 
+## Step 2b (optional, and the only option for ADC-V515): local RTSP
+
+Alarm.com cameras also serve their own stream on the LAN, as **RTSP tunnelled over HTTPS**. Reaching
+it needs no cloud, no video token and no WebRTC — and it is the **only** path for ADC-V515 cameras,
+which report `SupportsWebRTC: false` and can never be served over WebRTC by any fix.
+
+The bridge runs a small relay per camera that presents the tunnelled stream as ordinary RTSP, so
+go2rtc pulls it with its **native** client: H.264 passthrough straight into in-process HKSV muxing,
+with no ffmpeg in the media path at all.
+
+**1. Get each camera's endpoint.** `host` and `port` come from `LocalRtspEndpoint` in the
+`mobile.alarm.com` camera list, together with a per-camera `Login`/`Password`. ⚠️ The port is a
+per-camera HIGH port, not 554. The bridge cannot fetch these itself yet — see
+[`INVARIANTS.md`](INVARIANTS.md) → "What the local-RTSP spike did NOT prove".
+
+**2. `config/config.yaml`** — add a `localRtsp` block to the camera. No credentials go here:
+
+```yaml
+cameras:
+  - id: "100654376-1079"
+    name: "front-door"
+    quality: "hd"
+    localRtsp:
+      host: "192.168.1.20"
+      port: 40001
+      listenPort: 8561
+```
+
+**3. `.env`** — make sure `ADC_BRIDGE_RTSP_PORTS` covers every `listenPort`:
+
+```
+ADC_BRIDGE_RTSP_PORTS=8561-8563
+```
+
+⚠️ **Nothing checks this.** A `listenPort` that compose does not publish leaves the bridge listening
+where go2rtc cannot reach it: the stream reports offline and no error is logged anywhere.
+
+**4. `config/go2rtc.yaml`** — point the stream at the relay. **The camera's credentials go here**,
+because the relay passes the camera's Digest challenge straight through and go2rtc authenticates end
+to end:
+
+```yaml
+streams:
+  front-door: rtsp://<camera-user>:<camera-pass>@${GO2RTC_BIND}:8561/s1
+```
+
+**5. Verify** without touching HomeKit:
+
+```bash
+ffprobe -rtsp_transport tcp -i "rtsp://<camera-user>:<camera-pass>@<server-ip>:8561/s1"
+```
+
+Expect `Video: h264 (Main) ... 1920x1080 ... 10 fps`. The relay's own counters are in the status
+endpoint under `relays`.
+
+🔑 A camera with a `localRtsp` block is **not** started on the WebRTC path — both would publish into
+the same go2rtc stream, which does not error, it interleaves.
+🔴 Each camera is a separate HomeKit accessory with its own PIN. Adding cameras means pairing each
+one by hand in the Home app; nothing is inherited from Homebridge or from an existing pairing.
+
 ## Step 3: Deploy with Docker
 
 ```bash

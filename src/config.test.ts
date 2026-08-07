@@ -299,3 +299,117 @@ homebridge:
     expect(go2rtcRtspBaseUrl(config)).toBe('rtsp://rtspuser:rtsp%20pass%2Fword@127.0.0.1:8554');
   });
 });
+
+describe('loadConfig localRtsp', () => {
+  const origEnv = { ...process.env };
+
+  const withYaml = (yaml: string) => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(yaml);
+  };
+
+  const camera = (extra: string) => `
+cameras:
+  - id: "cam-0001"
+    name: "front"
+    quality: "hd"
+    localRtsp:
+${extra}
+`;
+
+  beforeEach(() => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test');
+    mockExistsSync.mockReturnValue(false);
+    mockReadFileSync.mockReturnValue('');
+    mockStatSync.mockReturnValue({ isFile: () => true } as unknown as ReturnType<typeof statSync>);
+    process.env.ADC_USERNAME = 'u';
+    process.env.ADC_PASSWORD = 'p';
+  });
+
+  afterEach(() => {
+    process.env = { ...origEnv };
+    vi.restoreAllMocks();
+  });
+
+  it('defaults the RTSP path to /s1', () => {
+    withYaml(camera('      host: "192.168.1.20"\n      port: 40001\n      listenPort: 8561'));
+
+    expect(loadConfig().cameras[0]!.localRtsp?.path).toBe('/s1');
+  });
+
+  it('defaults the bind address to 0.0.0.0, which is the address inside the container', () => {
+    withYaml(camera('      host: "192.168.1.20"\n      port: 40001\n      listenPort: 8561'));
+
+    expect(loadConfig().localRtsp?.bindAddress).toBe('0.0.0.0');
+  });
+
+  it('rejects a host carrying a scheme, port or credentials', () => {
+    // The relay treats this as a bare host; anything richer would silently
+    // resolve to something other than the camera.
+    withYaml(camera('      host: "rtsp://u:p@192.168.1.20:40001"\n      port: 40001\n      listenPort: 8561'));
+
+    expect(() => loadConfig()).toThrow(/bare hostname or IP address/);
+  });
+
+  it('rejects an out-of-range camera port', () => {
+    withYaml(camera('      host: "192.168.1.20"\n      port: 70000\n      listenPort: 8561'));
+
+    expect(() => loadConfig()).toThrow(/localRtsp.port must be an integer between 1 and 65535/);
+  });
+
+  it('rejects a path with a query string', () => {
+    withYaml(camera('      host: "192.168.1.20"\n      port: 40001\n      path: "/s1?x=1"\n      listenPort: 8561'));
+
+    expect(() => loadConfig()).toThrow(/must start with "\/"/);
+  });
+
+  it('rejects two cameras sharing a listenPort', () => {
+    // Both relays would bind-race, then serve one camera's video under both
+    // stream names — which reads as a HomeKit wiring mistake, not a config bug.
+    withYaml(`
+cameras:
+  - id: "cam-0001"
+    name: "front"
+    quality: "hd"
+    localRtsp: { host: "192.168.1.20", port: 40001, listenPort: 8561 }
+  - id: "cam-0002"
+    name: "backyard"
+    quality: "hd"
+    localRtsp: { host: "192.168.1.21", port: 40002, listenPort: 8561 }
+`);
+
+    expect(() => loadConfig()).toThrow(/Duplicate localRtsp.listenPort: 8561/);
+  });
+
+  it('rejects a listenPort that collides with the status endpoint', () => {
+    withYaml(`
+status:
+  bindAddress: "0.0.0.0"
+  port: 9090
+${camera('      host: "192.168.1.20"\n      port: 40001\n      listenPort: 9090')}
+`);
+
+    expect(() => loadConfig()).toThrow(/collides with status.port/);
+  });
+
+  it('rejects a maxConnections below one', () => {
+    withYaml(`
+localRtsp:
+  maxConnections: 0
+${camera('      host: "192.168.1.20"\n      port: 40001\n      listenPort: 8561')}
+`);
+
+    expect(() => loadConfig()).toThrow(/maxConnections must be an integer of at least 1/);
+  });
+
+  it('leaves cameras without a localRtsp block untouched', () => {
+    withYaml(`
+cameras:
+  - id: "cam-0001"
+    name: "front"
+    quality: "hd"
+`);
+
+    expect(loadConfig().cameras[0]!.localRtsp).toBeUndefined();
+  });
+});

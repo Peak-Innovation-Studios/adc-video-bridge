@@ -185,31 +185,54 @@ ffmpeg -nostdin -hide_banner -v error -allowed_media_types video \
 ⚠️ `-nostdin` is a test-harness detail, not part of the go2rtc source string — without it ffmpeg eats
 the rest of a heredoc. go2rtc manages the child's stdin itself.
 
-**Option B — a tunnel→plain-RTSP shim. Needs code, and removes ffmpeg from the media path entirely.**
+**Option B — ✅ BUILT. `src/rtsp/tunnel-relay.ts`, and ffmpeg is out of the media path entirely.**
 
-A small TCP listener presents the camera as ordinary RTSP on loopback; go2rtc then uses its **native**
-client, native H.264 passthrough and in-process HKSV muxing, with no ffmpeg child at all:
+A TCP listener per camera presents it as ordinary RTSP, so go2rtc uses its **native** client, native
+H.264 passthrough and in-process HKSV muxing, with no ffmpeg child at all:
 
 ```
-go2rtc --plain RTSP/TCP--> shim --RTSP-over-HTTPS tunnel--> camera
+go2rtc --plain RTSP/TCP--> relay --RTSP-over-HTTPS tunnel--> camera
 ```
 
 Client bytes are base64'd onto the tunnel's POST channel; the GET channel (RTSP responses *and*
-interleaved RTP) is copied back verbatim. ✅ **Proven end to end**: the real pinned go2rtc, built and
-run against a ~90-line prototype shim, pulled 1920×1080 H.264 and muxed 3.5 MB of fMP4 with its own
-muxer — zero ffmpeg processes.
+interleaved RTP) is copied back verbatim. ✅ **Measured against the real pinned go2rtc and a real
+camera: 61.9 s of continuous 1920×1080 H.264, 17.3 MB through go2rtc's own muxer, `0` ffmpeg
+processes.** Enabled per camera with a `localRtsp` block; see `docs/SETUP.md`.
 
-Three things that prototype had to get right:
+🔑 **The relay holds NO camera credentials, by design.** It is a byte relay, so the camera's Digest
+challenge passes through untouched and go2rtc authenticates end to end — which means an unauthorized
+caller reaching a relay port gets the camera's own 401. The camera credentials therefore live in
+`config/go2rtc.yaml` (already a mode-600 secret) and never in `config.yaml` or the
+credential-holding bridge container.
+⚠️ **This is also why the request URI must never be rewritten** — Digest signs it. That rules out one
+port routing several cameras by path, and is the reason each camera gets its own listener.
 
-- 🔑 **Base64 each RTSP message SEPARATELY, padding and all** — that is the QuickTime scheme, and
-  LIVE555 resyncs on `=`. Buffering to a 3-byte boundary to avoid mid-stream padding **deadlocks**:
-  the tail of a request is held back and the server never sees the end of it. Measured — `OPTIONS`
-  happened to align and succeeded, `DESCRIBE` did not and hung.
-- **LIVE555 ignores the host in the RTSP request URI**, which is why the client may address
-  `rtsp://127.0.0.1:<shim-port>/s1` and still reach the right stream. It keys on the path only.
-- **The `Content-Base: rtsp://0.0.0.0/s1/` quirk is harmless here** — clients then send
+Five things this had to get right; each cost a real failure:
+
+- 🔑 **Base64 each write SEPARATELY, padding and all** — that is the QuickTime scheme, and LIVE555
+  resyncs on `=`. Buffering to a 3-byte boundary to avoid mid-stream padding **deadlocks**: the tail
+  of a request is held back and the server never sees the end of it. It hides, too — `OPTIONS`
+  happened to be 3-byte aligned and succeeded, `DESCRIBE` did not and hung forever. Guarded by a
+  regression test that was mutation-checked; the buffering version fails 4 tests, and 8 still pass.
+- 🔴 **Never pass an IP as TLS SNI.** Node throws outright ("Setting the TLS ServerName to an IP
+  address is not permitted"), and a camera address is always an IP — so every tunnel failed at
+  connect time while the unit suite stayed green, because the tests inject a plain-TCP connect and
+  never reach the TLS path. ⚠️ **A test seam that bypasses the real transport cannot see a bug in the
+  real transport.** There is now a test that drives the production `connect` deliberately.
+- 🔴 **The open-timeout callback must not touch a socket declared below it.** The first version did,
+  so when the timer won the race — an unreachable camera, exactly what the timeout is *for* — it
+  threw a `ReferenceError` out of a timer callback, where nothing can catch it. Under
+  `restart: unless-stopped` one offline camera would have crash-looped the bridge.
+- **LIVE555 ignores the host in the RTSP request URI**, which is why a client may address
+  `rtsp://<relay-host>:<port>/s1` and still reach the right stream. It keys on the path only.
+- **The `Content-Base: rtsp://0.0.0.0/s1/` quirk is harmless** — clients then send
   `SETUP rtsp://0.0.0.0/s1/track1` and the camera accepts it. Only a client that tries to *connect*
   to that address breaks.
+
+⚠️ **The relay ports must be published by compose AND inside `ADC_BRIDGE_RTSP_PORTS`, and nothing
+checks that they are.** go2rtc runs on `network_mode: host` and cannot reach the bridge's network
+namespace. A `listenPort` configured but not published produces a stream go2rtc reports as offline
+with no error logged anywhere — the bridge says it is listening, and it is, where nothing can reach it.
 
 💡 Option B also retires a documented residual risk: no ffmpeg child means no go2rtc RTSP password in
 a process argv (`SECURITY_AUDIT.md` → "go2rtc RTSP password in the bridge's process table").
@@ -226,10 +249,16 @@ The things that made the spike cheap are exactly the production constraints it r
   reboot is unknown, so "fetch once at startup" may be wrong.
 - **Credential rotation is untested.** The per-camera `Login`/`Password` are unrelated to
   `CameraSessionToken` (which does carry an expiry), but nothing establishes that they are durable.
-- **No lifecycle work at all** — no reconnect, no circuit breaker, no media watchdog, no bridge code
-  changed. The spike ran a bounded `ffmpeg -t`.
-- **go2rtc was fed by an ffmpeg *push*, exactly as the bridge does today.** Whether go2rtc can pull
-  the tunnel *natively* was not tested; it likely needs an `ffmpeg:` source with custom input args.
+- ✅ **RESOLVED — the relay is built** (`src/rtsp/tunnel-relay.ts`, Option A/B section above), so
+  "go2rtc cannot pull the tunnel" and "no bridge code changed" no longer apply.
+- 🔴 **Every camera is a SEPARATE HomeKit accessory with its own PIN, and pairing is manual.**
+  go2rtc holds its own pairing state (`device_id`, `device_private`, `pairings` in
+  `config/go2rtc.yaml`) — nothing is inherited from Homebridge, and nothing is inherited from an
+  existing go2rtc accessory either. Going from the one paired camera to three means **two new
+  accessories added by hand in the Home app**. ⚠️ Lose or overwrite `config/go2rtc.yaml` and every
+  pairing goes with it.
+- **Lifecycle is still thin** — the relay has connection bounds, an open timeout and an idle timeout,
+  but there is no circuit breaker and no media watchdog on the local path.
 - **HKSV recording is still unproven** (backlog item 4) — only ingest was demonstrated here.
 - **TLS is unauthenticated in practice**: self-signed `CN=www.alarm.com`, expired Dec 2024. ffmpeg
   does not verify by default, which is why this works; anything that turns verification on breaks it.

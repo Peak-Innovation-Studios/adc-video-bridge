@@ -6,11 +6,34 @@ const CAMERA_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const CAMERA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/;
 const LOG_LEVELS = new Set(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']);
 
+/**
+ * The camera's own RTSP endpoint, tunnelled over HTTPS. Present = this camera
+ * is served by the local relay and is NOT started on the WebRTC path, so the
+ * two can never both publish into one go2rtc stream.
+ *
+ * 🔑 There are no credentials here on purpose. The relay is a byte relay; the
+ * RTSP client (go2rtc) authenticates to the camera end to end through it, so
+ * the camera's Digest credentials live in `config/go2rtc.yaml` — already a
+ * mode-600 secret holding HomeKit private keys — and never in this file or in
+ * the credential-holding bridge container.
+ */
+export interface LocalRtspConfig {
+  /** Camera's LAN address, from the mobile API's `LocalRtspEndpoint`. */
+  host: string;
+  /** Per-camera tunnel port from the same endpoint. Not 554. */
+  port: number;
+  /** Defaults to `/s1`, which is what every camera seen so far serves. */
+  path?: string;
+  /** Port the relay listens on, and that go2rtc's stream source points at. */
+  listenPort: number;
+}
+
 export interface CameraConfig {
   id: string;
   name: string;
   homebridgeName?: string;
   quality: 'hd' | 'sd';
+  localRtsp?: LocalRtspConfig;
 }
 
 export interface HomebridgeConfig {
@@ -40,6 +63,21 @@ export interface AppConfig {
     homekitMotion?: boolean;
   };
   homebridge?: HomebridgeConfig;
+  /**
+   * Settings shared by every camera's local RTSP relay. Only consulted when at
+   * least one camera has a `localRtsp` block.
+   */
+  localRtsp?: {
+    /**
+     * ⚠️ The address INSIDE the container, exactly like `status.bindAddress`.
+     * The host's LAN address does not exist on the default bridge network, so
+     * binding it there fails with EADDRNOTAVAIL. Confinement comes from
+     * compose's `ports:` mapping, which binds the host side to
+     * ADC_BRIDGE_BIND_ADDRESS.
+     */
+    bindAddress: string;
+    maxConnections?: number;
+  };
   /**
    * Optional read-only status endpoint. Absent = no listener at all, which is
    * the default and preserves the post-split property that the bridge listens
@@ -102,10 +140,18 @@ function validateHttpUrl(value: string, label: string): string {
   return url.toString().replace(/\/$/, '');
 }
 
-function validateConfig(config: AppConfig): AppConfig {
-  if (!Number.isInteger(config.go2rtc.rtspPort) || config.go2rtc.rtspPort < 1 || config.go2rtc.rtspPort > 65_535) {
-    throw new Error('go2rtc.rtspPort must be an integer between 1 and 65535.');
+const RTSP_HOST_PATTERN = /^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+const RTSP_PATH_PATTERN = /^\/[A-Za-z0-9._~/-]*$/;
+
+function validatePort(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 65_535) {
+    throw new Error(`${label} must be an integer between 1 and 65535.`);
   }
+  return value;
+}
+
+function validateConfig(config: AppConfig): AppConfig {
+  validatePort(config.go2rtc.rtspPort, 'go2rtc.rtspPort');
 
   config.go2rtc.apiUrl = validateHttpUrl(config.go2rtc.apiUrl, 'go2rtc.apiUrl');
 
@@ -115,6 +161,7 @@ function validateConfig(config: AppConfig): AppConfig {
 
   const ids = new Set<string>();
   const names = new Set<string>();
+  const listenPorts = new Set<number>();
   for (const camera of config.cameras) {
     if (!CAMERA_ID_PATTERN.test(camera.id)) {
       throw new Error(`Camera ID ${JSON.stringify(camera.id)} contains unsupported characters.`);
@@ -131,6 +178,42 @@ function validateConfig(config: AppConfig): AppConfig {
     if (names.has(camera.name)) throw new Error(`Duplicate camera name: ${camera.name}.`);
     ids.add(camera.id);
     names.add(camera.name);
+
+    if (camera.localRtsp) {
+      const local = camera.localRtsp;
+      const label = `Camera ${camera.name} localRtsp`;
+      if (typeof local.host !== 'string' || !RTSP_HOST_PATTERN.test(local.host)) {
+        throw new Error(
+          `${label}.host must be a bare hostname or IP address — no scheme, port, path or credentials.`,
+        );
+      }
+      validatePort(local.port, `${label}.port`);
+      validatePort(local.listenPort, `${label}.listenPort`);
+      if (local.path === undefined) {
+        local.path = '/s1';
+      } else if (typeof local.path !== 'string' || !RTSP_PATH_PATTERN.test(local.path)) {
+        throw new Error(`${label}.path must start with "/" and contain no query string or spaces.`);
+      }
+      // Two relays on one port would bind-race at startup and then serve one
+      // camera's video under both stream names, which looks like a wiring
+      // mistake in HomeKit rather than a config error.
+      if (listenPorts.has(local.listenPort)) {
+        throw new Error(`Duplicate localRtsp.listenPort: ${local.listenPort}.`);
+      }
+      listenPorts.add(local.listenPort);
+    }
+  }
+
+  if (listenPorts.size > 0 && config.status && listenPorts.has(config.status.port)) {
+    throw new Error(
+      `localRtsp.listenPort ${config.status.port} collides with status.port. ` +
+        'The status endpoint would lose the race and the bridge would report nothing.',
+    );
+  }
+
+  const maxConnections = config.localRtsp?.maxConnections;
+  if (maxConnections !== undefined && (!Number.isInteger(maxConnections) || maxConnections < 1)) {
+    throw new Error('localRtsp.maxConnections must be an integer of at least 1.');
   }
 
   if (config.homebridge) {
@@ -210,6 +293,14 @@ export function loadConfig(): AppConfig {
           password: readEnvironmentSecret('STATUS_PASSWORD') ?? fileConfig.status.password,
         }
       : undefined,
+    localRtsp: {
+      // 0.0.0.0 for the same reason status.bindAddress is: this is the address
+      // inside the container, and the host's LAN address does not exist there.
+      bindAddress: fileConfig.localRtsp?.bindAddress ?? '0.0.0.0',
+      ...(fileConfig.localRtsp?.maxConnections !== undefined
+        ? { maxConnections: fileConfig.localRtsp.maxConnections }
+        : {}),
+    },
     homebridge: fileConfig.homebridge
       ? {
           motionUrl: fileConfig.homebridge.motionUrl,

@@ -109,9 +109,16 @@ The bridge refreshes video tokens every 10 minutes and rebuilds the token-bound 
 - HomeKit live view and motion notifications via Homebridge
 - HomeKit Secure Video (HKSV) recording triggered by motion events
 
+- **Local RTSP over the camera's own HTTPS tunnel** (`src/rtsp/tunnel-relay.ts`) — no cloud, no video
+  token, no WebRTC, and **no ffmpeg in the media path**: go2rtc pulls it with its native client and
+  muxes HKSV in process. Enabled per camera with a `localRtsp` block; see [Setup](docs/SETUP.md).
+  This is the only possible path for ADC-V515 cameras.
+
 **Not yet done:**
+- Fetching the local RTSP endpoints automatically — they live on `mobile.alarm.com`, a different API
+  from the one this bridge speaks, so today they are configured by hand
 - go2rtc stream auto-configuration (currently manual in `config/go2rtc.yaml`)
-- Audio passthrough
+- Audio passthrough (the local RTSP stream carries no audio track at all)
 
 ## Project structure
 
@@ -135,6 +142,8 @@ src/
 │   └── types.ts              # Event type definitions
 ├── go2rtc/
 │   └── go2rtc-api.ts         # go2rtc REST API health checks
+├── rtsp/
+│   └── tunnel-relay.ts       # RTSP-over-HTTPS tunnel → plain RTSP, one listener per camera
 └── utils/
     ├── circuit-breaker.ts    # Pauses a retry loop that is getting nowhere
     ├── logger.ts             # pino structured logging

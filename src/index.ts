@@ -6,8 +6,47 @@ import { CameraManager } from './camera/camera-manager.js';
 import { Go2rtcApi } from './go2rtc/go2rtc-api.js';
 import { StatusServer } from './status/status-server.js';
 import { AlarmEventListener } from './events/alarm-event-listener.js';
+import { TunnelRelay } from './rtsp/tunnel-relay.js';
+import type { AppConfig } from './config.js';
 
 const log = createChildLogger('main');
+
+/**
+ * One relay per camera carrying a `localRtsp` block.
+ *
+ * 🔴 Never throws, and never returns a half-started set. A relay that cannot
+ * bind must not take down the bridge — the WebRTC cameras, the motion fan-out
+ * and the status endpoint are all still useful without it, and `restart:
+ * unless-stopped` would otherwise turn one bad port into a crash loop. This is
+ * the same rule `startStatusServer` follows, for the same reason.
+ */
+export async function startTunnelRelays(config: AppConfig): Promise<TunnelRelay[]> {
+  const bindAddress = config.localRtsp?.bindAddress ?? '0.0.0.0';
+  const maxConnections = config.localRtsp?.maxConnections;
+  const started: TunnelRelay[] = [];
+
+  for (const camera of config.cameras) {
+    if (!camera.localRtsp) continue;
+    const relay = new TunnelRelay({
+      name: camera.name,
+      host: camera.localRtsp.host,
+      port: camera.localRtsp.port,
+      path: camera.localRtsp.path ?? '/s1',
+      bindAddress,
+      listenPort: camera.localRtsp.listenPort,
+      ...(maxConnections !== undefined ? { maxConnections } : {}),
+    });
+    try {
+      await relay.start();
+      started.push(relay);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error({ camera: camera.name }, 'Local RTSP relay not started: %s', msg);
+    }
+  }
+
+  return started;
+}
 
 /**
  * Start the optional status endpoint, or return null.
@@ -161,9 +200,30 @@ async function main(): Promise<void> {
     });
   }
 
+  // Cameras reached over their own local RTSP. Started BEFORE the WebRTC half
+  // so go2rtc can pull as soon as it has a source to pull from.
+  const relays = await startTunnelRelays(config);
+  if (relays.length > 0) {
+    log.info({ count: relays.length }, 'Local RTSP relays running (no ffmpeg in the media path)');
+  }
+
+  // 🔑 A camera served by a relay is NOT started on the WebRTC path. Both
+  // publish into the same go2rtc stream name, so running both would put two
+  // producers on one stream — which does not error, it just interleaves.
+  const webrtcCameras = config.cameras.filter((c) => !c.localRtsp);
+  if (webrtcCameras.length !== config.cameras.length) {
+    log.info(
+      { local: config.cameras.length - webrtcCameras.length, webrtc: webrtcCameras.length },
+      'Camera transports selected',
+    );
+  }
+
   // Optional read-only status endpoint. Absent config = no listener.
   const statusServer = config.status
-    ? startStatusServer(config.status, () => cameraManager.getDiagnostics())
+    ? startStatusServer(config.status, () => ({
+        ...cameraManager.getDiagnostics(),
+        ...(relays.length > 0 ? { relays: relays.map((r) => r.getDiagnostics()) } : {}),
+      }))
     : null;
 
   // Graceful shutdown
@@ -176,6 +236,7 @@ async function main(): Promise<void> {
     if (statusTimer) clearInterval(statusTimer);
     eventListener.stop();
     if (statusServer) await statusServer.stop();
+    await Promise.all(relays.map((r) => r.stop()));
     await cameraManager.stop();
     auth.destroy();
     process.exit(0);
@@ -186,7 +247,7 @@ async function main(): Promise<void> {
 
   // Start event listener and streaming
   await eventListener.start();
-  await cameraManager.start(config.cameras);
+  await cameraManager.start(webrtcCameras);
 
   // Periodic status logging
   statusTimer = setInterval(() => {
