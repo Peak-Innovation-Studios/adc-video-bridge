@@ -117,6 +117,48 @@ Measured 2026-08-06, each of these cost time in one session:
   forever *and* is recorded as a success by the stream breaker. See the handoff backlog — there is no
   media watchdog yet.
 
+### ✅ Smoke-test the whole downstream half without a camera — synthetic RTSP into go2rtc
+
+Verified end to end 2026-08-06. Publishes colour bars into the real `front` stream, so it exercises
+**exactly** the path the bridge uses. Needs no Alarm.com, no camera, and touches no config.
+
+```bash
+ssh kaikoura 'cd /volume1/docker/adc-video-bridge && set -a && . ./.env && set +a && \
+  /var/packages/ffmpeg7/target/bin/ffmpeg -hide_banner -loglevel warning -re \
+  -f lavfi -i "smptebars=size=1920x1080:rate=10" -an \
+  -c:v libx264 -preset ultrafast -tune zerolatency -profile:v main -pix_fmt yuv420p -g 20 -b:v 2M \
+  -t 1200 -f rtsp -rtsp_transport tcp \
+  "rtsp://$GO2RTC_RTSP_USERNAME:$GO2RTC_RTSP_PASSWORD@192.168.7.42:8554/front"'
+```
+
+⚠️ `/usr/bin/ffmpeg` is 4.1.9 and has **no RTSP muxer**. Use `/var/packages/ffmpeg7/…` (7.1.5).
+
+🔑 **Read the result from `/api/streams`, and know which consumer is which** — this distinction is
+the whole test:
+
+| consumer | means |
+|---|---|
+| `fmt=keyframe` | a **snapshot** for the camera tile. Proves HAP pairing and the accessory work. |
+| `fmt=homekit proto=rtp medias=3` | a **live SRTP session**. This is the one that proves live view. |
+
+Seeing only `keyframe` is *not* a pass — the tile can render while live view is broken, which is the
+shape Phase 2's `srtp.listen` landmine took. Tapping the tile is not enough; the Home app must be
+opened **full-screen** to negotiate RTP.
+
+⚠️ **Check the PRODUCER too, not just consumers.** `consumers: 0` reads as "HomeKit is not attached"
+when the real story can be that the source died. Measured 2026-08-06: ten confusing minutes spent
+reading a dead publisher as a HomeKit failure.
+
+### 🔴 On Kaikoura, HOLD the ssh connection for long runs — do NOT `setsid`/`nohup` detach
+
+Measured across three runs 2026-08-06. Two that kept the ssh session attached ran their full window
+(5 min, 18 min). The one launched with `setsid nohup … &` **died after ~5 minutes with an empty log
+and a clean exit**, despite `-t 1500`. `nohup` only blocks `SIGHUP`; DSM appears to tear the process
+group down by other means when the session is reaped.
+
+➡️ Run long jobs as a foreground command over ssh and let the caller hold the connection. The
+canonical detach incantation is the one that fails here, which is why this is worth writing down.
+
 ### 🔴 `node` on Kaikoura is NOT on a non-interactive ssh PATH — use the full path
 
 `ssh kaikoura 'node dist/probe.js …'` fails with `No such file or directory`, which reads as "node

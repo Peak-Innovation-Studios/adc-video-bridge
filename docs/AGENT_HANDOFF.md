@@ -39,6 +39,12 @@ baton, the baton wins.
   image, so it is stale by design. Check the container:
   `sudo docker exec adc-video-bridge ls dist/utils/table.js`. `src/` has since changed by **comments
   only** (`0247afe`) — no rebuild warranted. This NAS has **Compose v1** (`docker-compose`, hyphen).
+- ✅ **THE WHOLE DOWNSTREAM HALF IS VERIFIED END TO END (2026-08-06)** — with a synthetic
+  colour-bars stream, no camera involved. RTSP ingest → go2rtc → HAP → **live SRTP session**
+  (`fmt=homekit proto=rtp medias=3`, sustained) → picture rendered in the Home app. 🔑 **So when
+  Alarm.com provisions Direct again, nothing else has to work for the first time.** Recipe and the
+  `keyframe`-vs-`homekit` consumer distinction: [`INVARIANTS.md`](INVARIANTS.md) → "Smoke-test the
+  whole downstream half".
 - ✅ **Infrastructure healthy**: two containers, go2rtc bound to
   **`192.168.7.42` only** (not `0.0.0.0`), `401` unauthenticated / `200` authenticated, HomeKit
   accessory **paired with `pairings` persisted to disk**, SRTP listening on UDP 8443, motion endpoint
@@ -115,7 +121,9 @@ baton, the baton wins.
      breaker opens (`VIDEO_TOKEN_FAILURE_THRESHOLD = 3` × `VIDEO_TOKEN_REFRESH_MS = 600s`).
    🔑 Both are the trap `README.md` documents one layer up — *"did not produce a usable result"* is
    the failure, not *"threw"* — never applied downward. 📖 Reasoning: `Journal.md` 2026-08-06.
-3. *(Agent — do this when video returns)* **Verify HKSV actually records without transcoding:**
+3. *(Agent — do this when video returns)* **Verify HKSV actually RECORDS without transcoding.**
+   ⚠️ Live view and the whole downstream path are already verified (2026-08-06, synthetic stream);
+   what remains unproven is motion-triggered *recording*:
    `[hksv] flush fragment` lines with sequential `seq` and ~67 KB fragments, an `hksv` consumer
    alongside `homekit` from one producer, and **no ffmpeg beyond the bridge's one**. Compare against
    the spike's 0.7% CPU / ~22 MB.
