@@ -71,10 +71,24 @@ baton, the baton wins.
   **3 of 3, two models — and Kitchen/Sunroom were connected that day, which our bridge has never
   contacted** (it is configured for one camera). `errorEnum: 0` beside a null block means their
   service reports success while omitting the configuration — that pairing is the quotable line for
-  the technician session. 🔴 **RETRACTED: do NOT cite "their own web player fails too."** It was
-  Safari's iCloud Private Relay, not Alarm.com — full detail in [`INVARIANTS.md`](INVARIANTS.md)
-  → the "No video" diagnosis order. The case rests only on the API result, which never involved a
-  browser.
+  the technician session.
+
+  🔑 **THE ARTIFACT TO READ OUT — captured from ALARM.COM'S OWN WEB PLAYER, 2026-08-06.** Logged in
+  to their website, clicking a camera, their client calls the **same endpoint we do** and gets the
+  **same answer**:
+
+  > `GET /web/api/video/videoSources/liveVideoHighestResSources/<id>` → `HTTP 200`, `errorEnum: 0`,
+  > `includedTypes: ["proxyWebrtcConnectionInfo"]`, `endToEndWebrtcConnectionInfo: null`.
+  > It then plays over the Janus proxy and **times out after 3 minutes** with their own message:
+  > *"The stream has timed out. Please press play to continue playback."* — matching
+  > `proxyStreamTimeoutTime: 180`. Our integration makes the identical request and receives the
+  > identical response.
+
+  ➡️ **This is positive evidence, not a failure report** — it cannot be blamed on our code, the
+  network, or a browser setting, because their own client succeeds and still gets a null field.
+  It also settles the last open question: **we are NOT being treated differently from their browser.**
+  ⚠️ Supersedes the earlier "their web player fails too" claim, which was Safari's iCloud Private
+  Relay and was rightly retracted — see [`INVARIANTS.md`](INVARIANTS.md) → "No video" diagnosis order.
   📖 **Everything else is in `Journal.md` 2026-08-06 and 2026-08-06 (later)**: the three earlier
   states, the two experiments that ruled our code out (do not re-run them), and how the app still
   streams via Alarm.com's Janus relay on their 3-minute no-audio fallback — so the cameras are

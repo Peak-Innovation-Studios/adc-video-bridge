@@ -129,6 +129,43 @@ outcome is an hour of setup and no data. The cheaper instrument was the *failing
 devtools on their website needs no tooling at all. **When two clients disagree, instrument the one
 that is broken — it is where the error detail lives, and it is usually the one you already control.**
 
+### 🔑 The strongest evidence came last, from their own client
+
+With the retraction made, the obvious question was still open: does Alarm.com serve **us** a
+different answer than it serves a browser? If their web player got an e2e block and our API client
+did not, the complaint changes entirely — from "your platform is broken" to "you are treating our
+client differently".
+
+David logged into alarm.com in the in-app browser and pressed play. Their own player calls the
+**same endpoint we do** and receives the **same response**:
+
+```
+GET /web/api/video/videoSources/liveVideoHighestResSources/<id>
+  HTTP 200   errorEnum: 0
+  includedTypes: ["proxyWebrtcConnectionInfo"]
+  endToEndWebrtcConnectionInfo: null
+```
+
+It then played over the Janus proxy and, three minutes later, produced their own UI message:
+**"The stream has timed out. Please press play to continue playback."** — matching
+`proxyStreamTimeoutTime: 180` exactly. The predicted timeout, from the predicted transport,
+announced by their own client.
+
+🔑 **What makes this the best artifact of the investigation is that it is a SUCCESS, not a failure.**
+Everything else we had was something not working, and anything not working invites *"what is wrong
+with your setup?"* — which is precisely how Private Relay nearly derailed the report. A `HTTP 200`
+from their own first-party client, carrying a null field and falling back to their documented
+3-minute proxy, cannot be attributed to our code, our network, or a browser setting. Their client,
+their API, their fallback, their timeout message.
+
+It also repairs the retraction with something stronger than the claim that was pulled: not *"their
+web player fails too"* (it does not fail — it plays), but *"their web player is offered the same
+degraded transport we are."*
+
+⚠️ Note the sequencing. The browser could only be used as an instrument **after** Private Relay was
+found and turned off. The contaminated instrument, cleaned, produced the decisive measurement — so
+the right response to a noisy instrument is to clean it, not to discard it.
+
 ### ⚠️ Two of my own diagnostic guards failed silently, in the same shape
 
 Both were background watchers, and both printed a confident conclusion having measured nothing:
