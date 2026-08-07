@@ -17,3 +17,9 @@ docker.log
 .DS_Store
 .idea/
 .vscode/
+
+# Generated HomeKit pairing labels — each SVG embeds a setup code, which is
+# the pairing secret. `npm run homekit:label` writes here by default.
+labels/
+*.svg
+!docs/**/*.svg

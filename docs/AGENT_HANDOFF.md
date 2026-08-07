@@ -31,11 +31,15 @@ baton, the baton wins.
 - 🔑 **RUN THIS BEFORE DEBUGGING ANY CONFIG PROBLEM — it is new, and it exists because of this
   session's mistakes:**
   ```
-  npm run verify:config -- /volume1/docker/adc-video-bridge
+  ssh kaikoura 'cd /volume1/docker/adc-video-bridge && export PATH=/usr/local/bin:$PATH && \
+    npm run verify:config --silent -- .'
   ```
   Checks the seams BETWEEN `config.yaml`, `go2rtc.yaml` and `.env`, which no single file's validation
   can see: unpublished relay ports, `homekit:` blocks with no matching stream, duplicate YAML keys,
-  empty stream sources, pin rules, wildcard binds. Exits non-zero on anything blocking.
+  empty stream sources, pin rules, wildcard binds. Exits non-zero on anything blocking. No sudo.
+  🔑 **The NAS carries the full devDependencies, so every `tsx` CLI runs THERE, in place** —
+  `verify:config`, `homekit:label`, `discover`, `probe`. ⚠️ `npm` is not on a non-interactive ssh
+  PATH any more than `node` is; export `/usr/local/bin` or the command is simply "not found".
 - **Branch / HEAD:** `git fetch && git status --short && git log --oneline -1`. `main` deploys BY HAND
   over SSH; every `docker-compose` command needs David's sudo password, so an agent cannot rebuild.
   💡 "Do I need a rebuild?" — derive it from the `COPY` lines, not from any summary. The bridge image
