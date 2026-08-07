@@ -17,100 +17,60 @@ baton, the baton wins.
 
 - **Last agent:** Claude Code (Opus 5)
 - **Updated:** 2026-08-07 — 🔴 **THE README'S FOUNDING PREMISE IS WRONG.** Alarm.com's **mobile** API
-  exposes per-camera **local RTSP endpoints with credentials**, and their app streams
-  `connectionType: DIRECT, protocolType: RTSP` — no WebRTC. ⚠️ **ADC-V515 reports
-  `SupportsWebRTC: false`**, so this bridge can never serve the two indoor cameras by any WebRTC fix.
-  Video is still down and the Brinks complaint still stands, but it is no longer the only route.
-  Narrative: `Journal.md` 2026-08-07.
-- **Branch / HEAD:** `git fetch && git status -sb && git log --oneline -1`. `main` deploys by hand.
-  💡 "Do I need a rebuild?" is answerable from git — but **derive it from the `COPY` lines, not from
-  this summary.** As of 2026-08-06 the bridge image takes `package.json`, `package-lock.json`,
-  `tsconfig.json`, `src/` and `entrypoint.sh`; the go2rtc image takes `patches/` plus a pinned
-  upstream commit. That is an explicit file list, not a glob, so a paraphrase here drifts silently.
-- **Working tree:** `git status --short` **and `git stash list`**. Both empty at handoff — and the
-  NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate* clone that is also pulled to
-  `main`; changing files there is not the same as changing them here.
-- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run`
-  **16 files / 237 tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp
-  exception.
-- ✅ **Bridge RUNNING and DEPLOYED CURRENT (2026-08-06).** Expected healthy-but-blocked reading:
-  `state: idle`, `tokenFailures` climbing to 3 over ~20 min, then `tokenCircuit: open` — the breaker
-  working, not a new fault. ⚠️ A stopped bridge and a broken camera look identical from outside, so
-  confirm it is up first: `curl -s -o /dev/null -w '%{http_code}' http://192.168.7.42:9090/` → `401`.
-  ⚠️ Never infer the deployed version from the host `dist/` — the Dockerfile builds *inside* the
-  image, so it is stale by design. Check the container:
+  exposes per-camera **local RTSP endpoints with credentials**; their app streams
+  `connectionType: DIRECT, protocolType: RTSP`, no WebRTC. ⚠️ **ADC-V515 reports
+  `SupportsWebRTC: false`** — this bridge can never serve the two indoor cameras by any WebRTC fix.
+  Video is still down; the Brinks defect is real but no longer the only route.
+  📖 Narrative: `Journal.md` 2026-08-07.
+- **Branch / HEAD:** `git fetch && git status --short && git log --oneline -1`. `main` deploys BY HAND
+  over SSH; every `docker-compose` command needs David's sudo password, so an agent cannot rebuild.
+  💡 "Do I need a rebuild?" — derive it from the `COPY` lines, not from any summary. The bridge image
+  takes `package.json`, `package-lock.json`, `tsconfig.json`, `src/`, `entrypoint.sh`; go2rtc takes
+  `patches/` plus a pinned commit. ⚠️ Match by PREFIX (`^src/`), not `^src/$` — that anchor silently
+  reports "no change".
+- **Working tree:** `git status --short` **and `git stash list`**. Both empty at handoff, both repos
+  in sync with origin. ⚠️ The NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate* clone.
+- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **16 files / 237
+  tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
+- ✅ **Bridge RUNNING, deployed build current.** Expected healthy-but-blocked reading: `state: idle`,
+  `tokenFailures` climbing to 3 over ~20 min, then `tokenCircuit: open` — the breaker working, not a
+  fault. ⚠️ A stopped bridge and a broken camera look identical from outside; confirm it is up first:
+  `curl -s -o /dev/null -w '%{http_code}' http://192.168.7.42:9090/` → `401` means running.
+  ⚠️ Never infer the deployed version from the host `dist/` (the Dockerfile builds *inside* the image):
   `sudo docker exec adc-video-bridge ls dist/utils/table.js`. `src/` has since changed by **comments
-  only** (`0247afe`) — no rebuild warranted. This NAS has **Compose v1** (`docker-compose`, hyphen).
-- ✅ **THE WHOLE DOWNSTREAM HALF IS VERIFIED END TO END (2026-08-06)** — with a synthetic
-  colour-bars stream, no camera involved. RTSP ingest → go2rtc → HAP → **live SRTP session**
-  (`fmt=homekit proto=rtp medias=3`, sustained) → picture rendered in the Home app. 🔑 **So when
-  Alarm.com provisions Direct again, nothing else has to work for the first time.** Recipe and the
-  `keyframe`-vs-`homekit` consumer distinction: [`INVARIANTS.md`](INVARIANTS.md) → "Smoke-test the
-  whole downstream half".
-- ✅ **Infrastructure healthy**: two containers, go2rtc bound to
-  **`192.168.7.42` only** (not `0.0.0.0`), `401` unauthenticated / `200` authenticated, HomeKit
-  accessory **paired with `pairings` persisted to disk**, SRTP listening on UDP 8443, motion endpoint
-  verified end to end (`POST` sets, `DELETE` clears).
+  only** — no rebuild warranted. This NAS has **Compose v1** (`docker-compose`, hyphen).
+- ✅ **The whole DOWNSTREAM half is verified end to end (2026-08-06)** with a synthetic colour-bars
+  stream, no camera needed: RTSP ingest → go2rtc → HAP → live SRTP (`fmt=homekit proto=rtp medias=3`)
+  → picture in the Home app. 🔑 So when video returns, **nothing downstream has to work for the first
+  time.** Reusable recipe: [`INVARIANTS.md`](INVARIANTS.md) → "Smoke-test the whole downstream half".
 - 🔑 **THE STATUS ENDPOINT IS THE FIRST THING TO CHECK — no sudo needed.**
   ```
   curl -s --user "$STATUS_USERNAME:$STATUS_PASSWORD" http://192.168.7.42:9090/ | jq
   ```
-  (credentials are in `.env` on the NAS). Returns per-camera state, and for **each** breaker its own
-  circuit state, failure count and cooldown (`streamCircuit`/`streamFailures`/`streamNextProbeInMs`,
-  `tokenCircuit`/`tokenFailures`/`tokenNextProbeInMs`), plus the last error with its age. This
-  replaces the `docker-compose logs` round-trip that cost three sudo prompts in one session.
-- 🔴 **THE ONLY BLOCKER — SETTLED: Alarm.com provisions NO end-to-end WebRTC for this ACCOUNT.**
-  Not the camera, not our code, not the network. 🔴 **Do not re-investigate — each alternative is
-  eliminated by measurement (2026-08-06):**
-
-  | ruled out | how |
-  |---|---|
-  | per-camera state | 3 of 3 cameras `e2e: null`, 2 models; the two indoor cameras added that day |
-  | our code | bridge stopped ~55 min → unchanged; new cameras never contacted by us |
-  | CGNAT | real routable public IP, not `100.64/10` |
-  | **symmetric NAT** | **STUN from the NAS: same mapped port to 4 destinations, port-preserving** |
-  | camera demotion | **an indoor camera power-cycled — still `null`** (this DID clear it on 2026-08-03) |
-  | browser / client env | their own player gets the same answer — artifact below |
-
-  🔑 **THE ARTIFACT TO READ OUT**, captured from Alarm.com's own web player:
-  > `GET /web/api/video/videoSources/liveVideoHighestResSources/<id>` → `HTTP 200`, `errorEnum: 0`,
-  > `includedTypes: ["proxyWebrtcConnectionInfo"]`, `endToEndWebrtcConnectionInfo: null`. It plays
-  > over the Janus proxy, then times out at 3 min — *"The stream has timed out."* — matching
-  > `proxyStreamTimeoutTime: 180`. Our bridge makes the identical request, gets the identical answer.
-
-  ➡️ **Positive evidence, not a failure report:** their client *succeeds* and still gets a null field,
-  so it cannot be pinned on our code, the network, or a browser setting.
-  ➡️ **THE ASK:** *"clear/reset the Direct-vs-Proxy connection-type determination for these cameras."*
-  ➡️ **SECOND QUESTION FOR THEM:** *"your web player times out at 3 min on this account while your
-  mobile app streams continuously — different transports, or does the app re-establish silently?"*
-  ❓ The app's transport is **UNCONFIRMED and not worth more of our time** — "no stutter observed" is
-  not evidence, since a buffer hides a reconnect. Either answer is a valid complaint and neither
-  weakens the web-player artifact. Detail: [`INVARIANTS.md`](INVARIANTS.md) → "OPEN: which transport".
-  🔑 The demotion looks **self-perpetuating** — it clears when a Direct attempt succeeds, but nothing
-  can attempt Direct: their clients use proxy, ours needs the config the demotion withholds.
-  🔴 **Do NOT build the Janus proxy path** ([`INVARIANTS.md`](INVARIANTS.md); Omar-L#2). It is the
-  failure fallback — 3-min sessions, no audio — so a perpetual HKSV stream means ~20 forced
-  reconnects/hour, and Janus is a wholly different signaling protocol. Revisit only if Brinks
-  confirm Direct is not coming back.
-  📖 Narrative, the retracted Private-Relay claim, and the two experiments: `Journal.md` 2026-08-06 (later).
-- ⚠️ **`patches/go2rtc-hap-auth-exempt.patch` is load-bearing.** Without it HomeKit cannot pair at
-  all while go2rtc API auth is on. Applied with plain `git apply` in `Dockerfile.go2rtc`, so a patch
-  that stops applying **fails the build loudly**. 🔴 Report upstream on
-  [go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130) and delete it when it lands there.
-- **Sudo-free diagnosis on Kaikoura:** the status endpoint above; then `/usr/local/bin/node
-  dist/probe.js <cameraId>` from `/volume1/docker/adc-video-bridge` after `set -a; . ./.env; set +a`.
-  🔎 **Before reading any of it, see [`INVARIANTS.md`](INVARIANTS.md) → "Reading the status endpoint"
-  and "`node` … is NOT on a non-interactive ssh PATH".** Three status fields and three host quirks
-  each cost time on 2026-08-06; all six are recorded there rather than repeated here.
-- **⬆️ Omar-L is merging: #26 and #29 landed 2026-08-06, six PRs still open.** Nothing blocked on us.
-  🔴 **Do NOT "sync fork" as they land** — it conflicts in 3 files and gains no content (our `main` is
-  effectively a superset). Wait until all six merge, then reconcile once. Full reasoning and the
-  dry-run result: [`UPSTREAM.md`](UPSTREAM.md).
-- **Whose turn:** **BRINKS.** The support call happened 2026-08-06 and they are scheduling a
-  **virtual technician session**. Nothing is on us and nothing is on David until that session — take
-  the 3-of-3 table above to it, plus `errorEnum: 0` beside a null e2e block, which says their service
-  reports success while omitting the configuration. Every layer we control is built, deployed and
-  verified; video appears on its own once Alarm.com provisions Direct again, **no redeploy needed**.
+  (credentials in `.env` on the NAS). Per-camera state plus, for **each** breaker, its own circuit,
+  failure count and cooldown. 🔎 Three of its fields are routinely misread — see
+  [`INVARIANTS.md`](INVARIANTS.md) → "Reading the status endpoint" before drawing conclusions.
+- 🔴 **BLOCKER (Alarm.com's side, real, but NOT the only route): no end-to-end WebRTC for web/API
+  clients.** All 3 cameras return `endToEndWebrtcConnectionInfo: null` with `errorEnum: 0`. Ruled out
+  by measurement — per-camera state, our code (bridge stopped ~55 min), CGNAT, symmetric NAT (STUN:
+  same mapped port to 4 destinations), camera power-cycle, and browser environment.
+  🔑 **ARTIFACT TO READ OUT:** their **own web player** calls the same endpoint and gets the same null
+  block, then falls back to Janus proxy and times out at 3 min — *"The stream has timed out."*
+  Their **mobile** API mints signalling tokens for the same camera at the same moment.
+  ➡️ **ASK:** *"clear/reset the Direct-vs-Proxy determination for these cameras — and why does the web
+  API issue no e2e config when the mobile API does?"*
+  🔴 **Do NOT build the Janus proxy path** ([`INVARIANTS.md`](INVARIANTS.md); Omar-L#2).
+- 🔴 **NEVER commit** credentials, MACs, LAN/WAN IPs, session tokens, camera **names** or IDs from the
+  Proxyman captures. `CLAUDE.md` forbids it; camera names were committed in error earlier this session
+  and removed from current content (they remain in history).
+- **Sudo-free diagnosis on Kaikoura:** the status endpoint above, then `/usr/local/bin/node
+  dist/probe.js <cameraId>` after `set -a; . ./.env; set +a`. 🔎 `node` is NOT on a non-interactive ssh
+  PATH — full path required. ⚠️ **Do not `setsid`/`nohup` detach long runs; hold the ssh connection.**
+- **⬆️ Omar-L merged #26 and #29; six PRs still open.** 🔴 **Do NOT "sync fork"** — it conflicts in 3
+  files and gains nothing. Wait for all six, reconcile once: [`UPSTREAM.md`](UPSTREAM.md).
+- **Whose turn:** **AGENT — start the local-RTSP spike (item 1).** Brinks' technician session is still
+  pending and their defect is real, but it is no longer the critical path, and it cannot help the two
+  ADC-V515s at all.
 
 ### What's left (priority order)
 
