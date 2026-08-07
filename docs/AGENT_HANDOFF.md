@@ -35,10 +35,9 @@ baton, the baton wins.
   takes `package.json`, `package-lock.json`, `tsconfig.json`, `src/`, `entrypoint.sh`; go2rtc takes
   `patches/` plus a pinned commit. ⚠️ Match by PREFIX (`^src/`), not `^src/$` — that anchor silently
   reports "no change".
-- **Working tree:** `git status --short` **and `git stash list`**. 🔴 **UNCOMMITTED, and it is MINE
-  (Claude, this session) — docs only, no `src/` change, no rebuild warranted:** `README.md`,
-  `Journal.md`, `docs/INVARIANTS.md`, `docs/AGENT_HANDOFF.md`. Left uncommitted deliberately —
-  David had not asked for a commit. Review and commit as one unit; nothing else is in flight.
+- **Working tree:** `git status --short` **and `git stash list`**. Nothing of mine is in flight —
+  this session's work is committed (docs only, no `src/` change, **no rebuild warranted**) and
+  **NOT pushed**; David had not asked. ⚠️ Confirm with the commands, not with this line.
   ⚠️ The NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate* clone.
 - **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **16 files / 237
   tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
@@ -89,10 +88,14 @@ baton, the baton wins.
    ⚠️ Read [`INVARIANTS.md`](INVARIANTS.md) → "What the local-RTSP spike did NOT prove" first; it is
    the full list, and these are its two largest items.
    - **1a. (David — needs sudo; fastest path to video today)** Point go2rtc at a camera directly
-     instead of waiting on the bridge. ⚠️ go2rtc's *native* RTSP client was **not** tested against
-     the tunnel and probably cannot do it — expect to need an `ffmpeg:` source carrying
-     `-rtsp_transport https`. That is a `config/go2rtc.yaml` edit plus a restart, no rebuild.
-     🔎 An agent can draft and validate the source string; only the restart needs David.
+     instead of waiting on the bridge: a `config/go2rtc.yaml` edit plus a restart, **no rebuild**.
+     ✅ The source string is written and TESTED — [`INVARIANTS.md`](INVARIANTS.md) → "Two ways to feed
+     go2rtc from the tunnel", Option A. 🔴 go2rtc **cannot** do this with a plain `rtsps://` source;
+     that was checked against the pinned commit's source, not assumed.
+   - **1a′. (Agent — the better runtime, needs code)** Option B in the same section: a
+     tunnel→plain-RTSP shim, so go2rtc uses its **native** client and in-process HKSV with **no
+     ffmpeg in the media path**. Proven with the real pinned go2rtc against a ~90-line prototype.
+     Prefer this once 1a has video flowing; it also retires the ffmpeg-argv password risk.
    - **1b. (Agent — the real work)** A `mobile.alarm.com` client. The endpoints and per-camera
      credentials exist **only** on that API — a legacy RPC-over-HTTP surface (`Action=` form POSTs)
      that nothing in `src/` speaks — and today they come from a saved capture, not from live code.

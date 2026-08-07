@@ -153,6 +153,67 @@ server does not know its own address. ffmpeg handles it; a hand-rolled client th
 🔴 **Credentials, MAC addresses, LAN/WAN IPs, camera session tokens and camera names from those
 captures must NEVER be committed.** `CLAUDE.md` forbids it and the captures are full of them.
 
+### ✅ Two ways to feed go2rtc from the tunnel — both measured 2026-08-07, one needs no ffmpeg
+
+🔴 **go2rtc CANNOT do this natively as shipped.** Checked against the exact pinned commit we build
+(`506cfa7…`): zero occurrences of `x-rtsp-tunnelled` or `sessioncookie` anywhere in the source. Its
+`rtsps://` handler is RTSP-over-TLS **directly** — TLS then `OPTIONS … RTSP/1.0` — which is precisely
+what these cameras answer with `HTTP/1.1 400 Bad Request`. Do not expect `rtsps://` to work.
+
+**Option A — `ffmpeg:` source. No new code; a `config/go2rtc.yaml` edit and a restart.**
+
+```yaml
+streams:
+  front: ffmpeg:rtsp://<user>:<pass>@<lan-ip>:<port>/s1#input=-fflags nobuffer -flags low_delay -timeout {timeout} -user_agent go2rtc/ffmpeg -rtsp_transport https -i {input}#video=copy
+```
+
+🔎 `#input=` takes a raw template with `{input}` substituted and **is not URL-decoded**
+(`streams.ParseQuery` splits on `#` and keeps the value verbatim), so spaces are fine — but a literal
+`#` inside the value is not. Omitting `#audio=` is deliberate: there is no audio track, and it is
+also what makes go2rtc prepend `-allowed_media_types video`.
+
+⚠️ **Verified by reconstructing and running go2rtc's exact command line** (`Args.String()` order is
+Bin → Global → Input → Codecs → Output), on Kaikoura's ffmpeg 7.1.5, publishing into the live stream:
+
+```bash
+ffmpeg -nostdin -hide_banner -v error -allowed_media_types video \
+  -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
+  -rtsp_transport https -i "rtsp://<user>:<pass>@<lan-ip>:<port>/s1" \
+  -c:v copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp "<go2rtc-rtsp-url>"
+```
+
+⚠️ `-nostdin` is a test-harness detail, not part of the go2rtc source string — without it ffmpeg eats
+the rest of a heredoc. go2rtc manages the child's stdin itself.
+
+**Option B — a tunnel→plain-RTSP shim. Needs code, and removes ffmpeg from the media path entirely.**
+
+A small TCP listener presents the camera as ordinary RTSP on loopback; go2rtc then uses its **native**
+client, native H.264 passthrough and in-process HKSV muxing, with no ffmpeg child at all:
+
+```
+go2rtc --plain RTSP/TCP--> shim --RTSP-over-HTTPS tunnel--> camera
+```
+
+Client bytes are base64'd onto the tunnel's POST channel; the GET channel (RTSP responses *and*
+interleaved RTP) is copied back verbatim. ✅ **Proven end to end**: the real pinned go2rtc, built and
+run against a ~90-line prototype shim, pulled 1920×1080 H.264 and muxed 3.5 MB of fMP4 with its own
+muxer — zero ffmpeg processes.
+
+Three things that prototype had to get right:
+
+- 🔑 **Base64 each RTSP message SEPARATELY, padding and all** — that is the QuickTime scheme, and
+  LIVE555 resyncs on `=`. Buffering to a 3-byte boundary to avoid mid-stream padding **deadlocks**:
+  the tail of a request is held back and the server never sees the end of it. Measured — `OPTIONS`
+  happened to align and succeeded, `DESCRIBE` did not and hung.
+- **LIVE555 ignores the host in the RTSP request URI**, which is why the client may address
+  `rtsp://127.0.0.1:<shim-port>/s1` and still reach the right stream. It keys on the path only.
+- **The `Content-Base: rtsp://0.0.0.0/s1/` quirk is harmless here** — clients then send
+  `SETUP rtsp://0.0.0.0/s1/track1` and the camera accepts it. Only a client that tries to *connect*
+  to that address breaks.
+
+💡 Option B also retires a documented residual risk: no ffmpeg child means no go2rtc RTSP password in
+a process argv (`SECURITY_AUDIT.md` → "go2rtc RTSP password in the bridge's process table").
+
 ### ⚠️ What the local-RTSP spike did NOT prove — this is the adoption backlog
 
 The things that made the spike cheap are exactly the production constraints it removed:
