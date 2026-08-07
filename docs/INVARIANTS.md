@@ -228,6 +228,13 @@ Five things this had to get right; each cost a real failure:
 - **The `Content-Base: rtsp://0.0.0.0/s1/` quirk is harmless** — clients then send
   `SETUP rtsp://0.0.0.0/s1/track1` and the camera accepts it. Only a client that tries to *connect*
   to that address breaks.
+- 🔴 **`CameraManager.start()` throws on an empty list, and a fully-local deployment produces one.**
+  That guard predates local RTSP — when WebRTC was the only transport, "no cameras" could only mean
+  a misconfigured `config.yaml`. It crash-looped the bridge on the first real deployment, **after
+  all three relays had come up healthy**, so the logs read as success right up to the fatal.
+  ⚠️ `index.test.ts` mocks `CameraManager` with a `start` that resolves, so the suite stayed green —
+  the third time in this feature that a test double hid a bug in the thing it replaced. The fix is
+  guarded by `index.transports.test.ts`, whose mock **throws on empty exactly as the real one does**.
 
 ⚠️ **The relay ports must be published by compose AND inside `ADC_BRIDGE_RTSP_PORTS`, and nothing
 checks that they are.** go2rtc runs on `network_mode: host` and cannot reach the bridge's network

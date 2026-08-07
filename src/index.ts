@@ -247,7 +247,23 @@ async function main(): Promise<void> {
 
   // Start event listener and streaming
   await eventListener.start();
-  await cameraManager.start(webrtcCameras);
+
+  // 🔴 `CameraManager.start()` THROWS on an empty list, and that guard is older
+  // than the local-RTSP path: back when WebRTC was the only transport, "no
+  // cameras" could only mean a misconfigured `config.yaml`. It now also means
+  // "every camera is served by a relay", which is a perfectly good deployment —
+  // and it crash-looped the bridge in production on the first one, AFTER all
+  // three relays had come up healthy.
+  // The empty list still has to be fatal when NOTHING is configured, so keep
+  // calling through in that case and let the original message stand.
+  if (webrtcCameras.length > 0 || relays.length === 0) {
+    await cameraManager.start(webrtcCameras);
+  } else {
+    log.info(
+      { relays: relays.length },
+      'Every camera is served by a local RTSP relay — the WebRTC half stays idle',
+    );
+  }
 
   // Periodic status logging
   statusTimer = setInterval(() => {
