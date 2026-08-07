@@ -31,21 +31,14 @@ baton, the baton wins.
 - **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run`
   **16 files / 237 tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp
   exception.
-- ✅ **Bridge RUNNING again (2026-08-06)** — it was stopped for ~55 min for the cold probe below, and
-  has been restarted. Expected healthy-but-blocked reading right now: `state: idle`, both circuits
-  starting closed, `tokenFailures` climbing to 3 over ~20 min and then `tokenCircuit: open`. That is
-  the breaker working, not a new fault. ⚠️ A stopped bridge and a broken camera look identical from
-  outside — the endpoint is simply unreachable either way — so confirm it is up before diagnosing:
-  `curl -s -o /dev/null -w '%{http_code}' http://192.168.7.42:9090/` → `401` means running.
-- ✅ **DEPLOYED on Kaikoura and VERIFIED CURRENT (2026-08-06)** — rebuilt after the status-endpoint
-  field rename, confirmed by the live endpoint emitting the six per-breaker field names.
-  ⚠️ `src/` has since changed by **comments only** (`0247afe`), so a strict "did a COPY path change?"
-  check says rebuild; it is a no-op and no rebuild is warranted.
-  ⚠️ Do not trust a remembered commit: the host `dist/` is stale by design (the Dockerfile builds
-  *inside* the image), so it proves nothing. Check the container itself for a file only current
-  code has:
-  `sudo docker exec adc-video-bridge ls dist/utils/table.js`.
-  ⚠️ This NAS has **Compose v1**: `docker-compose` (hyphen), and `docker compose` does not exist.
+- ✅ **Bridge RUNNING and DEPLOYED CURRENT (2026-08-06).** Expected healthy-but-blocked reading:
+  `state: idle`, `tokenFailures` climbing to 3 over ~20 min, then `tokenCircuit: open` — the breaker
+  working, not a new fault. ⚠️ A stopped bridge and a broken camera look identical from outside, so
+  confirm it is up first: `curl -s -o /dev/null -w '%{http_code}' http://192.168.7.42:9090/` → `401`.
+  ⚠️ Never infer the deployed version from the host `dist/` — the Dockerfile builds *inside* the
+  image, so it is stale by design. Check the container:
+  `sudo docker exec adc-video-bridge ls dist/utils/table.js`. `src/` has since changed by **comments
+  only** (`0247afe`) — no rebuild warranted. This NAS has **Compose v1** (`docker-compose`, hyphen).
 - ✅ **Infrastructure healthy**: two containers, go2rtc bound to
   **`192.168.7.42` only** (not `0.0.0.0`), `401` unauthenticated / `200` authenticated, HomeKit
   accessory **paired with `pairings` persisted to disk**, SRTP listening on UDP 8443, motion endpoint
@@ -59,50 +52,34 @@ baton, the baton wins.
   `tokenCircuit`/`tokenFailures`/`tokenNextProbeInMs`), plus the last error with its age. This
   replaces the `docker-compose logs` round-trip that cost three sudo prompts in one session.
 - 🔴 **THE ONLY BLOCKER — SETTLED: Alarm.com provisions NO end-to-end WebRTC for this ACCOUNT.**
-  Not the camera, not our code, and 🔴 **not worth re-investigating.** Measured 2026-08-06, one
-  login, one videoSource call per camera:
+  Not the camera, not our code, not the network. 🔴 **Do not re-investigate — each alternative is
+  eliminated by measurement (2026-08-06):**
 
-  | name | model | e2e | proxy | errorEnum |
-  |---|---|---|---|---|
-  | Front | ADC-V723 | **null** | set | 0 |
-  | Kitchen | ADC-V515 | **null** | set | 0 |
-  | Sunroom | ADC-V515 | **null** | set | 0 |
+  | ruled out | how |
+  |---|---|
+  | per-camera state | 3 of 3 cameras `e2e: null`, 2 models; Kitchen/Sunroom added that day |
+  | our code | bridge stopped ~55 min → unchanged; new cameras never contacted by us |
+  | CGNAT | real routable public IP, not `100.64/10` |
+  | **symmetric NAT** | **STUN from the NAS: same mapped port to 4 destinations, port-preserving** |
+  | camera demotion | **Kitchen power-cycled — still `null`** (this DID clear it on 2026-08-03) |
+  | browser / client env | their own player gets the same answer — artifact below |
 
-  **3 of 3, two models — and Kitchen/Sunroom were connected that day, which our bridge has never
-  contacted** (it is configured for one camera). `errorEnum: 0` beside a null block means their
-  service reports success while omitting the configuration — that pairing is the quotable line for
-  the technician session.
-
-  🔑 **THE ARTIFACT TO READ OUT — captured from ALARM.COM'S OWN WEB PLAYER, 2026-08-06.** Logged in
-  to their website, clicking a camera, their client calls the **same endpoint we do** and gets the
-  **same answer**:
-
+  🔑 **THE ARTIFACT TO READ OUT**, captured from Alarm.com's own web player:
   > `GET /web/api/video/videoSources/liveVideoHighestResSources/<id>` → `HTTP 200`, `errorEnum: 0`,
-  > `includedTypes: ["proxyWebrtcConnectionInfo"]`, `endToEndWebrtcConnectionInfo: null`.
-  > It then plays over the Janus proxy and **times out after 3 minutes** with their own message:
-  > *"The stream has timed out. Please press play to continue playback."* — matching
-  > `proxyStreamTimeoutTime: 180`. Our integration makes the identical request and receives the
-  > identical response.
+  > `includedTypes: ["proxyWebrtcConnectionInfo"]`, `endToEndWebrtcConnectionInfo: null`. It plays
+  > over the Janus proxy, then times out at 3 min — *"The stream has timed out."* — matching
+  > `proxyStreamTimeoutTime: 180`. Our bridge makes the identical request, gets the identical answer.
 
-  ➡️ **This is positive evidence, not a failure report** — it cannot be blamed on our code, the
-  network, or a browser setting, because their own client succeeds and still gets a null field.
-  It also settles the last open question: **we are NOT being treated differently from their browser.**
-  ⚠️ Supersedes the earlier "their web player fails too" claim, which was Safari's iCloud Private
-  Relay and was rightly retracted — see [`INVARIANTS.md`](INVARIANTS.md) → "No video" diagnosis order.
-  📖 **Everything else is in `Journal.md` 2026-08-06 and 2026-08-06 (later)**: the three earlier
-  states, the two experiments that ruled our code out (do not re-run them), and how the app still
-  streams via Alarm.com's Janus relay on their 3-minute no-audio fallback — so the cameras are
-  ONLINE and reaching Alarm.com; only Direct is unprovisioned.
-  🔴 **Do NOT build the Janus proxy path in response** — [`INVARIANTS.md`](INVARIANTS.md); tracked
-  upstream as Omar-L#2. ⚠️ Its janus fields are in the payload **always**; the signal is the pair,
-  proxy SET **and** e2e null.
-  ✅ **Network path ELIMINATED (2026-08-06)** — but not by the argument first recorded here. The
-  app-vs-website disagreement turned out to be Private Relay, so that reasoning is void. The
-  elimination that holds is simpler and does not depend on any other client: **the bridge receives a
-  valid, authenticated HTTP 200 with `errorEnum: 0` and one field omitted.** A network fault does not
-  produce a well-formed JSON response missing exactly one key. Also measured: the NAS and David's Mac
-  egress from the **same public IP** (via the LAN gateway; Tailscale installed but
-  not carrying traffic), so the bridge is not on a masked or relayed path either.
+  ➡️ **Positive evidence, not a failure report:** their client *succeeds* and still gets a null field,
+  so it cannot be pinned on our code, the network, or a browser setting.
+  ➡️ **THE ASK:** *"clear/reset the Direct-vs-Proxy connection-type determination for these cameras."*
+  🔑 The demotion looks **self-perpetuating** — it clears when a Direct attempt succeeds, but nothing
+  can attempt Direct: their clients use proxy, ours needs the config the demotion withholds.
+  🔴 **Do NOT build the Janus proxy path** ([`INVARIANTS.md`](INVARIANTS.md); Omar-L#2). It is the
+  failure fallback — 3-min sessions, no audio — so a perpetual HKSV stream means ~20 forced
+  reconnects/hour, and Janus is a wholly different signaling protocol. Revisit only if Brinks
+  confirm Direct is not coming back.
+  📖 Narrative, the retracted Private-Relay claim, and the two experiments: `Journal.md` 2026-08-06 (later).
 - ⚠️ **`patches/go2rtc-hap-auth-exempt.patch` is load-bearing.** Without it HomeKit cannot pair at
   all while go2rtc API auth is on. Applied with plain `git apply` in `Dockerfile.go2rtc`, so a patch
   that stops applying **fails the build loudly**. 🔴 Report upstream on
