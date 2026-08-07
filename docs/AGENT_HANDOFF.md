@@ -35,12 +35,14 @@ baton, the baton wins.
   takes `package.json`, `package-lock.json`, `tsconfig.json`, `src/`, `entrypoint.sh`; go2rtc takes
   `patches/` plus a pinned commit. ⚠️ Match by PREFIX (`^src/`), not `^src/$` — that anchor silently
   reports "no change".
-- **Working tree:** `git status --short` **and `git stash list`**. Nothing of mine is in flight —
-  this session's work is committed and **NOT pushed**; David had not asked to push.
+- **Working tree:** `git status --short` **and `git stash list`**. Nothing of mine is in flight;
+  this session's work is committed and pushed (verified with `git ls-remote origin refs/heads/main`,
+  not with the printed push output — RTK has reported "Everything up-to-date" for a push that
+  succeeded). ⚠️ Confirm with the commands, not with this line.
   🔴 **`src/` CHANGED this session** (`src/rtsp/tunnel-relay.ts`, `src/config.ts`, `src/index.ts`),
-  so the next deploy **DOES need `--build`**, unlike every previous handoff. ⚠️ Confirm with the
-  commands, not with this line.
-  ⚠️ The NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate* clone.
+  so the next deploy **DOES need `--build`** — unlike every previous handoff, where a pull was enough.
+  ⚠️ Pushing does NOT deploy. The NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate*
+  clone and must be pulled and rebuilt by hand.
 - **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **17 files / 261
   tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
   🔑 The relay's three structural guards were **mutation-checked**, not just written: reverting each
