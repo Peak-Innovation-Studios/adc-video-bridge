@@ -158,7 +158,17 @@ to end:
 ```yaml
 streams:
   front-door: rtsp://<camera-user>:<camera-pass>@${GO2RTC_BIND}:8561/s1
+  backyard:   rtsp://<camera-user>:<camera-pass>@${GO2RTC_BIND}:8562/s1
 ```
+
+🔴 **The camera username is shared but the PASSWORD IS PER CAMERA.** Every camera on the account
+reports the same stock `Login`, and a different `Password`. Copying one stream URL and changing only
+the port therefore produces a 401 from the camera — which surfaces as a stream that is simply
+"offline", with nothing useful logged anywhere. Take each password from that camera's own entry.
+
+⚠️ These are **not** `GO2RTC_RTSP_USERNAME`/`GO2RTC_RTSP_PASSWORD`. Those protect go2rtc's own RTSP
+server (the one Homebridge pulls from) and are unrelated to the cameras — as are
+`GO2RTC_API_*`. Nothing in `.env` changes for local RTSP except `ADC_BRIDGE_RTSP_PORTS`.
 
 **5. Verify** without touching HomeKit:
 
