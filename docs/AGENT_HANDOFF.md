@@ -69,9 +69,12 @@ baton, the baton wins.
   | Sunroom | ADC-V515 | **null** | set | 0 |
 
   **3 of 3, two models — and Kitchen/Sunroom were connected that day, which our bridge has never
-  contacted** (it is configured for one camera). Alarm.com's own web player was failing for every
-  camera at the same time. `errorEnum: 0` beside a null block means their service reports success
-  while omitting the configuration — that pairing is the quotable line for the technician session.
+  contacted** (it is configured for one camera). `errorEnum: 0` beside a null block means their
+  service reports success while omitting the configuration — that pairing is the quotable line for
+  the technician session. 🔴 **RETRACTED: do NOT cite "their own web player fails too."** It was
+  Safari's iCloud Private Relay, not Alarm.com — full detail in [`INVARIANTS.md`](INVARIANTS.md)
+  → the "No video" diagnosis order. The case rests only on the API result, which never involved a
+  browser.
   📖 **Everything else is in `Journal.md` 2026-08-06 and 2026-08-06 (later)**: the three earlier
   states, the two experiments that ruled our code out (do not re-run them), and how the app still
   streams via Alarm.com's Janus relay on their 3-minute no-audio fallback — so the cameras are
@@ -79,11 +82,13 @@ baton, the baton wins.
   🔴 **Do NOT build the Janus proxy path in response** — [`INVARIANTS.md`](INVARIANTS.md); tracked
   upstream as Omar-L#2. ⚠️ Its janus fields are in the payload **always**; the signal is the pair,
   proxy SET **and** e2e null.
-  ✅ **Network path ELIMINATED (2026-08-06).** The Brinks app streams on cellular **and on the same
-  WiFi** where Alarm.com's website fails, so two first-party clients disagree on one network — which
-  no DNS/firewall/routing theory explains. `INVARIANTS.md` says to suspect the network when
-  first-party clients differ; suspected, tested, ruled out. What remains is **transport**: app uses
-  the Janus proxy (works), website and our bridge use end-to-end (no config, fails).
+  ✅ **Network path ELIMINATED (2026-08-06)** — but not by the argument first recorded here. The
+  app-vs-website disagreement turned out to be Private Relay, so that reasoning is void. The
+  elimination that holds is simpler and does not depend on any other client: **the bridge receives a
+  valid, authenticated HTTP 200 with `errorEnum: 0` and one field omitted.** A network fault does not
+  produce a well-formed JSON response missing exactly one key. Also measured: the NAS and David's Mac
+  egress from the **same public IP** (via the LAN gateway; Tailscale installed but
+  not carrying traffic), so the bridge is not on a masked or relayed path either.
 - ⚠️ **`patches/go2rtc-hap-auth-exempt.patch` is load-bearing.** Without it HomeKit cannot pair at
   all while go2rtc API auth is on. Applied with plain `git apply` in `Dockerfile.go2rtc`, so a patch
   that stops applying **fails the build loudly**. 🔴 Report upstream on

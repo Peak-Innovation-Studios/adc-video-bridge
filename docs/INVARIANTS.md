@@ -21,8 +21,18 @@ A full session was spent on 2026-08-03 reaching a confident, well-evidenced, **w
 starting at step 3.
 
 1. **Can Alarm.com's own web player AND phone app stream the camera?** If neither can, stop — it is
-   not our code. **If they disagree with each other, suspect the network path**, because two
-   first-party clients differing cannot be explained by any server-side or protocol theory.
+   not our code. **If they disagree with each other, suspect the CLIENT ENVIRONMENT FIRST, then the
+   network path** — two first-party clients differing cannot be explained by any server-side theory,
+   but it is usually the browser, not the network.
+   🔴 **Measured 2026-08-06: Safari's iCloud Private Relay ("Hide IP address → from Trackers and
+   Websites") stops Alarm.com video loading entirely.** Toggling it off, every camera plays. A masked
+   IP breaks WebRTC. A Safari content blocker was separately blocking `alarm.com/web/api/...` calls.
+   ⚠️ **Neither produces a console error you would recognise** — the blocker's messages look like
+   ad-blocking noise, and Private Relay just yields a player that never starts.
+   ➡️ So before using "their own web player fails" as evidence: retest with Private Relay **off**,
+   content blockers **off**, extensions **off**. It was cited to Brinks-facing notes on 2026-08-06
+   and had to be retracted. **A browser is a noisy instrument; an authenticated API call from a
+   headless box is not. Do not let the noisy one corroborate the quiet one.**
 2. Check camera WiFi signal. Power-cycle it. Re-probe.
 3. Only then read our logs.
 

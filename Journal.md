@@ -27,8 +27,8 @@ camera:
 | Sunroom | ADC-V515 | **null** | set | 0 |
 
 **3 of 3, two models, and two of them connected that day.** The bridge is configured for one camera
-and has never contacted the other two. No mechanism we control reaches them. Alarm.com's own web
-player was also failing for *every* camera at the same time.
+and has never contacted the other two. No mechanism we control reaches them.
+⚠️ **Alarm.com's own web player was also failing at the time — RETRACTED as evidence, see below.**
 
 🔑 **The evidence that settled it came from widening the population, not from deepening the
 analysis.** Everything I did — a wake-probe, a cold probe, reading the token path, the status
@@ -85,30 +85,43 @@ documented failure fallback (3-minute sessions, no audio) while Direct is not pr
 ⚠️ Per `INVARIANTS.md` the janus fields are present *always*; the signal is the **pair** — proxy set
 **and** e2e null.
 
-### The last alternative, eliminated by one question
+### 🔑 The corroborating evidence was measuring David's Safari settings
 
-`INVARIANTS.md` carries a rule from an earlier session: *if Alarm.com's own web player and phone app
-disagree, suspect the **network path**, because two first-party clients differing cannot be explained
-by any server-side or protocol theory.* With the app streaming and the website failing for every
-camera, that rule was pointing somewhere I was not looking.
+`INVARIANTS.md` carries a rule: *if Alarm.com's own web player and phone app disagree, suspect the
+**network path**, because two first-party clients differing cannot be explained by any server-side
+theory.* The app streamed while the website failed for every camera, so I chased that — established
+the app works on cellular **and on the failing website's own WiFi**, declared the network eliminated,
+and wrote the app/website split into the baton as supporting evidence.
 
-It resolved in one question: **the app works on cellular *and* on the same WiFi the failing website
-is on.** Two first-party clients disagreeing on one network cannot be a network fault — the app
-proves that path to Alarm.com is fine. So the rule was right to send us there, and the answer is no.
+**All of that was an artifact.** David found the cause: Safari's **iCloud Private Relay** ("Hide IP
+address → from Trackers and Websites"). Toggling it off, the videos load. A masked IP breaks WebRTC
+generally, so the web player had been failing for an entirely local reason that had nothing to do
+with Alarm.com.
 
-What remains is the only explanation consistent with all of it — the clients use **different
-transports**, and only one is broken:
+Had it reached the technician session, it is precisely the detail that gets a report dismissed —
+their engineer sees Private Relay in the console and stops reading.
 
-| client | transport | result |
-|---|---|---|
-| Brinks app | Janus proxy relay | ✅ works |
-| Alarm.com website | end-to-end WebRTC | ❌ fails |
-| our bridge | end-to-end WebRTC | ❌ fails |
+**It does not transfer to the bridge, and I measured rather than assumed.** The NAS and the Mac
+egress from the *same* public IP (via the LAN gateway; Tailscale installed but not
+carrying traffic), and a re-probe with the website playing still returned **e2e null on all three
+cameras**. So the bridge is not on a masked path, and its failure is not the website's failure.
 
-Everything that fails is on the path with no config; everything that works is on the path that has
-one. ⚠️ Worth closing before the technician session: confirm the website also fails in a second
-browser, so a WebRTC-blocking extension cannot be used to dismiss the report. Our own evidence does
-not depend on it — the null block comes from a Node script with no browser involved.
+The network elimination survives, but on better reasoning that needs no second client: **the bridge
+receives a valid, authenticated HTTP 200 with `errorEnum: 0` and one field omitted.** A network fault
+does not produce a well-formed JSON response missing exactly one key.
+
+🔑 **The lesson is about corroboration, not about Private Relay.** I had one instrument that never
+touched a browser — an authenticated API call from a headless box — and one that ran inside a
+consumer browser with privacy features, extensions and a content blocker. I treated agreement
+between them as strengthening the case. It was not: the second instrument had a failure mode the
+first could not have, so it could agree for reasons of its own. **Corroboration from a noisier
+instrument is not corroboration.** Ask what could make the confirming observation true *by itself*
+before counting it.
+
+That check — *"does the website also fail in a clean browser?"* — is what found Private Relay. It was
+raised as a formality to stop a technician dismissing the report on a stray extension, and it
+overturned the evidence instead. **A caveat worth raising is worth actually running**; this one took
+two minutes and removed a false pillar from the case.
 
 🔑 **Considered inspecting the mobile app's API calls to explain the split, and did not.** It would
 need mitmproxy plus a CA on the phone, and Alarm.com very likely pins certificates, so the likely
