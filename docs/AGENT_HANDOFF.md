@@ -126,6 +126,18 @@ baton, the baton wins.
    mtime in the SAME zone — go2rtc logs UTC, local is UTC-5.
    ⚠️ Whenever this file is edited again: **do not pair/unpair between edit and restart** — go2rtc
    persists its own config, so a write from memory silently reverts the edit.
+   🔴 **UNRESOLVED, and it points at kitchen being TOO SENSITIVE at 4.0.** Relay
+   `totalConnections` read 3 / 3 / 3 before the change and **19 (front) / 198 (kitchen) / 6
+   (sunroom)** ~4.5h after it. Each HKSV recording opens a relay session, so that is roughly one
+   kitchen recording every 83 seconds.
+   🔑 **It is a dose-response match:** kitchen dropped furthest (−1.5) and moved most; front dropped
+   0.5 and moved a little; sunroom was unchanged and barely moved. ⚠️ Three points is a correlation,
+   not proof — and it **cannot be confirmed** while `log:` is at `info`, because `motion: ON` is a
+   DBG line. This is exactly the visibility lost by REMOVING the log key instead of dropping it to
+   `debug`.
+   ➡️ **Ground truth is one glance: does the Home app show ~200 kitchen clips for 2026-08-08?**
+   Flooded ⇒ raise kitchen toward 4.5-5.5. That is the "false positives are visible as clips" bet
+   below coming due.
    🔑 **Why 4.0:** both 4.5 and 5.5 sat ABOVE the weakest real trigger observed (4.46), so they
    risked missing real motion; 4.0 is inside the measured 2.89-4.46 gap. Sunroom left at 3.5 — it is
    the only threshold with direct evidence behind it. ⚠️ That 4.46 trigger MUST have been sunroom
@@ -233,9 +245,13 @@ baton, the baton wins.
    is `LocalRtspEndpoint` via the relay, and the WebRTC path used the cloud. So the exposure buys
    zero function. What it costs is an internet-facing service on three cameras whose firmware you do
    not patch, guarded only by a per-camera password.
-   ➡️ The single control point is **UPnP on the router** — disabling it stops the cameras creating
-   the forwards. Per-camera remote-access settings in Alarm.com are the alternative, but that is
-   three settings to keep right instead of one.
+   ➡️ **DECIDED 2026-08-08: turn it off.** The router is an **eero Pro 7** on the LAN gateway
+   address (identified read-only by SSDP from the NAS; nothing probed from outside). The control is
+   **eero app → Settings → Network Settings → UPnP**. 🔴 **An agent cannot do this** — it is a phone
+   app tied to David's eero account. ⚠️ Disabling UPnP is network-wide: consoles and some P2P apps
+   that open their own ports are affected too.
+   💡 A second IGD answers on the LAN — a Philips Hue bridge. It is not the gateway and is not
+   relevant here; don't chase it.
    ⚠️ **Still not probed from outside, deliberately.** Confirming it from the internet means port
    scanning your own WAN address, which an agent should not do unasked; and a negative result would
    be weak evidence anyway, since UPnP mappings come and go with camera reboots. Check the router's
