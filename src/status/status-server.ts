@@ -14,6 +14,11 @@ export interface StatusServerOptions {
   password: string;
   /** Called per request; must return only non-sensitive operational data. */
   getStatus: () => unknown;
+  /**
+   * Optional. Renders the HomeKit pairing page for `GET /pair`. Absent = the
+   * route does not exist and every path returns diagnostics JSON as before.
+   */
+  getPairPage?: () => Promise<string>;
 }
 
 /**
@@ -62,6 +67,28 @@ export class StatusServer {
         res.writeHead(405).end('Method Not Allowed');
         return;
       }
+
+      // `/pair` renders scannable HomeKit setup codes; everything else keeps
+      // returning the diagnostics JSON, so no existing caller changes.
+      const path = (req.url ?? '/').split('?')[0];
+      if (path === '/pair' && this.opts.getPairPage) {
+        // 🔴 Never let this take down the bridge: it calls out to go2rtc's API,
+        // which can be slow, down, or newly unauthenticated.
+        void this.opts
+          .getPairPage()
+          .then((html) => {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(html);
+          })
+          .catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn('Pair page unavailable: %s', message);
+            res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end(`Pairing codes unavailable: ${message}\n`);
+          });
+        return;
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(this.opts.getStatus()));
     });

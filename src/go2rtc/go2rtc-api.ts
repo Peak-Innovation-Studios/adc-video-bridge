@@ -8,6 +8,24 @@ export interface Go2rtcCredentials {
 }
 
 /**
+ * One HomeKit accessory as go2rtc reports it.
+ *
+ * 🔑 `setupCode` and `setupId` are present ONLY while `paired` is 0. go2rtc
+ * omits them once an accessory is paired, which is exactly when they stop being
+ * useful — so the window in which a pairing secret is served is bounded by
+ * go2rtc itself rather than by anything this code has to remember to enforce.
+ */
+export interface HomekitAccessory {
+  stream: string;
+  name: string;
+  deviceId: string;
+  categoryId: string;
+  paired: number;
+  setupCode?: string;
+  setupId?: string;
+}
+
+/**
  * Lightweight client for the go2rtc REST API.
  * Used for health checks and stream status monitoring.
  */
@@ -80,5 +98,37 @@ export class Go2rtcApi {
       await new Promise((r) => setTimeout(r, 1000));
     }
     throw new Error(`go2rtc not ready after ${timeoutMs}ms`);
+  }
+
+  /**
+   * HomeKit accessories and, for unpaired ones, their setup codes.
+   *
+   * ⚠️ The bridge deliberately cannot read `config/go2rtc.yaml` — that file
+   * holds the HomeKit `device_private` and the container with the Alarm.com
+   * credentials has no business reading it (`SECURITY_AUDIT.md`). Fetching this
+   * over the API preserves that boundary; do not "simplify" it by mounting the
+   * file.
+   */
+  async getHomekitAccessories(): Promise<HomekitAccessory[]> {
+    const res = await fetch(`${this.baseUrl}/api/homekit`, {
+      headers: this.headers,
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) throw new Error(`go2rtc homekit API error: ${res.status}`);
+
+    const body = (await res.json()) as Record<
+      string,
+      { name?: string; device_id?: string; category_id?: string; paired?: number; setup_code?: string; setup_id?: string }
+    >;
+
+    return Object.entries(body ?? {}).map(([stream, v]) => ({
+      stream,
+      name: v.name ?? stream,
+      deviceId: v.device_id ?? '',
+      categoryId: v.category_id ?? '17',
+      paired: v.paired ?? 0,
+      ...(v.setup_code ? { setupCode: v.setup_code } : {}),
+      ...(v.setup_id ? { setupId: v.setup_id } : {}),
+    }));
   }
 }

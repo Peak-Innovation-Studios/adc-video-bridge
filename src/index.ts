@@ -7,6 +7,7 @@ import { Go2rtcApi } from './go2rtc/go2rtc-api.js';
 import { StatusServer } from './status/status-server.js';
 import { AlarmEventListener } from './events/alarm-event-listener.js';
 import { TunnelRelay } from './rtsp/tunnel-relay.js';
+import { renderPairPage } from './status/pair-page.js';
 import type { AppConfig } from './config.js';
 
 const log = createChildLogger('main');
@@ -60,6 +61,7 @@ export async function startTunnelRelays(config: AppConfig): Promise<TunnelRelay[
 export function startStatusServer(
   status: { bindAddress: string; port: number; username?: string; password?: string },
   getStatus: () => unknown,
+  getPairPage?: () => Promise<string>,
 ): StatusServer | null {
   try {
     const server = new StatusServer({
@@ -68,6 +70,7 @@ export function startStatusServer(
       username: status.username ?? '',
       password: status.password ?? '',
       getStatus,
+      ...(getPairPage ? { getPairPage } : {}),
     });
     server.start();
     return server;
@@ -227,7 +230,11 @@ async function main(): Promise<void> {
         // that exists so diagnosis needs no sudo.
         events: eventListener.getDiagnostics(),
         ...(relays.length > 0 ? { relays: relays.map((r) => r.getDiagnostics()) } : {}),
-      }))
+      }),
+      // 🔑 Codes come from go2rtc's API, never from config/go2rtc.yaml — the
+      // bridge deliberately cannot read that file. go2rtc omits a setup code
+      // once its accessory is paired, so the exposure window closes itself.
+      async () => renderPairPage(await go2rtc.getHomekitAccessories()))
     : null;
 
   // Graceful shutdown
