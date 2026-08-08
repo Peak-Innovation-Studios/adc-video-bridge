@@ -225,10 +225,21 @@ baton, the baton wins.
    Offline comparison against a known-good request costs nothing and risks nothing; probing a
    live auth endpoint costs a login against a lockable account. **Exhaust the diff first.**
 
-4. **(David — a decision, not code)** `PublicRtspEndpoint` publishes each camera's port on the **WAN**
-   address: digest-auth RTSP behind a self-signed certificate that expired Dec 2024, reachable from
-   the internet, almost certainly created by UPnP. Not probed from outside. Worth deciding on
-   deliberately rather than inheriting. ⚠️ More pointed now that local RTSP is the production path.
+4. 🔴 **(DAVID — a decision only you can make; an agent cannot execute or verify it.)**
+   `PublicRtspEndpoint` publishes each camera's port on the **WAN** address: digest-auth RTSP behind
+   a self-signed certificate that expired Dec 2024, reachable from the internet, almost certainly
+   created by UPnP.
+   🔑 **Recommendation: turn it off.** Nothing in this project has ever used it — the production path
+   is `LocalRtspEndpoint` via the relay, and the WebRTC path used the cloud. So the exposure buys
+   zero function. What it costs is an internet-facing service on three cameras whose firmware you do
+   not patch, guarded only by a per-camera password.
+   ➡️ The single control point is **UPnP on the router** — disabling it stops the cameras creating
+   the forwards. Per-camera remote-access settings in Alarm.com are the alternative, but that is
+   three settings to keep right instead of one.
+   ⚠️ **Still not probed from outside, deliberately.** Confirming it from the internet means port
+   scanning your own WAN address, which an agent should not do unasked; and a negative result would
+   be weak evidence anyway, since UPnP mappings come and go with camera reboots. Check the router's
+   UPnP table instead — that is the authoritative view and it needs no probing.
 
 5. ✅ **DONE ON DISK 2026-08-08 — `api.local_auth: true`. ⏳ NOT LIVE until go2rtc restarts.**
    `verify:config` is now **0 blocking, 0 warnings** (was 1 warning all session). Backup:
@@ -289,11 +300,31 @@ baton, the baton wins.
    data does get closed. Checked 2026-08-08; do not "add" it again.
    🔑 Both defects are the trap `README.md` documents one layer up — *"did not produce a usable
    result"* is the failure, not *"threw"* — never applied downward. 📖 `Journal.md` 2026-08-06.
-9. *(David — after item 2 verifies)* **Remove the Homebridge camera accessory** and its config. Until
-   then both accessories exist deliberately — that is the documented cutover.
-10. **(David — 1 min)** `/volume1/homebridge/config.json` is **775**; world-read remains, and
-   `INVARIANTS.md` sets 600 as the standard. ⚠️ Re-check after any Homebridge settings change: the
-   volume's default ACL is 0777 and the UI rewrites the file.
+9. ✅ **DONE ON DISK 2026-08-08 — ⏳ needs a Homebridge restart to take effect.**
+   The `Camera-ffmpeg` platform (one camera, "Front Camera") is removed from
+   `/volume1/homebridge/config.json`: 8 platforms → 7, JSON re-parses, `accessories` untouched.
+   🔑 **`Alarmdotcom` is deliberately KEPT** — that platform is the alarm panel, sensors and locks,
+   nothing to do with video. Verify it survived before restarting.
+   Backup: `/volume1/homebridge/config.json.bak-20260808-160405`. ⚠️ It is owned by **dpeak (1027)**,
+   not the homebridge user (108668), because an ssh session created it — `chown` it back before
+   restoring, or Homebridge cannot read it.
+   ⚠️ **User-visible on restart:** "Front Camera" disappears from the Home app, automations
+   referencing it break, and its HKSV history goes. The native go2rtc "Front" accessory is separate
+   and unaffected.
+   💡 The bridge side needed nothing — `config.yaml` has had no `homebridge:` section for a while,
+   so no motion was being posted there anyway.
+
+10. 🔴 **(David — needs sudo) `/volume1/homebridge/config.json` is `777`, not the `775` recorded
+    here — it is world-WRITABLE.** Any account on the NAS can rewrite Homebridge's config.
+    `INVARIANTS.md` sets 600 as the standard.
+    ```
+    sudo chmod 600 /volume1/homebridge/config.json
+    ```
+    ⚠️ **An agent cannot do this**: the file is owned by uid 108668 (homebridge) and an ssh session
+    is uid 1027, so `chmod` returns "Operation not permitted".
+    ⚠️ **Not durable.** The volume's default ACL is 0777 and the Homebridge UI rewrites the file, so
+    this resets. Re-check after any Homebridge settings change — writing to the file through the UI
+    or a script re-inherits the ACL, which is how it reached 777.
 11. 🚫 **MOOT on the production path — do not pick this up as written.** `-reorder_queue_size 0`
     is an **ffmpeg** flag, and since local RTSP was adopted there is **no ffmpeg in the media
     path** — go2rtc pulls the relay with its native client. The `Non-monotonic DTS` lines came
