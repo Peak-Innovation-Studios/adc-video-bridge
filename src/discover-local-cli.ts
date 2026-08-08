@@ -26,7 +26,9 @@ import { applyMerge } from './config-writer-fs.js';
  *   ADC_USERNAME, ADC_PASSWORD           account login
  *   ADC_MOBILE_DEVICE_UID                stable per-install UUID (generated if unset)
  *   ADC_MOBILE_TWO_FACTOR_ID             trusted-device token, if the account uses 2FA
- *   ADC_MOBILE_HASH_CODE                 the app's HashCode, if the server requires it
+ *   ADC_MOBILE_HASH_CODE                 the app's HashCode — stable per install, reusable
+ *   ADC_MOBILE_HAIKU                     🔴 REQUIRED. Without it the API returns an empty
+ *                                        body that looks exactly like a rejected sign-in.
  *
  * 🔴 Runs ONE login request and never retries — Alarm.com bans accounts that
  * poll authentication endpoints. If it fails, fix the input and run it again by
@@ -89,6 +91,25 @@ async function main(): Promise<void> {
   const deviceUid = process.env.ADC_MOBILE_DEVICE_UID?.trim() || randomUUID().toUpperCase();
   const twoFactorId = process.env.ADC_MOBILE_TWO_FACTOR_ID?.trim();
   const hashCode = process.env.ADC_MOBILE_HASH_CODE?.trim();
+  const haiku = process.env.ADC_MOBILE_HAIKU?.trim();
+
+  // 🔴 Refuse BEFORE spending a login. Measured 2026-08-08: a request without
+  // `Haiku` returns HTTP 200 with a zero-byte body — indistinguishable from a
+  // rejected sign-in — and Alarm.com bans accounts that poll authentication.
+  // The library keeps this optional (it should not impose policy); the CLI is
+  // opinionated, because here the cost of finding out is a real login.
+  if (!haiku) {
+    fail(
+      'ADC_MOBILE_HAIKU is not set, and without it Alarm.com returns an empty body that looks\n' +
+        'exactly like a rejected sign-in. Refusing to spend a login attempt on a request already\n' +
+        'known to be incomplete.\n\n' +
+        'Extract it from a proxied capture of the phone app\'s login (it is ~60 characters, ten\n' +
+        'words separated by spaces):\n\n' +
+        "  grep -ohE 'Haiku=[^&]+' <capture> | head -1\n\n" +
+        'See docs/MOBILE_API.md. If you have reason to believe the field is not required, call\n' +
+        'mobileLogin() directly — the library does not enforce this.',
+    );
+  }
 
   const result = await mobileLogin({
     username,
@@ -96,6 +117,7 @@ async function main(): Promise<void> {
     deviceUid,
     ...(twoFactorId ? { twoFactorId } : {}),
     ...(hashCode ? { hashCode } : {}),
+    ...(haiku ? { haiku } : {}),
   });
 
   const usable = result.cameras.filter((c) => c.localRtsp);

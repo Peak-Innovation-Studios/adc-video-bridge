@@ -41,13 +41,29 @@ export interface MobileLoginOptions {
    */
   twoFactorId?: string;
   /**
-   * Observed in the app's login as `HashCode`. ⚠️ Whether the server validates
-   * it is UNKNOWN, and the attempts that would have told us are probably
-   * contaminated by rate limiting — see `docs/MOBILE_API.md`. Pass it if you
-   * have one; the client never invents a value, since a captured one may be
-   * account-specific.
+   * Observed in the app's login as `HashCode` — a stable 10-digit per-install
+   * value. 🔑 **A captured one is reusable.** It looks like a Unix timestamp
+   * because of its width, and it is NOT: measured 2026-08-08 against the
+   * capture's own `startedDateTime`, it is off by ~1188 days, so nothing about
+   * it goes stale. The client never invents one — it is per-install.
    */
   hashCode?: string;
+  /**
+   * 🔴 **`Haiku` — the field whose ABSENCE produced every empty-body response.**
+   *
+   * The app sends 24 body fields; this client sent 23, and `Haiku` was the one
+   * missing. `docs/MOBILE_API.md` records that an incomplete field set makes
+   * the handler bail with HTTP 200 and a zero-byte body — no code, no message —
+   * which is exactly what was measured on 2026-08-07 (nine times) and again on
+   * 2026-08-08 after a ~15-hour cold start. ⚠️ **That second measurement is why
+   * this is not a rate limit:** a throttle does not survive 15 hours of silence.
+   *
+   * The name is literal. The value is ~60 characters, all letters, ten words
+   * separated by spaces and terminated with a period — a human-readable device
+   * fingerprint, and a per-install secret. Capture it from the app's login; the
+   * client never invents one.
+   */
+  haiku?: string;
   /** Test seam. Defaults to `globalThis.fetch`. */
   fetchImpl?: typeof fetch;
 }
@@ -142,8 +158,21 @@ export function parseLoginResponse(xml: string, context = ''): MobileLoginResult
     // login attempt against an account Alarm.com can lock.
     const preview = xml.slice(0, 160).replace(/\s+/g, ' ').trim();
     const shape = xml.length === 0 ? 'EMPTY body' : `${xml.length} chars starting: ${preview}`;
+    // 🔑 A zero-byte 200 has one known cause, so say it rather than making the
+    // next person rediscover it across nine logins. It is NOT a rate limit —
+    // the same response came back after a ~15-hour cold start on 2026-08-08.
+    const diagnosis =
+      xml.length === 0
+        ? '\n\n🔑 A zero-byte HTTP 200 means the handler rejected the request SHAPE, not the ' +
+          'credentials — it bails without a code or message. The known cause is a MISSING BODY ' +
+          'FIELD: the app sends 24, and `Haiku` is the one most easily missed (set ' +
+          'ADC_MOBILE_HAIKU). ⚠️ This is NOT rate limiting — the identical response came back ' +
+          'after a 15-hour cold start. Do NOT retry by varying fields: nine such attempts ' +
+          'produced one real datum and a lot of noise. Diff your request against a capture of ' +
+          'the app instead — that costs no logins. See docs/MOBILE_API.md.'
+        : '';
     throw new MobileApiError(
-      `response is not a <lnr> login document — got ${shape}${context ? ` (${context})` : ''}`,
+      `response is not a <lnr> login document — got ${shape}${context ? ` (${context})` : ''}${diagnosis}`,
     );
   }
   const lnr = attributes(root[1]!);
@@ -193,10 +222,15 @@ export async function mobileLogin(options: MobileLoginOptions): Promise<MobileLo
     Password: options.password,
     MobileDeviceUid: options.deviceUid,
     ...(options.twoFactorId ? { TwoFactorId: options.twoFactorId } : {}),
-    // 🔴 Send the app's FULL field set. Measured 2026-08-07: a minimal request
-    // (Action/Username/Password/DeviceUid) returns HTTP 200 with a body that is
-    // not a <lnr> document at all — the handler bails without an error. There
-    // is no way to tell which field it wants, so send them all.
+    // 🔴 Send the app's FULL field set — all 24. Measured 2026-08-07: a request
+    // missing any of them returns HTTP 200 with a zero-byte body — no code, no
+    // message, the handler simply bails. There is no way to tell WHICH field it
+    // wanted, so send them all.
+    // ⚠️ This list was verified field-by-field against a HAR of the real app on
+    // 2026-08-08: every constant below matches the app's value exactly, and the
+    // only discrepancy was `Haiku`, which was missing entirely. Do not "tidy"
+    // an unused-looking field out of here — absence is indistinguishable from a
+    // rejected login, and each test costs a login against a lockable account.
     UseNewSessionManager: 'true',
     RememberMe: 'True',
     DeviceFlavor: '1',
@@ -215,6 +249,7 @@ export async function mobileLogin(options: MobileLoginOptions): Promise<MobileLo
     IncludeAlarmModeEventsFilter: 'true',
     PerformPushDeviceTokenCheck: 'True',
     ...(options.hashCode ? { HashCode: options.hashCode } : {}),
+    ...(options.haiku ? { Haiku: options.haiku } : {}),
   });
 
   const doFetch = options.fetchImpl ?? fetch;

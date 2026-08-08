@@ -152,6 +152,98 @@ describe('mobileLogin', () => {
     expect(new URLSearchParams(String((spy.mock.calls[0]![1] as RequestInit).body)).has('HashCode')).toBe(false);
   });
 
+  /**
+   * 🔴 `Haiku` is the field whose absence produced every empty-body response.
+   * The app sends 24 body fields; this client sent 23. Verified field-by-field
+   * against a HAR of the real app, 2026-08-08.
+   */
+  it('sends Haiku when supplied', async () => {
+    const spy = vi.fn(async () => new Response(LOGIN_XML, { status: 200 }));
+    await mobileLogin({
+      username: 'a', password: 'b', deviceUid: 'c', haiku: 'ten words separated by spaces.',
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    const sent = new URLSearchParams(String((spy.mock.calls[0]![1] as RequestInit).body));
+    expect(sent.get('Haiku')).toBe('ten words separated by spaces.');
+  });
+
+  it('omits Haiku unless one is supplied — the library imposes no policy', async () => {
+    const spy = vi.fn(async () => new Response(LOGIN_XML, { status: 200 }));
+    await mobileLogin({ username: 'a', password: 'b', deviceUid: 'c', fetchImpl: spy as unknown as typeof fetch });
+    expect(new URLSearchParams(String((spy.mock.calls[0]![1] as RequestInit).body)).has('Haiku')).toBe(false);
+  });
+
+  /**
+   * The app's own request is the specification. This pins the whole set so a
+   * later "tidy-up" cannot silently drop a field — absence is indistinguishable
+   * from a rejected login, and each test of it costs a real login attempt.
+   */
+  it('sends all 24 fields the app sends when every captured value is supplied', async () => {
+    const spy = vi.fn(async () => new Response(LOGIN_XML, { status: 200 }));
+    await mobileLogin({
+      username: 'a', password: 'b', deviceUid: 'c',
+      twoFactorId: 'tf', hashCode: '1234567890', haiku: 'a b c.',
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    const sent = new URLSearchParams(String((spy.mock.calls[0]![1] as RequestInit).body));
+    const APP_FIELDS = [
+      'MobileDeviceType', 'IncludeRealTimeUpdates', 'RememberMe', 'Action', 'Password',
+      'GmtOffsetMinutes', 'HashCode', 'Username', 'Culture', 'IncludeDealerBranding',
+      'IncludeDashboard', 'PerformPushDeviceTokenCheck', 'BuildString', 'TwoFactorId',
+      'IncludePushSettings', 'DeviceFlavor', 'MobileManufacturer', 'MobileDeviceUid',
+      'IncludeAlarmModeEventsFilter', 'MobileDeviceModel', 'Haiku', 'ApplicationBuildNumber',
+      'MobileDeviceOsVersion', 'UseNewSessionManager',
+    ];
+    for (const k of APP_FIELDS) expect(sent.has(k), `missing ${k}`).toBe(true);
+    expect([...sent.keys()].length).toBe(APP_FIELDS.length);
+  });
+
+  // Values verified against the app's capture, 2026-08-08 — these are not guesses.
+  it('matches the app on every hardcoded constant', async () => {
+    const spy = vi.fn(async () => new Response(LOGIN_XML, { status: 200 }));
+    await mobileLogin({ username: 'a', password: 'b', deviceUid: 'c', fetchImpl: spy as unknown as typeof fetch });
+    const sent = new URLSearchParams(String((spy.mock.calls[0]![1] as RequestInit).body));
+    for (const [k, v] of Object.entries({
+      MobileDeviceType: '1', IncludeRealTimeUpdates: 'true', RememberMe: 'True',
+      Action: 'UberLoginNew', Culture: 'en-US', IncludeDealerBranding: 'true',
+      IncludeDashboard: 'true', PerformPushDeviceTokenCheck: 'True', BuildString: '5.13.1',
+      IncludePushSettings: 'true', DeviceFlavor: '1', MobileManufacturer: 'Apple',
+      IncludeAlarmModeEventsFilter: 'true', MobileDeviceModel: 'iPhone',
+      ApplicationBuildNumber: '2051', MobileDeviceOsVersion: '27.0', UseNewSessionManager: 'true',
+    })) {
+      expect(sent.get(k), `${k} differs from the app`).toBe(v);
+    }
+  });
+
+  /**
+   * 🔑 The API answers an incomplete request with silence, so the client must
+   * translate it. A bare "not a login document" sent the last investigation
+   * down a rate-limit path for nine attempts.
+   */
+  it('explains the zero-byte body instead of just reporting it', async () => {
+    await expect(
+      mobileLogin({ username: 'a', password: 'b', deviceUid: 'c', fetchImpl: ok('') }),
+    ).rejects.toThrow(/Haiku|missing body field/i);
+  });
+
+  it('does not claim rate limiting for an empty body, and says not to permute', async () => {
+    const err = await mobileLogin({
+      username: 'a', password: 'b', deviceUid: 'c', fetchImpl: ok(''),
+    }).catch((e: Error) => e);
+    expect(String(err)).toMatch(/NOT rate limiting/i);
+    expect(String(err)).toMatch(/do not retry by varying fields/i);
+  });
+
+  // Positive control: the diagnosis must NOT be bolted onto every parse failure,
+  // only the zero-byte one. A non-empty non-<lnr> body is a different problem.
+  it('does not attach the empty-body diagnosis to a non-empty bad body', async () => {
+    const err = await mobileLogin({
+      username: 'a', password: 'b', deviceUid: 'c', fetchImpl: ok('<html>error</html>'),
+    }).catch((e: Error) => e);
+    expect(String(err)).not.toMatch(/Haiku/);
+    expect(String(err)).toMatch(/not a <lnr> login document/);
+  });
+
   it('posts UberLoginNew with the credentials form-encoded', async () => {
     const spy = vi.fn(async () => new Response(LOGIN_XML, { status: 200 }));
     await mobileLogin({

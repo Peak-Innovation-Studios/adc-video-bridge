@@ -168,17 +168,26 @@ baton, the baton wins.
    `UnitId`+`did` which reconstruct the web API's camera id. No second call needed.
    Built: `src/mobile/mobile-api.ts` + `npm run discover:local`, which prints paste-ready
    blocks for all three config files.
-   ❓ **A live sign-in has NOT yet succeeded, and the evidence is contaminated.** ~9 attempts
-   were made in one evening; the FIRST returned a parseable `<lnr lr="1">`, and **every one
-   after returned an empty body regardless of what was varied** — including the app's exact
-   captured field set. 🔑 **That fits RATE LIMITING, not field validation**, so the conclusions
-   drawn from the later attempts are unreliable.
-   ➡️ **Next: wait several hours for a cold start, then make ONE attempt** with the captured
-   `ADC_MOBILE_DEVICE_UID`, `ADC_MOBILE_TWO_FACTOR_ID` and `ADC_MOBILE_HASH_CODE`, and judge
-   from that single result. 🔴 **Do not permute** — that is what produced the noise.
-   🔎 Three traps already paid for: a minimal field set returns a non-`<lnr>` body with no
-   error; the response is **gzipped and `fetch` does not decode it**; and a REJECTED login
-   still returns HTTP 200, so only `lr` distinguishes success.
+   🔴 **DIAGNOSED 2026-08-08 — it was never a rate limit. A BODY FIELD WAS MISSING: `Haiku`.**
+   The cold-start test refuted the throttle theory: after ~15 hours of silence, one attempt with
+   the full captured field set returned the **byte-identical** empty body (`HTTP 200,
+   content-encoding=none, 0 raw bytes`). **A throttle does not survive 15 hours.**
+   🔑 **The answer then cost ZERO logins.** Diffing the app's HAR *structurally* — field and
+   header NAMES only, never values — showed the app sends **24** body fields and this client sent
+   **23**; the one name missing was `Haiku`. ✅ Fixed: `haiku` option + `ADC_MOBILE_HAIKU`, and
+   the CLI now **refuses to run without it** rather than spend a login on a known-bad request.
+   ✅ Two more findings from the same offline diff: **all 18 hardcoded constants already matched
+   the app exactly**, and **`HashCode` is NOT a timestamp** (off by ~1188 days from the capture's
+   own `startedDateTime`) — it is stable per install and a captured one is reusable.
+   ➡️ **Next: ONE attempt with `ADC_MOBILE_HAIKU` set.** 🔴 Still do not permute.
+   🔎 Traps already paid for: an incomplete field set returns a **zero-byte** body with no error
+   (the client now explains this in the error rather than reporting it); the response is
+   **gzipped and `fetch` does not decode it**; and a REJECTED login still returns HTTP 200, so
+   only `lr` distinguishes success.
+   🔑 **The generalisable lesson, and it is the expensive one:** the refutation AND the answer
+   both came from evidence **already on disk** — the capture predates all nine attempts.
+   Offline comparison against a known-good request costs nothing and risks nothing; probing a
+   live auth endpoint costs a login against a lockable account. **Exhaust the diff first.**
 
 4. **(David — a decision, not code)** `PublicRtspEndpoint` publishes each camera's port on the **WAN**
    address: digest-auth RTSP behind a self-signed certificate that expired Dec 2024, reachable from

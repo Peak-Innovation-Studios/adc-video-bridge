@@ -11,9 +11,11 @@ and impossible to ask of anyone adopting this project.
 🔑 **Closing that gap is the single highest-value piece of work remaining.** With a client
 here, onboarding becomes "type your Alarm.com username and password"; without it,
 onboarding requires a TLS-intercepting proxy and a trusted CA certificate on a phone.
-⚠️ **Status: the client is BUILT and unit-tested, but no live sign-in has succeeded yet.**
-See "Measured, but PROBABLY CONFOUNDED" below — the remaining evidence is likely rate-limit
-noise, so the next step is one attempt from a cold start, not more code.
+⚠️ **Status: the client is BUILT and unit-tested; no live sign-in has succeeded yet, but the
+cause is now KNOWN and fixed in code.** The request was missing a body field — `Haiku` — and
+Alarm.com answers an incomplete request with a zero-byte HTTP 200 that is indistinguishable
+from a rejected sign-in. See "The empty body was never a rate limit" below. The next attempt
+needs `ADC_MOBILE_HAIKU` set; the CLI now refuses to run without it rather than spend a login.
 
 ---
 
@@ -58,8 +60,31 @@ Content-Type: application/x-www-form-urlencoded
 User-Agent: MoniAlarm/<version> CFNetwork/<v> Darwin/<v>
 
 Action=UberLoginNew&Username=<email>&Password=<PLAINTEXT>&MobileDeviceUid=<uuid>
-&TwoFactorId=<trusted-device token>&… ~18 more client-identification fields
+&TwoFactorId=<trusted-device token>&HashCode=<10 digits>&Haiku=<ten words.>
+&… 17 more client-identification constants
 ```
+
+🔴 **24 body fields, and ALL of them are required.** A request missing any one returns HTTP 200
+with a zero-byte body — no code, no message, nothing to distinguish it from a rejected sign-in.
+The full list, verified against a HAR of the real app on 2026-08-08 and pinned by a test:
+
+```
+Action  Username  Password  MobileDeviceUid  TwoFactorId  HashCode  Haiku
+UseNewSessionManager  RememberMe  DeviceFlavor  MobileDeviceType  Culture
+MobileManufacturer  MobileDeviceModel  MobileDeviceOsVersion  ApplicationBuildNumber
+BuildString  GmtOffsetMinutes  IncludeRealTimeUpdates  IncludeDealerBranding
+IncludeDashboard  IncludePushSettings  IncludeAlarmModeEventsFilter
+PerformPushDeviceTokenCheck
+```
+
+**The four that must be captured per install** — the rest are constants in `mobile-api.ts`:
+
+| field | shape | notes |
+|---|---|---|
+| `MobileDeviceUid` | UUID, 36 chars | trusted-device state is tied to it; persist it |
+| `TwoFactorId` | 73 chars, UUID-ish | rotates on another sign-in |
+| `HashCode` | 10 digits | ✅ stable per install, reusable — **not** a timestamp |
+| `Haiku` | ~60 chars, ten words separated by spaces, ending `.` | 🔴 the field whose absence caused every empty body. The name is literal — it is a human-readable device fingerprint, all letters, no digits |
 
 🔑 **The password is sent in PLAINTEXT — there is no key derivation to reverse.** An earlier
 hypothesis that the 32-hex `Password` on other calls was a hash of the account password was
@@ -92,23 +117,42 @@ reconstruct the **web API's** camera id, so the two surfaces correlate without a
   document at all. There is no status code, message, or distinction between causes. Any client
   built against this must translate that silence into an explanation, because the API gives none.
 
-### ⚠️ Measured, but PROBABLY CONFOUNDED — do not build on these
+### 🔴 RESOLVED — the empty body was never a rate limit. A field was missing.
 
-A sequence of ~9 sign-in attempts was made in one evening while varying `MobileDeviceUid`,
-`TwoFactorId`, the field set and `HashCode`. The **first** attempts returned parseable `<lnr>`
-documents; **every attempt after that returned an empty body regardless of what was varied**,
-including a repeat of the app's complete field set with captured values.
+**The cause is `Haiku`, a 24th body field this client did not send.**
 
-🔑 **That pattern fits RATE LIMITING far better than it fits field validation.** `README.md`
-already documents Alarm.com banning accounts that poll. If the later responses were throttle
-responses, then the conclusions drawn from them — "TwoFactorId is validated", "the device UID
-must be known", "HashCode is required" — are measurements of the throttle, not of the API.
+The history: ~9 sign-in attempts in one evening (2026-08-07) varying `MobileDeviceUid`,
+`TwoFactorId`, the field set and `HashCode`. The first returned `<lnr lr="1">`; every one
+after returned an empty body regardless of what was varied. That was read as rate limiting,
+because it fits — `README.md` documents Alarm.com banning accounts that poll.
 
-➡️ **Retry from a cold start**: leave it alone for several hours, then make **ONE** attempt
-with the app's exact captured values. Judge from that single result. Do not permute.
+🔑 **The cold-start test refuted it.** On 2026-08-08, after ~15 hours of silence, a single
+attempt with the full captured field set returned the **byte-identical** empty body
+(`HTTP 200, content-encoding=none, 0 raw bytes`). **A throttle does not survive 15 hours.**
+That one measurement moved the diagnosis from "we were punished" to "our request is wrong".
 
-⚠️ The lesson generalises past this API: **when every variation returns the same failure, stop
-varying and suspect the channel.** Nine attempts produced one real datum and a lot of noise.
+🔑 **The answer then cost ZERO further logins.** A HAR of the real app was already on disk.
+Diffing *structure only* — field and header names, never values — showed the app sends **24**
+body fields and this client sent **23**. The single name absent from ours was `Haiku`.
+
+Two further findings from the same offline diff, both worth having:
+
+- ✅ **Every one of the 18 hardcoded constants already matched the app exactly** — `RememberMe:
+  "True"`, `BuildString: "5.13.1"`, `ApplicationBuildNumber: "2051"`, `GmtOffsetMinutes: "-300"`,
+  all of them. The values were never the problem, so nothing there needs revisiting.
+- ✅ **`HashCode` is NOT a timestamp.** Its 10-digit width suggests Unix epoch seconds, which
+  would make a captured one stale by construction. Tested against the capture's own
+  `startedDateTime`: off by ~1188 days. It is a **stable per-install value and a captured one is
+  reusable.**
+
+⚠️ **Two lessons, and the second is the expensive one.**
+**(1)** When every variation returns the same failure, stop varying and suspect the channel —
+nine attempts produced one real datum and a lot of noise.
+**(2)** 🔴 **The refutation and the answer both came from evidence already sitting on disk.**
+The capture that identified the missing field was captured *before* the nine attempts began.
+Diffing your request against a known-good one costs nothing and risks nothing; probing a live
+authentication endpoint costs a login against an account that can be locked. **Exhaust the
+offline comparison first.**
 
 ## What is built
 
@@ -124,9 +168,21 @@ varying and suspect the channel.** Nine attempts produced one real datum and a l
 
 ```bash
 export ADC_USERNAME=... ADC_PASSWORD=...
+export ADC_MOBILE_HAIKU=...             # 🔴 REQUIRED — see the field table above
+export ADC_MOBILE_DEVICE_UID=...        # persist it; trusted-device state is tied to it
 export ADC_MOBILE_TWO_FACTOR_ID=...     # if the account uses 2FA
+export ADC_MOBILE_HASH_CODE=...         # stable per install, reusable
 npm run discover:local                  # print the blocks
 npm run discover:local -- --write       # or merge them in place
+```
+
+🔴 **The CLI REFUSES to run without `ADC_MOBILE_HAIKU`**, rather than spend a login attempt on a
+request already known to be incomplete. The *library* keeps it optional — `mobileLogin()` should
+not impose policy — but at the CLI the cost of finding out is a real login against a lockable
+account. Pull it from a proxied capture of the app's login:
+
+```bash
+grep -ohE 'Haiku=[^&]+' <capture-file> | head -1
 ```
 
 ### What `--write` will and will not do
