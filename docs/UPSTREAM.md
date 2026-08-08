@@ -94,6 +94,17 @@ has and we do not — they are the only places their tree carries something ours
 
 ## Open issues and other contributions
 
+- 🔑 [#35](https://github.com/Omar-L/adc-video-bridge/issues/35) — **filed 2026-08-08: cameras
+  publish a local RTSP endpoint on the LAN.** The finding that overturns this project's founding
+  premise, offered upstream rather than kept in the fork. Explains what it makes moot (#7, #10),
+  what it solves differently (#2), and what it improves (#11), plus the honest catch: it still needs
+  one proxied capture of the app for the device fields.
+  ➡️ **Ends with a question worth watching for an answer to:** whether `Haiku` is per-install or a
+  client constant. Anyone else's capture settles it, and if it is a constant the proxy step
+  disappears for everyone.
+  ⚠️ Deliberately framed as "do you want this here at all" rather than a PR — it is an architectural
+  change, not a patch, and Omar has not asked for it.
+
 - [#25](https://github.com/Omar-L/adc-video-bridge/issues/25) — measured ~1.2s media gap at token
   refresh. ✅ **Fixed on our `main`** by the make-before-break merge (2026-08-04); not yet offered
   upstream as a PR.
