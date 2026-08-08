@@ -5,8 +5,13 @@ End-to-end walkthrough for deploying adc-video-bridge on a server and connecting
 ## Prerequisites
 
 - A server or machine that can run Docker (Linux, macOS, etc.)
-- An Alarm.com account with cameras that support end-to-end WebRTC streaming (e.g. ADC-V723)
-- [Homebridge](https://homebridge.io) with the maintained [`@homebridge-plugins/homebridge-camera-ffmpeg`](https://github.com/homebridge-plugins/homebridge-camera-ffmpeg) plugin installed
+- An Alarm.com account with cameras. 🔑 **Two paths, and which one you need depends on the model:**
+  - **Local RTSP** (recommended, and the ONLY option for ADC-V515 and anything else reporting
+    `SupportsWebRTC: false`) — see Step 2b
+  - **WebRTC** (the original path) — needs a camera supporting end-to-end WebRTC, e.g. ADC-V723
+- [Homebridge](https://homebridge.io) with [`@homebridge-plugins/homebridge-camera-ffmpeg`](https://github.com/homebridge-plugins/homebridge-camera-ffmpeg)
+  — ⚠️ **optional.** go2rtc now serves HomeKit natively (live view and HKSV), so Homebridge is not
+  required for video. Steps 4-5 below are only for the legacy Homebridge camera path.
 
 Use a dedicated Alarm.com login with only camera-viewing permissions when your provider supports one.
 
@@ -126,8 +131,10 @@ with no ffmpeg in the media path at all.
 
 **1. Get each camera's endpoint.** `host` and `port` come from `LocalRtspEndpoint` in the
 `mobile.alarm.com` camera list, together with a per-camera `Login`/`Password`. ⚠️ The port is a
-per-camera HIGH port, not 554. The bridge cannot fetch these itself yet — see
-[`INVARIANTS.md`](INVARIANTS.md) → "What the local-RTSP spike did NOT prove".
+per-camera HIGH port, not 554.
+🔴 **The bridge cannot fetch these itself yet** — they exist only on Alarm.com's mobile API, so
+today they are read from a proxied capture of the phone app. This is the main barrier to adoption
+and the work that would remove it is specified in [`MOBILE_API.md`](MOBILE_API.md).
 
 **2. `config/config.yaml`** — add a `localRtsp` block to the camera. No credentials go here:
 
@@ -161,6 +168,36 @@ streams:
   backyard:   rtsp://<camera-user>:<camera-pass>@${GO2RTC_BIND}:8562/s1
 ```
 
+**4b. Motion — decide where the trigger comes from.** Add to each `homekit:` entry:
+
+```yaml
+homekit:
+  front-door:
+    pin: "370-30-214"        # quote it, or write it XXX-XX-XXX
+    name: "Front Door"       # this is the name shown in the Home app
+    hksv: true
+    motion: detect           # go2rtc detects motion itself — no Alarm.com needed
+    motion_threshold: 3.5    # per SCENE, not per install; see below
+```
+
+| mode | trigger | dependency |
+|---|---|---|
+| `detect` | go2rtc analyses H.264 P-frame sizes | **none** |
+| `api` | the bridge forwards Alarm.com motion events | an Alarm.com **notification rule** |
+| `continuous` | always recording | none |
+
+🔴 **`motion: api` fails silently without a rule on Alarm.com's side.** The accessory pairs,
+live view works, the event socket connects — and HKSV never records, because Alarm.com only
+emits motion events from a configured notification rule. `npm run verify:config` warns about it.
+
+⚠️ **`motion_threshold` is a property of the SCENE, not of the software.** A dim room produces
+enough sensor noise in the H.264 P-frames to trip the default of `2.0` with nobody present, and
+different rooms in the same house need different values. Expect to tune per camera, and expect
+evening values to be conservative for daylight. Higher = less sensitive.
+
+🔑 **The pin belongs in quotes, or written with dashes.** Unquoted `09526946` parses as the
+number 9526946 — YAML drops the leading zero silently, and go2rtc then rejects a 7-digit pin.
+
 🔴 **The camera username is shared but the PASSWORD IS PER CAMERA.** Every camera on the account
 reports the same stock `Login`, and a different `Password`. Copying one stream URL and changing only
 the port therefore produces a 401 from the camera — which surfaces as a stream that is simply
@@ -170,7 +207,22 @@ the port therefore produces a 401 from the camera — which surfaces as a stream
 server (the one Homebridge pulls from) and are unrelated to the cameras — as are
 `GO2RTC_API_*`. Nothing in `.env` changes for local RTSP except `ADC_BRIDGE_RTSP_PORTS`.
 
-**5. Verify** without touching HomeKit:
+**5. Check the three files agree** — they can disagree silently, and every way they can was
+found the hard way:
+
+```bash
+npm run verify:config -- .
+```
+
+It cross-checks `config.yaml`, `go2rtc.yaml` and `.env`: relay ports that compose never
+publishes, `homekit:` blocks with no matching stream, duplicate YAML keys, empty stream
+sources, pin format, motion modes, wildcard binds. Non-zero exit on anything blocking.
+
+🔴 **A duplicate key ANYWHERE in `go2rtc.yaml` disables every config write go2rtc makes** —
+including HomeKit pairings, which then exist only in memory and vanish on restart. The checker
+strict-parses for exactly this.
+
+**6. Verify the video** without touching HomeKit:
 
 ```bash
 ffprobe -rtsp_transport tcp -i "rtsp://<camera-user>:<camera-pass>@<server-ip>:8561/s1"
@@ -178,6 +230,23 @@ ffprobe -rtsp_transport tcp -i "rtsp://<camera-user>:<camera-pass>@<server-ip>:8
 
 Expect `Video: h264 (Main) ... 1920x1080 ... 10 fps`. The relay's own counters are in the status
 endpoint under `relays`.
+
+**7. Pair with HomeKit.** With the status endpoint enabled, open:
+
+```
+http://<server-ip>:9090/pair
+```
+
+Each unpaired camera shows a scannable code and its PIN. In the Home app choose **Add
+Accessory**, scan, and approve the uncertified-accessory prompt. Paired cameras show "already
+paired" instead — go2rtc stops publishing a setup code once a camera is paired, so nothing to
+scan means nothing to do.
+
+💡 `npm run homekit:label` writes the same codes as printable SVG labels if you would rather
+stick one on each camera.
+
+⚠️ Each camera is a **separate** HomeKit accessory with its own PIN. Nothing is inherited from
+Homebridge or from an already-paired camera.
 
 🔑 A camera with a `localRtsp` block is **not** started on the WebRTC path — both would publish into
 the same go2rtc stream, which does not error, it interleaves.
