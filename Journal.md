@@ -49,18 +49,30 @@ did not just fix video; it made cloud-free motion detection affordable.**
 | 3.5 uniform | 2 / 9 min | 6 / 9 min | 3 / 9 min |
 | 4.5 / 5.5 / 3.5 | **5 / 9 min** | 5 / 9 min | 6 / 9 min |
 
-🔴 **Raising the threshold did not reduce triggering** — front went *up*. Either the rooms
-were genuinely occupied during the last window (unverified; nobody was at the keyboard), or
-threshold is not the effective lever for this scene noise.
+🔴 **Raising the threshold did not reduce triggering** — front went *up*.
 
-➡️ **Stop guessing.** The detector emits its actual baseline and frame sizes at `debug` every
-150 frames. One run at `log: level: debug` would let a threshold be chosen from real footage
-instead of bisected over three restarts. That is the next step, and it needs a config change
-and a restart.
+⚠️ **CORRECTED the same night, once the detector was actually instrumented.** Scoped trace
+logging (`log: { homekit: trace }`) gave the real numbers, and they overturn the reading above:
 
-💡 Working theory for the noise: dim rooms produce sensor noise, the encoder spends bits on
-it, P-frame sizes fluctuate, and the EMA baseline never settles. It predicts false positives
-get **worse** after dark — the opposite of the intuition for a motion detector.
+| camera | baseline | idle `ratio` over 2 min | threshold | headroom |
+|---|---|---|---|---|
+| front | ~1720 | 0.89 – 1.12 | 4.5 | 4× |
+| kitchen | ~1200 | 0.76 – 1.22 | 5.5 | 4.5× |
+| sunroom | ~700 | 0.68 – 1.16 | 3.5 | 3× |
+
+**The idle noise floor is ~1.2, nowhere near the thresholds, and no trigger fired at all in the
+sample.** So the dim-room-noise theory is **wrong** — the baseline is stable and ratios sit
+tightly around 1.0, not the wandering distribution that theory predicted.
+
+🔑 **The 20:00-20:09 counts were almost certainly REAL motion at 8pm.** That window was
+explicitly recorded as having unverified occupancy, and then reasoned about as though it did
+not — the classic error of treating an unlabelled measurement as a controlled one. Three
+config edits were made on the strength of it.
+
+⚠️ **The trace sampling has a limit worth remembering**: `motion: status` reports 1 frame in
+150, so it shows the noise FLOOR but never the spikes that actually trigger. Only a
+`motion: ON` line carries a trigger's own ratio. Absence of triggers in a short sample is weak
+evidence — the overnight window with the house empty is the real test.
 
 ### Pairing stopped needing a human decoder ring
 

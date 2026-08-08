@@ -19,7 +19,11 @@ baton, the baton wins.
 - **Updated:** 2026-08-07 (night) — ✅ **VIDEO IS BACK, HKSV RECORDS, AND ALARM.COM IS OUT OF THE
   VIDEO PATH ENTIRELY** — streaming, tokens and motion. `motion: detect` makes go2rtc detect
   motion from the H.264 stream itself, so no notification rule is needed on their side.
-  ⚠️ **Threshold tuning has NOT converged** — see item 2. 📖 `Journal.md` 2026-08-07 (night).
+  ⚠️ Motion thresholds are **measured but unconfirmed over a full night** — item 2, and
+  `log: { homekit: trace }` is still enabled for that measurement.
+  🔴 **The community/adoption gap is NOT closed** — the last mile is (pairing page, config
+  checker, docs), the first mile is not: obtaining camera credentials still needs a proxied
+  phone capture. Item 3. 📖 `Journal.md` 2026-08-07 (night).
 - **Previously (evening):** ✅ **THE OUTAGE ENDED.** All three cameras
   are live in HomeKit over their own **local RTSP**, pulled by go2rtc's **native** client and muxed to
   HKSV in process — **zero ffmpeg in the media path**. The two ADC-V515s work for the first time ever;
@@ -119,17 +123,20 @@ baton, the baton wins.
    Runbook: [`SETUP.md`](SETUP.md) → "Step 2b". Design + traps: [`INVARIANTS.md`](INVARIANTS.md).
    ⚠️ What it still does NOT do: fetch its own endpoints (item 3), and prove HKSV *records* (item 2).
 
-2. ⚠️ **Motion works, but the DETECTOR THRESHOLD has not converged.** ✅ HKSV recording is proven
-   (`hksv` consumer, `protocol: hds`, hub pulling fragments) and all three cameras now use
-   `motion: detect`, so Alarm.com is out of the loop entirely. 🔴 **Raising thresholds did not
-   reduce false positives** — front went from 2 to 5 triggers per 9 min when raised 3.5 → 4.5.
-   Current values: front 4.5, kitchen 5.5, sunroom 3.5.
-   ➡️ **Stop bisecting.** Set `log: level: debug` in `go2rtc.yaml`, restart go2rtc, and read the
-   detector's own baseline and frame sizes (emitted every 150 frames) to pick a value from real
-   footage. ⚠️ One window's counts were taken with nobody at the keyboard, so occupancy was
-   unverified — re-measure with the house known-empty before concluding.
-   💡 Theory worth testing: dim-room sensor noise inflates P-frame sizes, so false positives get
-   WORSE after dark. If so, tune at night and daylight is free.
+2. ⚠️ **Motion works; thresholds are MEASURED but not yet confirmed over a full night.**
+   ✅ HKSV recording is proven and all three cameras use `motion: detect`, so Alarm.com is out
+   of the loop. Current values: front 4.5, kitchen 5.5, sunroom 3.5.
+   🔑 **Measured 2026-08-07 via `log: { homekit: trace }`:** idle `ratio` sits at **0.68-1.22**
+   across all three, against baselines of ~1720 / ~1200 / ~700. That is 3-4.5× headroom, and no
+   trigger fired during the sample. **An earlier "false positives" reading was wrong** — those
+   counts came from a window whose occupancy was never verified, and were probably real motion.
+   ⚠️ `motion: status` samples 1 frame in 150 — it shows the noise FLOOR, never the spikes that
+   trigger. Only a `motion: ON` line carries a trigger's ratio.
+   ➡️ **Next: check the Home app timeline after a night with the house empty.** Clips at 3am =
+   false positives, raise. No clips = these values are right, and could even come down for
+   sensitivity.
+   🔴 **`log: { homekit: trace }` is TEMPORARY and still enabled** — remove it and restart
+   go2rtc once the thresholds are settled.
 
 3. 🔴 **(THE community blocker — needs ONE capture from David first.)** A `mobile.alarm.com` client,
    so endpoints and per-camera credentials are fetched rather than typed in by hand.
