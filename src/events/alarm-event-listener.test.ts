@@ -388,3 +388,102 @@ describe('AlarmEventListener reconnection', () => {
     });
   });
 });
+
+describe('AlarmEventListener diagnostics', () => {
+  let listener: AlarmEventListener;
+  let auth: AuthStub;
+
+  const motionMessage = (deviceId: number) =>
+    JSON.stringify({
+      EventDateUtc: '2026-08-07T23:00:00Z',
+      UnitId: 101483575,
+      DeviceId: deviceId,
+      EventType: 210,
+      EventValue: 1,
+      DeviceType: 1,
+      QstringForExtraData: 'rn=Front+Motion&category=1',
+    });
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    resetInstances();
+    auth = createAuthStub();
+    listener = new AlarmEventListener(auth as unknown as AlarmAuth);
+    // EventEmitter throws on an 'error' emit with no listener attached.
+    listener.on('error', () => {});
+    await listener.start();
+    getInstances()[0].emit('open');
+  });
+
+  afterEach(() => {
+    listener.stop();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('reports connected once the socket opens', () => {
+    const d = listener.getDiagnostics();
+    expect(d.connected).toBe(true);
+    expect(d.connects).toBe(1);
+    expect(d.circuit).toBe('closed');
+  });
+
+  /**
+   * 🔑 THE distinction this exists for. When HomeKit recording did not trigger,
+   * nothing could separate "Alarm.com is sending nothing" from "events arrive
+   * but none are motion" — both present as a healthy socket and silence, and
+   * telling them apart needed `sudo docker-compose logs`.
+   */
+  it('separates "no events at all" from "events but no motion"', () => {
+    expect(listener.getDiagnostics()).toMatchObject({
+      messagesReceived: 0,
+      motionEvents: 0,
+      unhandledEvents: 0,
+      lastMessageAt: null,
+    });
+
+    // An event that is NOT motion — the socket is clearly delivering.
+    getInstances()[0].emit(
+      'message',
+      Buffer.from(JSON.stringify({ UnitId: 1, DeviceId: 2, EventType: 999 })),
+    );
+
+    const d = listener.getDiagnostics();
+    expect(d.messagesReceived).toBe(1);
+    expect(d.unhandledEvents).toBe(1);
+    expect(d.motionEvents).toBe(0);
+    expect(d.lastMessageAt).not.toBeNull();
+  });
+
+  it('counts motion events and records which camera and when', () => {
+    getInstances()[0].emit('message', Buffer.from(motionMessage(2050)));
+
+    const d = listener.getDiagnostics();
+    expect(d.motionEvents).toBe(1);
+    expect(d.lastMotionCameraId).toBe('101483575-2050');
+    expect(d.lastMotionAt).not.toBeNull();
+    expect(d.messagesReceived).toBe(1);
+  });
+
+  it('counts a non-JSON message as received, so garbage is not silence', () => {
+    getInstances()[0].emit('message', Buffer.from('not json at all'));
+
+    const d = listener.getDiagnostics();
+    expect(d.messagesReceived).toBe(1);
+    expect(d.motionEvents).toBe(0);
+    expect(d.unhandledEvents).toBe(0);
+  });
+
+  it('reports disconnected after the socket closes', () => {
+    getInstances()[0].readyState = 3;
+    getInstances()[0].emit('close', 1006, Buffer.from(''));
+
+    expect(listener.getDiagnostics().connected).toBe(false);
+  });
+
+  it('surfaces the last socket error', () => {
+    getInstances()[0].emit('error', new Error('handshake refused'));
+
+    expect(listener.getDiagnostics().lastError).toBe('handshake refused');
+  });
+});

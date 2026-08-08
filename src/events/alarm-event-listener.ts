@@ -15,6 +15,13 @@ const log = createChildLogger('alarm-events');
 
 const WS_TOKEN_URL = 'https://www.alarm.com/web/api/websockets/token';
 const TOKEN_REFRESH_MS = 240_000;
+
+/**
+ * `WebSocket.OPEN`. Written as a literal because the static is not guaranteed to
+ * exist on every implementation the socket may be swapped for — comparing
+ * against an `undefined` static silently reports every socket as disconnected.
+ */
+const WS_OPEN = 1;
 const BACKOFF_STEPS_MS = [5_000, 10_000, 30_000, 60_000];
 const EXPECTED_CLOSE_CODES: ReadonlySet<number> = new Set([1000, 1008]);
 /**
@@ -31,6 +38,35 @@ interface WsTokenResponse {
 }
 
 /**
+ * What the event listener can report about itself, for the status endpoint.
+ *
+ * 🔑 **`messagesReceived` is the field that matters**, and it exists because of
+ * a real dead end: when HomeKit recording did not trigger, nothing could
+ * distinguish "Alarm.com is sending no events at all" from "events arrive but
+ * none are motion". Both look identical from outside — a connected socket and
+ * silence — and answering it required `sudo docker-compose logs`, which is
+ * exactly what this endpoint exists to avoid.
+ *
+ * ⚠️ `connected: true` is NOT evidence that events flow. The socket stayed up
+ * and refreshed on schedule for 76 minutes while delivering nothing, because
+ * Alarm.com emits motion only when a notification RULE is configured.
+ */
+export interface EventListenerDiagnostics {
+  connected: boolean;
+  circuit: CircuitState;
+  /** Every message off the socket, including ones we do not act on. */
+  messagesReceived: number;
+  lastMessageAt: string | null;
+  motionEvents: number;
+  lastMotionAt: string | null;
+  lastMotionCameraId: string | null;
+  /** Parsed fine, but not a type this bridge handles. */
+  unhandledEvents: number;
+  connects: number;
+  lastError?: string;
+}
+
+/**
  * Persistent WebSocket listener for Alarm.com device events.
  *
  * Emits typed events for motion, sensor changes, clip recordings, etc.
@@ -42,6 +78,14 @@ export class AlarmEventListener extends EventEmitter {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private consecutiveFailures = 0;
   private running = false;
+  private messagesReceived = 0;
+  private motionEvents = 0;
+  private unhandledEvents = 0;
+  private connects = 0;
+  private lastMessageAt: number | null = null;
+  private lastMotionAt: number | null = null;
+  private lastMotionCameraId: string | null = null;
+  private lastError: string | undefined;
   private readonly breaker = new CircuitBreaker({
     label: 'events',
     failureThreshold: EVENT_FAILURE_THRESHOLD,
@@ -54,6 +98,23 @@ export class AlarmEventListener extends EventEmitter {
   /** Circuit state for this listener, for status reporting. */
   get circuitState(): CircuitState {
     return this.breaker.state;
+  }
+
+  /** Everything the status endpoint needs to answer "is motion working?". */
+  getDiagnostics(): EventListenerDiagnostics {
+    const iso = (t: number | null) => (t === null ? null : new Date(t).toISOString());
+    return {
+      connected: this.ws !== null && this.ws.readyState === WS_OPEN,
+      circuit: this.breaker.state,
+      messagesReceived: this.messagesReceived,
+      lastMessageAt: iso(this.lastMessageAt),
+      motionEvents: this.motionEvents,
+      lastMotionAt: iso(this.lastMotionAt),
+      lastMotionCameraId: this.lastMotionCameraId,
+      unhandledEvents: this.unhandledEvents,
+      connects: this.connects,
+      ...(this.lastError ? { lastError: this.lastError } : {}),
+    };
   }
 
   async start(): Promise<void> {
@@ -134,6 +195,7 @@ export class AlarmEventListener extends EventEmitter {
       this.ws.on('open', () => {
         log.info('WebSocket connected to %s', endpoint);
         opened = true;
+        this.connects++;
         this.consecutiveFailures = 0;
         this.breaker.recordSuccess();
         this.refreshTimer = setTimeout(() => {
@@ -148,6 +210,7 @@ export class AlarmEventListener extends EventEmitter {
       });
 
       this.ws.on('error', (err) => {
+        this.lastError = err.message;
         log.error('WebSocket error: %s', err.message);
         this.emit('error', err);
       });
@@ -221,6 +284,9 @@ export class AlarmEventListener extends EventEmitter {
   }
 
   private handleMessage(raw: string): void {
+    this.messagesReceived++;
+    this.lastMessageAt = Date.now();
+
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(raw);
@@ -230,11 +296,28 @@ export class AlarmEventListener extends EventEmitter {
     }
 
     const base = parseBaseEvent(msg);
+
+    // Every event, before classification — so an event that ARRIVES but is
+    // misclassified is distinguishable from no event at all. ⚠️ Field NAMES and
+    // numeric types only: the payload carries account identifiers, and this
+    // line would otherwise put them in the log.
+    log.debug(
+      {
+        eventType: base.eventType,
+        deviceType: base.deviceType,
+        cameraId: base.cameraId,
+        fields: Object.keys(msg).length,
+      },
+      'Event received',
+    );
     this.emit('raw', base);
 
     switch (base.eventType) {
       case EventType.MOTION: {
         const motion = parseMotionEvent(base);
+        this.motionEvents++;
+        this.lastMotionAt = Date.now();
+        this.lastMotionCameraId = motion.cameraId;
         log.info(
           { cameraId: motion.cameraId, rule: motion.ruleName },
           'Motion detected',
@@ -255,6 +338,7 @@ export class AlarmEventListener extends EventEmitter {
         this.emit('sensorChange', { ...base, eventType: EventType.SENSOR_CHANGE });
         break;
       default:
+        this.unhandledEvents++;
         log.debug({ eventType: base.eventType, deviceId: base.deviceId }, 'Unhandled event type');
     }
   }

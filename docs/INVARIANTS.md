@@ -244,6 +244,41 @@ with no error logged anywhere — the bridge says it is listening, and it is, wh
 💡 Option B also retires a documented residual risk: no ffmpeg child means no go2rtc RTSP password in
 a process argv (`SECURITY_AUDIT.md` → "go2rtc RTSP password in the bridge's process table").
 
+### ✅ HKSV RECORDING IS PROVEN — and the trigger is an Alarm.com RULE, not the camera
+
+Verified 2026-08-07. Triggering motion on go2rtc directly produced an **`hksv` consumer with
+`protocol: "hds"`** (HomeKit Data Stream) alongside the `homekit` one — the home hub pulling
+fragments to record. Live view, ingest, muxing and recording are all confirmed working.
+
+```bash
+# read-only: is motion currently asserted?
+curl -s --user "$GO2RTC_API_USERNAME:$GO2RTC_API_PASSWORD" \
+  "http://<bind>:1984/api/homekit/motion?id=<stream>"
+# trigger / clear it (POST = on, DELETE = off) — this is exactly what the bridge does
+curl -X POST   ... "http://<bind>:1984/api/homekit/motion?id=<stream>"
+curl -X DELETE ... "http://<bind>:1984/api/homekit/motion?id=<stream>"
+```
+
+🔴 **What does NOT work is the trigger, and it is not our bug.** Walking in front of a camera
+produced no event: the event WebSocket was connected and refreshing on schedule for **76 minutes**
+while delivering nothing. `parseMotionEvent` reads a **`ruleName`** — Alarm.com emits motion events
+from a configured **notification RULE**, not from the camera detecting motion. No rule, no event, and
+nothing on our side can compensate.
+➡️ Fix on the Alarm.com/Brinks side: enable video motion detection **and** attach a notification rule.
+
+⚠️ **`[hksv] flush fragment` is logged at DEBUG** (`pkg/hksv/consumer.go`), and go2rtc runs at `info`,
+so a *successful* recording logs absolutely nothing. Do not read silence as failure — check the
+consumer list instead.
+
+🔎 **The 240-second reconnect cycle in the bridge's event log is BY DESIGN** —
+`TOKEN_REFRESH_MS = 240_000`, a proactive refresh before the WebSocket auth token expires. The gap is
+~1 second. It looks alarming in a log and is not a fault.
+
+🔑 **`connected: true` is not evidence that events flow.** The status endpoint now reports
+`events.messagesReceived`, which is the field that separates "Alarm.com is sending nothing" from
+"events arrive but none are motion" — a distinction that previously required `sudo docker-compose
+logs` and cost a session to make.
+
 ### 🔴 ONE duplicate YAML key anywhere in `go2rtc.yaml` silently disables EVERY config write
 
 Measured 2026-08-07, and it cost a camera's HomeKit pairing.

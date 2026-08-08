@@ -53,7 +53,7 @@ baton, the baton wins.
   clone, pulled and rebuilt by hand. ⚠️ **Compose is v2.20.1**, despite the hyphenated
   `docker-compose` binary name — an earlier baton said v1, which was wrong. All v2 flags work
   (`--since`, `--index`).
-- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **21 files / 317
+- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **21 files / 323
   tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
   🔑 The relay's structural guards were **mutation-checked**, not just written: reverting each kills
   its own test and leaves the rest green. ⚠️ Calibration — the base64 bug passes **8 of 12** tests
@@ -68,7 +68,10 @@ baton, the baton wins.
   accessories advertising over mDNS (`dns-sd -B _hap._tcp local`) and paired.
   ⚠️ `connections: 0` and `consumers: 0` on an idle system is **correct** — go2rtc pulls lazily and
   disconnects when nothing is watching. It is not a fault.
-- 🔑 **THE STATUS ENDPOINT IS THE FIRST THING TO CHECK — no sudo needed.** Now includes `relays`.
+- 🔑 **THE STATUS ENDPOINT IS THE FIRST THING TO CHECK — no sudo needed.** Now includes `relays` and
+  `events`. 🔑 **`events.messagesReceived` answers "is motion working?"** — it separates "Alarm.com is
+  sending nothing" from "events arrive but none are motion". ⚠️ `events.connected: true` is NOT
+  evidence that events flow; the socket ran healthy for 76 minutes delivering nothing.
   ```
   ssh kaikoura 'cd /volume1/docker/adc-video-bridge && set -a && . ./.env && set +a && \
     curl -s --user "$STATUS_USERNAME:$STATUS_PASSWORD" http://192.168.7.42:9090/'
@@ -103,14 +106,13 @@ baton, the baton wins.
    Runbook: [`SETUP.md`](SETUP.md) → "Step 2b". Design + traps: [`INVARIANTS.md`](INVARIANTS.md).
    ⚠️ What it still does NOT do: fetch its own endpoints (item 3), and prove HKSV *records* (item 2).
 
-2. 🔴 **(David + Agent — the highest-value thing left) Verify HKSV actually RECORDS on motion.**
-   Live view is proven; motion-triggered *recording* is not, and it is the reason this project exists.
-   ✅ `homekitMotion: true` is set and `src/index.ts` calls `go2rtc.setMotion()`, so the trigger path
-   is wired — ⚠️ but a comment in the deployed `go2rtc.yaml` still claims "nothing calls that yet",
-   which is **stale**; do not re-diagnose from it.
-   Look for `[hksv] flush fragment` with sequential `seq` and ~67 KB fragments, an `hksv` consumer
-   alongside `homekit` from one producer, and **no ffmpeg beyond the bridge's own**. Compare CPU
-   against the spike's 0.7% / ~22 MB.
+2. ✅ **DONE — HKSV RECORDING IS PROVEN** (2026-08-07). An `hksv` consumer with `protocol: "hds"`
+   appears on the stream and the hub pulls fragments. 🔴 **What remains is the TRIGGER, and it is
+   NOT our bug:** Alarm.com emits motion only from a configured **notification RULE**, and none
+   exists — the event socket ran 76 minutes, healthy, delivering nothing.
+   ➡️ **(David)** enable video motion detection **and** a notification rule on the Alarm.com/Brinks
+   side, then confirm `events.motionEvents` climbs in the status endpoint.
+   🔎 Detail + the read-only probes: [`INVARIANTS.md`](INVARIANTS.md) → "HKSV RECORDING IS PROVEN".
 
 3. **(Agent — and one test by David may DELETE this item)** A `mobile.alarm.com` client, so endpoints
    and per-camera credentials are fetched rather than typed in by hand. They exist **only** on that

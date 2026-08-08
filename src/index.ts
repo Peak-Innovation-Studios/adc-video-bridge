@@ -222,6 +222,10 @@ async function main(): Promise<void> {
   const statusServer = config.status
     ? startStatusServer(config.status, () => ({
         ...cameraManager.getDiagnostics(),
+        // 🔑 Without this, "is motion working?" cannot be answered without
+        // `sudo docker-compose logs` — which defeats the point of an endpoint
+        // that exists so diagnosis needs no sudo.
+        events: eventListener.getDiagnostics(),
         ...(relays.length > 0 ? { relays: relays.map((r) => r.getDiagnostics()) } : {}),
       }))
     : null;
