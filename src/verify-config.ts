@@ -167,7 +167,10 @@ export function verifyConfigs(input: VerifyInput): VerifyResult {
   }
 
   const streams = (go2rtc.streams ?? {}) as Record<string, unknown>;
-  const homekit = (go2rtc.homekit ?? {}) as Record<string, { pin?: unknown; hksv?: unknown; name?: unknown; pairings?: unknown }>;
+  const homekit = (go2rtc.homekit ?? {}) as Record<
+    string,
+    { pin?: unknown; hksv?: unknown; name?: unknown; pairings?: unknown; motion?: unknown; motion_threshold?: unknown }
+  >;
 
   for (const camera of relayCameras) {
     const name = String(camera.name ?? '');
@@ -243,6 +246,33 @@ export function verifyConfigs(input: VerifyInput): VerifyResult {
       if (clash) blocking.push(`homekit "${key}" reuses the pin of "${clash}".`);
       else seenPins.set(digits, key);
     }
+    // Motion mode. go2rtc accepts "api", "continuous", "detect" and "onvif"
+    // (remapped to "api"). An ABSENT value behaves like "api": neither the
+    // built-in detector nor continuous recording starts, so nothing ever
+    // triggers unless something POSTs the motion API.
+    const motion = block?.motion === undefined ? '' : String(block.motion);
+    const VALID_MOTION = ['', 'api', 'continuous', 'detect', 'onvif'];
+    if (!VALID_MOTION.includes(motion)) {
+      blocking.push(
+        `homekit "${key}" has motion: ${motion} — must be one of api, continuous, detect, onvif.`,
+      );
+    } else if (motion === '' || motion === 'api' || motion === 'onvif') {
+      warnings.push(
+        `homekit "${key}" uses motion: ${motion || 'api (unset)'} — recording then depends on an ` +
+          'EXTERNAL trigger. For Alarm.com that means a notification RULE configured on their side; ' +
+          'without one no motion event is ever emitted and HKSV never records. `motion: detect` ' +
+          'removes that dependency by detecting motion from the video itself.',
+      );
+    }
+
+    const threshold = block?.motion_threshold;
+    if (threshold !== undefined && (typeof threshold !== 'number' || !(threshold > 0))) {
+      blocking.push(`homekit "${key}" motion_threshold must be a positive number.`);
+    }
+    if (motion !== 'detect' && threshold !== undefined) {
+      warnings.push(`homekit "${key}" sets motion_threshold but motion is not "detect" — it is ignored.`);
+    }
+
     if (block?.hksv !== true) warnings.push(`homekit "${key}" does not set hksv: true — no Secure Video recording.`);
     if (!block?.name) warnings.push(`homekit "${key}" has no name.`);
     if (Array.isArray(block?.pairings) && block.pairings.length > 0) {

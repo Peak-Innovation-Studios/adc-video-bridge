@@ -41,10 +41,12 @@ homekit:
     pin: "37030214"
     name: "Front Camera"
     hksv: true
+    motion: detect
   backyard:
     pin: "70925212"
     name: "Backyard Camera"
     hksv: true
+    motion: detect
 `;
 
 const run = (over: Partial<{ configYaml: string; go2rtcYaml: string; env: Record<string, string> }> = {}) =>
@@ -86,7 +88,11 @@ describe('verifyConfigs — the failures that actually happened', () => {
   it('catches a duplicate key NESTED inside a block, not just at the top level', () => {
     // yaml.Patch rejects duplicates at any depth, and a rejected patch means
     // pairings never reach disk — the failure that cost a camera's pairing.
-    const nested = GO2RTC.replace('    hksv: true\n  backyard:', '    hksv: true\n    hksv: true\n  backyard:');
+    const nested = GO2RTC.replace('    motion: detect\n  backyard:', '    motion: detect\n    motion: detect\n  backyard:');
+    // ⚠️ Guard the fixture edit itself. A `.replace` that stops matching after an
+    // unrelated fixture change leaves the test asserting on unmodified input —
+    // it passes, proves nothing, and says nothing about why.
+    expect(nested).not.toBe(GO2RTC);
     expect(run({ go2rtcYaml: nested }).blocking.join('\n')).toMatch(/not strictly valid YAML|pairings are lost/);
   });
 
@@ -154,6 +160,46 @@ describe('verifyConfigs — HomeKit pin rules', () => {
   it('rejects a missing pin, which would fall back to the published default', () => {
     const nopin = GO2RTC.replace('    pin: "37030214"\n', '');
     expect(run({ go2rtcYaml: nopin }).blocking.join('\n')).toMatch(/has no pin/);
+  });
+});
+
+describe('verifyConfigs — HomeKit motion settings', () => {
+  it('rejects an unknown motion mode', () => {
+    const bad = GO2RTC.replace('motion: detect', 'motion: magic');
+    expect(run({ go2rtcYaml: bad }).blocking.join('\n')).toMatch(/must be one of api, continuous, detect/);
+  });
+
+  /**
+   * 🔑 `motion: api` is silently dependent on an Alarm.com notification RULE.
+   * Without one, everything looks healthy — paired accessory, live view,
+   * connected event socket — and HKSV simply never records. That cost a session
+   * to diagnose, so the checker says it out loud.
+   */
+  it('warns that motion: api depends on an external trigger', () => {
+    const api = GO2RTC.replace('motion: detect', 'motion: api');
+    expect(run({ go2rtcYaml: api }).warnings.join('\n')).toMatch(/EXTERNAL trigger|notification RULE/);
+  });
+
+  it('warns when motion is absent, which behaves like api', () => {
+    const none = GO2RTC.replace('    motion: detect\n', '');
+    expect(run({ go2rtcYaml: none }).warnings.join('\n')).toMatch(/api \(unset\)/);
+  });
+
+  it('rejects a non-numeric motion_threshold', () => {
+    const bad = GO2RTC.replace('motion: detect\n', 'motion: detect\n    motion_threshold: "high"\n');
+    expect(run({ go2rtcYaml: bad }).blocking.join('\n')).toMatch(/motion_threshold must be a positive number/);
+  });
+
+  it('warns when motion_threshold is set but motion is not detect', () => {
+    const odd = GO2RTC.replace('motion: detect\n', 'motion: api\n    motion_threshold: 3.5\n');
+    expect(run({ go2rtcYaml: odd }).warnings.join('\n')).toMatch(/it is ignored/);
+  });
+
+  it('accepts detect with a valid threshold and stays clean', () => {
+    const good = GO2RTC.replace('motion: detect\n', 'motion: detect\n    motion_threshold: 3.5\n');
+    const r = run({ go2rtcYaml: good });
+    expect(r.blocking).toEqual([]);
+    expect(r.warnings).toEqual([]);
   });
 });
 
