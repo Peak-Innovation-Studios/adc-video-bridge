@@ -16,7 +16,11 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-07 (evening) — ✅ **VIDEO IS BACK, AND THE OUTAGE IS OVER.** All three cameras
+- **Updated:** 2026-08-07 (night) — ✅ **VIDEO IS BACK, HKSV RECORDS, AND ALARM.COM IS OUT OF THE
+  VIDEO PATH ENTIRELY** — streaming, tokens and motion. `motion: detect` makes go2rtc detect
+  motion from the H.264 stream itself, so no notification rule is needed on their side.
+  ⚠️ **Threshold tuning has NOT converged** — see item 2. 📖 `Journal.md` 2026-08-07 (night).
+- **Previously (evening):** ✅ **THE OUTAGE ENDED.** All three cameras
   are live in HomeKit over their own **local RTSP**, pulled by go2rtc's **native** client and muxed to
   HKSV in process — **zero ffmpeg in the media path**. The two ADC-V515s work for the first time ever;
   `SupportsWebRTC: false` had put them permanently beyond this bridge. The Alarm.com WebRTC blocker is
@@ -53,7 +57,7 @@ baton, the baton wins.
   clone, pulled and rebuilt by hand. ⚠️ **Compose is v2.20.1**, despite the hyphenated
   `docker-compose` binary name — an earlier baton said v1, which was wrong. All v2 flags work
   (`--since`, `--index`).
-- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **21 files / 323
+- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **22 files / 337
   tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
   🔑 The relay's structural guards were **mutation-checked**, not just written: reverting each kills
   its own test and leaves the rest green. ⚠️ Calibration — the base64 bug passes **8 of 12** tests
@@ -68,6 +72,11 @@ baton, the baton wins.
   accessories advertising over mDNS (`dns-sd -B _hap._tcp local`) and paired.
   ⚠️ `connections: 0` and `consumers: 0` on an idle system is **correct** — go2rtc pulls lazily and
   disconnects when nothing is watching. It is not a fault.
+- 🔑 **PAIRING NEEDS NO CLI:** `http://<bind>:9090/pair` serves scannable setup codes per camera,
+  behind the status endpoint's own credentials. 🔑 Codes come from **go2rtc's API**, never from
+  `config/go2rtc.yaml` — the bridge cannot read that file, and go2rtc stops publishing a code once
+  an accessory is paired, so the exposure window closes itself. Printable version:
+  `npm run homekit:label`.
 - 🔑 **THE STATUS ENDPOINT IS THE FIRST THING TO CHECK — no sudo needed.** Now includes `relays` and
   `events`. 🔑 **`events.messagesReceived` answers "is motion working?"** — it separates "Alarm.com is
   sending nothing" from "events arrive but none are motion". ⚠️ `events.connected: true` is NOT
@@ -94,10 +103,14 @@ baton, the baton wins.
   Proxyman captures. ⚠️ **A leak check that reports without BLOCKING is not a check** — a fixture
   carrying the real camera username was committed this session while the scan printed the finding and
   the commit proceeded anyway. Camera names were committed in error earlier too. Both remain in history.
-- **Whose turn:** **DAVID**, and nothing is urgent — video works. Two things worth doing when
-  convenient: **(a)** power-cycle one camera so the agent can re-read its endpoint (that single test
-  decides whether item 3 is needed at all), and **(b)** confirm HKSV actually *records* on motion,
-  which is still unproven.
+- 🔴 **UNPUSHED WORK ON A BRANCH.** An unattended session committed 5 commits to
+  **`docs/community-onboarding`** (branched from `37d1236` on `main`). Docs plus one small
+  `verify:config` change; **no `src/` runtime change**, so no rebuild is needed to merge it.
+  ⚠️ Nothing was pushed and nothing was deployed — both are on the STOP list for unattended runs.
+  Review, then merge/push at will.
+- **Whose turn:** **DAVID.** Nothing is broken; video and recording both work. In order:
+  **(a)** review and push the branch above; **(b)** decide the motion-threshold approach (item 2);
+  **(c)** the one capture that unblocks community adoption (item 3).
 
 ### What's left (priority order)
 
@@ -106,23 +119,34 @@ baton, the baton wins.
    Runbook: [`SETUP.md`](SETUP.md) → "Step 2b". Design + traps: [`INVARIANTS.md`](INVARIANTS.md).
    ⚠️ What it still does NOT do: fetch its own endpoints (item 3), and prove HKSV *records* (item 2).
 
-2. ✅ **DONE — HKSV RECORDING IS PROVEN** (2026-08-07). An `hksv` consumer with `protocol: "hds"`
-   appears on the stream and the hub pulls fragments. 🔴 **What remains is the TRIGGER, and it is
-   NOT our bug:** Alarm.com emits motion only from a configured **notification RULE**, and none
-   exists. ⚠️ The socket is healthy AND carrying traffic (`messagesReceived` climbs,
-   `unhandledEvents` climbs) — it is specifically motion that never arrives.
-   ➡️ **(David)** enable video motion detection **and** a notification rule on the Alarm.com/Brinks
-   side, then confirm `events.motionEvents` climbs in the status endpoint.
-   🔎 Detail + the read-only probes: [`INVARIANTS.md`](INVARIANTS.md) → "HKSV RECORDING IS PROVEN".
+2. ⚠️ **Motion works, but the DETECTOR THRESHOLD has not converged.** ✅ HKSV recording is proven
+   (`hksv` consumer, `protocol: hds`, hub pulling fragments) and all three cameras now use
+   `motion: detect`, so Alarm.com is out of the loop entirely. 🔴 **Raising thresholds did not
+   reduce false positives** — front went from 2 to 5 triggers per 9 min when raised 3.5 → 4.5.
+   Current values: front 4.5, kitchen 5.5, sunroom 3.5.
+   ➡️ **Stop bisecting.** Set `log: level: debug` in `go2rtc.yaml`, restart go2rtc, and read the
+   detector's own baseline and frame sizes (emitted every 150 frames) to pick a value from real
+   footage. ⚠️ One window's counts were taken with nobody at the keyboard, so occupancy was
+   unverified — re-measure with the house known-empty before concluding.
+   💡 Theory worth testing: dim-room sensor noise inflates P-frame sizes, so false positives get
+   WORSE after dark. If so, tune at night and daylight is free.
 
-3. **(Agent — and one test by David may DELETE this item)** A `mobile.alarm.com` client, so endpoints
-   and per-camera credentials are fetched rather than typed in by hand. They exist **only** on that
+3. 🔴 **(THE community blocker — needs ONE capture from David first.)** A `mobile.alarm.com` client,
+   so endpoints and per-camera credentials are fetched rather than typed in by hand.
+   📄 **Everything known + the exact capture procedure: [`MOBILE_API.md`](MOBILE_API.md).**
+   ⚠️ Reframed 2026-08-07: this is no longer about endpoint drift (ports survive IP changes and
+   DHCP reservations pin the address). It is about **adoption** — today the only way to obtain the
+   credentials is a TLS-intercepting proxy with a trusted CA on a phone, which is fine for one
+   developer and impossible to ask of anyone else.
+   🔎 Measured negative that narrows the work: the mobile API's `Password` is **NOT** a hash of the
+   account password (md5/sha1, alone and with the username, all tested). It is a minted device
+   token, so the login flow must be captured, not derived. They exist **only** on that
    API — a legacy RPC-over-HTTP surface (`Action=` form POSTs) nothing in `src/` speaks.
    🔑 **A camera's port survived an IP change**, so ports are device-assigned rather than
    lease-derived, and the IPs are now pinned by DHCP reservation. Both halves are stable under the
    drift actually observed.
-   ❓ **The one unknown that decides it: does the port survive a camera REBOOT?** One power-cycle,
-   then re-read that camera's endpoint. If it holds, this client may never be needed.
+   ❓ Still unmeasured: does the port survive a camera REBOOT? Worth knowing, but it no longer
+   decides this item — adoption does.
    ⚠️ Not cheap: the captures contain **no login exchange**, so it starts with obtaining one, and it
    carries account-lockout risk. Do the power-cycle test first.
    🔎 What the captures DO show: `GetAllFences` authenticates with a persistent `Password` +

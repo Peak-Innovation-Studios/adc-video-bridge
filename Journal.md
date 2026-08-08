@@ -8,6 +8,86 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-07 (night) — HKSV proven, motion cut loose from Alarm.com, and the community gap named
+
+**Claude Code (Opus 5).** Recording works. The motion trigger turned out not to be our problem
+at all, and then turned out not to need Alarm.com either.
+
+### HKSV recording: proven, and the trigger was the wrong suspect
+
+Asserting motion on go2rtc directly produced an **`hksv` consumer with `protocol: "hds"`** —
+the home hub opening a HomeKit Data Stream and pulling fragments. Recording, muxing and the
+hub side all work.
+
+What did not work was the trigger, and walking in front of a camera produced nothing.
+`parseMotionEvent` reads a **`ruleName`**: Alarm.com emits motion events from a configured
+**notification rule**, not from a camera detecting motion. No rule, no event.
+
+🔑 **HomeKit does not originate the trigger either** — a natural assumption, and wrong. The
+accessory must assert the motion characteristic before the hub records anything; the Home
+app's People/Animals/Vehicles settings then *filter* clips the accessory already caused. Our
+own two measurements prove it: walk-past → nothing, API-asserted motion → recording within
+seconds, same camera, same settings, same hub.
+
+### The answer was in go2rtc the whole time
+
+`motion: detect` makes go2rtc analyse H.264 P-frame sizes itself and assert motion with no
+external input. That removes the last Alarm.com dependency from the video path — streaming,
+tokens and motion are now all local.
+
+⚠️ It has a cost that was prohibitive under the old design and is cheap under the new one:
+the detector is a `core.Consumer`, so attaching it holds the camera stream open permanently.
+Under WebRTC that meant a perpetual cloud session and token churn. On local RTSP it is a few
+Mbps on your own LAN, and the detector reads frame *sizes* — it never decodes. **Local RTSP
+did not just fix video; it made cloud-free motion detection affordable.**
+
+### Threshold tuning did NOT converge, and the data says why it might not
+
+| thresholds | front | kitchen | sunroom |
+|---|---|---|---|
+| 2.0 (default) | near-constant | near-constant | 4 triggers / 5 min |
+| 3.5 uniform | 2 / 9 min | 6 / 9 min | 3 / 9 min |
+| 4.5 / 5.5 / 3.5 | **5 / 9 min** | 5 / 9 min | 6 / 9 min |
+
+🔴 **Raising the threshold did not reduce triggering** — front went *up*. Either the rooms
+were genuinely occupied during the last window (unverified; nobody was at the keyboard), or
+threshold is not the effective lever for this scene noise.
+
+➡️ **Stop guessing.** The detector emits its actual baseline and frame sizes at `debug` every
+150 frames. One run at `log: level: debug` would let a threshold be chosen from real footage
+instead of bisected over three restarts. That is the next step, and it needs a config change
+and a restart.
+
+💡 Working theory for the noise: dim rooms produce sensor noise, the encoder spends bits on
+it, P-frame sizes fluctuate, and the EMA baseline never settles. It predicts false positives
+get **worse** after dark — the opposite of the intuition for a motion detector.
+
+### Pairing stopped needing a human decoder ring
+
+`GET /pair` on the status endpoint now serves scannable setup codes per camera.
+
+🔑 **The codes come from go2rtc's API, never from `config/go2rtc.yaml`** — the bridge
+deliberately cannot read that file. That indirection bounds the exposure for free: go2rtc
+omits `setup_code` once an accessory is paired, so a paired camera has no code to render and
+the page cannot leak one it was never given. **A security property enforced by someone else
+beats one maintained by discipline.**
+
+### The gap that actually matters for anyone else
+
+The per-camera RTSP endpoints and credentials live only on `mobile.alarm.com`. Today they are
+extracted by proxying the phone app — fine for one developer, impossible to ask of an adopter.
+
+A measured negative narrows the work: the mobile API's `Password` parameter is **not** a hash
+of the account password (md5 and sha1, alone and combined with the username, all tested and
+none match). It is a minted device token, so a client must go through the login flow. That
+exchange is the one thing the captures do not contain, and guessing at an auth endpoint risks
+locking the account.
+
+📄 Everything known, and the exact capture needed, is now in `docs/MOBILE_API.md`. Note the
+detail that sank the previous attempt: **export URLs and headers, not just bodies.**
+
+---
+
 ## 2026-08-07 (evening) — Video is back, on local RTSP, with no ffmpeg in the media path
 
 **Claude Code (Opus 5).** All three cameras are live in HomeKit over their own local RTSP, pulled by
