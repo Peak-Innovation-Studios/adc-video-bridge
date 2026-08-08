@@ -109,7 +109,8 @@ baton, the baton wins.
 2. ✅ **DONE — HKSV RECORDING IS PROVEN** (2026-08-07). An `hksv` consumer with `protocol: "hds"`
    appears on the stream and the hub pulls fragments. 🔴 **What remains is the TRIGGER, and it is
    NOT our bug:** Alarm.com emits motion only from a configured **notification RULE**, and none
-   exists — the event socket ran 76 minutes, healthy, delivering nothing.
+   exists. ⚠️ The socket is healthy AND carrying traffic (`messagesReceived` climbs,
+   `unhandledEvents` climbs) — it is specifically motion that never arrives.
    ➡️ **(David)** enable video motion detection **and** a notification rule on the Alarm.com/Brinks
    side, then confirm `events.motionEvents` climbs in the status endpoint.
    🔎 Detail + the read-only probes: [`INVARIANTS.md`](INVARIANTS.md) → "HKSV RECORDING IS PROVEN".

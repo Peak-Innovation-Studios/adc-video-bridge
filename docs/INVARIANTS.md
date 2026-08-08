@@ -260,10 +260,14 @@ curl -X DELETE ... "http://<bind>:1984/api/homekit/motion?id=<stream>"
 ```
 
 🔴 **What does NOT work is the trigger, and it is not our bug.** Walking in front of a camera
-produced no event: the event WebSocket was connected and refreshing on schedule for **76 minutes**
-while delivering nothing. `parseMotionEvent` reads a **`ruleName`** — Alarm.com emits motion events
+produced no motion event. `parseMotionEvent` reads a **`ruleName`** — Alarm.com emits motion events
 from a configured **notification RULE**, not from the camera detecting motion. No rule, no event, and
 nothing on our side can compensate.
+⚠️ **The socket is NOT idle** — `messagesReceived` climbed within 60s of connecting, with the events
+classified as `unhandledEvents`. An earlier reading of "delivering nothing" was inferred from the
+absence of `Motion detected` log lines, which only proves no MOTION arrived. That distinction is the
+whole reason `events.messagesReceived` exists: **connected + traffic + zero motion** points at the
+rule, whereas connected + zero traffic would point at the subscription.
 ➡️ Fix on the Alarm.com/Brinks side: enable video motion detection **and** attach a notification rule.
 
 ⚠️ **`[hksv] flush fragment` is logged at DEBUG** (`pkg/hksv/consumer.go`), and go2rtc runs at `info`,
