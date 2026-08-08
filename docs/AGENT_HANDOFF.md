@@ -241,17 +241,26 @@ baton, the baton wins.
    `PublicRtspEndpoint` publishes each camera's port on the **WAN** address: digest-auth RTSP behind
    a self-signed certificate that expired Dec 2024, reachable from the internet, almost certainly
    created by UPnP.
-   🔑 **Recommendation: turn it off.** Nothing in this project has ever used it — the production path
-   is `LocalRtspEndpoint` via the relay, and the WebRTC path used the cloud. So the exposure buys
-   zero function. What it costs is an internet-facing service on three cameras whose firmware you do
-   not patch, guarded only by a per-camera password.
-   ➡️ **DECIDED 2026-08-08: turn it off.** The router is an **eero Pro 7** on the LAN gateway
-   address (identified read-only by SSDP from the NAS; nothing probed from outside). The control is
-   **eero app → Settings → Network Settings → UPnP**. 🔴 **An agent cannot do this** — it is a phone
-   app tied to David's eero account. ⚠️ Disabling UPnP is network-wide: consoles and some P2P apps
-   that open their own ports are affected too.
-   💡 A second IGD answers on the LAN — a Philips Hue bridge. It is not the gateway and is not
-   relevant here; don't chase it.
+   ✅ **DECIDED 2026-08-08 by DAVID: LEAVE IT AS IS. Do not re-open this; do not "fix" it.**
+   The agent recommendation was to disable it, and David weighed that and declined. Both sides are
+   recorded so the decision is not re-litigated every time someone notices the exposure:
+   - *For turning it off:* nothing in this project has ever used it — production is
+     `LocalRtspEndpoint` via the relay, and the WebRTC path used the cloud. So it buys zero
+     function, while being an internet-facing service on three cameras whose firmware is not
+     patched here.
+   - *For leaving it:* the only control point is **UPnP on the router (an eero Pro 7, identified
+     read-only by SSDP from the NAS — nothing probed from outside)**, and disabling UPnP is
+     **network-wide**, so consoles and P2P apps lose their own port-opening too. That is a real cost
+     for a theoretical risk.
+   🔴 **What would REOPEN it** — none of these are true today: a camera-firmware CVE with a public
+   exploit; evidence of the WAN ports being hit; or the per-camera RTSP passwords becoming public.
+   ⚠️ **On that last one:** all three camera RTSP passwords were put into an agent transcript on
+   2026-08-08 (see "Open decisions"). A transcript is not a public paste, so this does not by itself
+   flip the decision — but those passwords are the ONLY control on the WAN endpoint, so if the
+   transcript's handling ever changes, this decision changes with it.
+   💡 The control, if it is ever wanted: eero app → Settings → Network Settings → UPnP. An agent
+   cannot reach it — phone app, David's account. A second IGD on the LAN is a Philips Hue bridge,
+   not the gateway; don't chase it.
    ⚠️ **Still not probed from outside, deliberately.** Confirming it from the internet means port
    scanning your own WAN address, which an agent should not do unasked; and a negative result would
    be weak evidence anyway, since UPnP mappings come and go with camera reboots. Check the router's
