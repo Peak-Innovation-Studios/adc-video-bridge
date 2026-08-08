@@ -226,18 +226,41 @@ For Synology Container Manager, use the dedicated
 **[Synology Deployment Guide](docs/SYNOLOGY.md)**, including its safe update and
 rebuild procedure.
 
-**Quick start:**
+**Quick start — one command:**
 
 ```bash
 git clone https://github.com/Peak-Innovation-Studios/adc-video-bridge.git
-cd adc-video-bridge
+cd adc-video-bridge && npm ci && npm run setup
+```
+
+`npm run setup` runs the whole path: preflight → sign in → write `.env`, `config.yaml` and
+`go2rtc.yaml` → **verify** → `docker compose up --build -d` → show the HomeKit pairing codes.
+
+- 🔑 **It is safe to re-run.** Discovery is skipped when cameras are already configured, so a
+  re-run spends **no login**. Existing values are never overwritten, and files are backed up.
+- 🔴 **It refuses to start anything if `verify:config` reports a blocking finding.** Those
+  findings — a duplicate YAML key, a `listenPort` outside the published range, `motion: api`
+  with no rule — all present identically once running: a camera that pairs and then never
+  records, with nothing logged anywhere.
+- ⚠️ Needs `ADC_MOBILE_HAIKU` from a one-time capture of the phone app
+  ([`docs/MOBILE_API.md`](docs/MOBILE_API.md)), and on most hosts `docker compose` needs `sudo` —
+  pass `--no-up` and run that step yourself.
+
+Useful flags: `--bind-address <ip>` (required if the host has several LAN addresses),
+`--status-port <n>`, `--no-up`, `--rediscover`.
+
+<details><summary>Manual setup</summary>
+
+```bash
 cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 cp config/go2rtc.example.yaml config/go2rtc.yaml
 # Put credentials and random go2rtc passwords in .env; put camera IDs in config.yaml.
 chmod 600 .env config/config.yaml config/go2rtc.yaml
+npm run verify:config -- .
 docker compose -f docker-compose.yml up --build -d
 ```
+</details>
 
 Pulling source changes does not update an already-built container. After every
 code update, rebuild with `docker compose up -d --build`. Configuration-only

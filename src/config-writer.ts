@@ -241,7 +241,21 @@ export function mergeConfigYaml(existing: string, cameras: CameraEntry[]): Merge
  * would break the published container ports against a config that still names
  * the old ones.
  */
-export function mergeEnv(existing: string, key: string, value: string): MergeResult {
+export function mergeEnv(
+  existing: string,
+  key: string,
+  value: string,
+  options: {
+    /**
+     * Quote both values in the conflict message. 🔴 **Defaults to false, and
+     * that default is the point.** `.env` holds camera and go2rtc passwords, so
+     * a conflict message that echoes values leaks a credential to stdout — and
+     * to whatever captured it — every time it fires. Callers opt IN for values
+     * that are genuinely useful to see, like a port range.
+     */
+    revealOnConflict?: boolean;
+  } = {},
+): MergeResult {
   const lines = existing.split('\n');
   const idx = lines.findIndex((l) => l.trimStart().startsWith(`${key}=`));
 
@@ -250,7 +264,9 @@ export function mergeEnv(existing: string, key: string, value: string): MergeRes
     if (current === value) return { text: existing, added: [], skipped: [key], changed: false };
     return unchanged(
       existing,
-      `${key} is already set to "${current}", not "${value}" — set it by hand if the new value is right`,
+      options.revealOnConflict
+        ? `${key} is already set to "${current}", not "${value}" — set it by hand if the new value is right`
+        : `${key} is already set to a different value — left alone. Edit .env by hand if it is wrong`,
     );
   }
 

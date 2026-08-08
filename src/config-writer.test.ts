@@ -167,9 +167,30 @@ describe('mergeEnv', () => {
   // would break the published container ports against a config naming the old.
   it('REFUSES to rewrite a key that holds a different value', () => {
     const existing = 'ADC_BRIDGE_RTSP_PORTS=9000-9002\n';
-    const r = mergeEnv(existing, 'ADC_BRIDGE_RTSP_PORTS', '8561-8563');
+    // revealOnConflict: the port range is operational, not a credential — the
+    // caller opts in per key. See "mergeEnv conflict messages" below.
+    const r = mergeEnv(existing, 'ADC_BRIDGE_RTSP_PORTS', '8561-8563', { revealOnConflict: true });
     expect(r.refused).toBeDefined();
     expect(r.refused).toContain('9000-9002');
     expect(r.text).toBe(existing);
+  });
+});
+
+describe('mergeEnv conflict messages', () => {
+  // 🔴 .env holds camera and go2rtc passwords. A conflict message that echoes
+  // values leaks a credential to stdout on every re-run.
+  it('does NOT echo values by default', () => {
+    const r = mergeEnv('GO2RTC_API_PASSWORD=stored-secret\n', 'GO2RTC_API_PASSWORD', 'new-secret');
+    expect(r.refused).toBeDefined();
+    expect(r.refused).not.toContain('stored-secret');
+    expect(r.refused).not.toContain('new-secret');
+    expect(r.refused).toMatch(/already set to a different value/);
+  });
+
+  it('echoes values only when the caller opts in', () => {
+    const r = mergeEnv('ADC_BRIDGE_RTSP_PORTS=9000-9002\n', 'ADC_BRIDGE_RTSP_PORTS', '8561-8563',
+      { revealOnConflict: true });
+    expect(r.refused).toContain('9000-9002');
+    expect(r.refused).toContain('8561-8563');
   });
 });

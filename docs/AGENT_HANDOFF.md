@@ -284,6 +284,22 @@ baton, the baton wins.
    corrected; `rtpCount` now reset in `cutOver()`; `tryConnect()` sets `_state = 'error'` on
    rejection instead of stranding it at `'connecting'`.
 
+16. ✅ **DONE 2026-08-08 — `npm run setup`, one command, steps 1-7.** Preflight → credentials →
+    ONE login → write → **verify gate** → `compose up --build -d` → pairing codes.
+    `src/setup/steps.ts` is the pure decisions, `src/setup-cli.ts` the orchestration.
+    🔴 **It does NOT generate `docker-compose.yml`** — every per-install value there is already a
+    `${VAR}` substitution, and a generated copy would be a second, unaudited statement of the
+    security posture `SECURITY_AUDIT.md` describes. The installer orchestrates; it never emits.
+    🔑 **Re-runnable without spending a login** — discovery is skipped when `config.yaml` already
+    has cameras (`--rediscover` forces it). 🔑 Step 5 **exits 1** on any blocking finding.
+    ⚠️ **Two defects found by RUNNING it, that the unit tests could not see:** re-runs generated
+    fresh secrets for keys that already had one, manufacturing a conflict; and the conflict
+    message then **echoed the stored credential to stdout**. Both fixed —
+    `buildEnvAdditions` takes the existing env, and `mergeEnv` redacts unless the caller opts in
+    per key via an allowlist.
+    💡 `.env.example` was briefly believed incomplete; it is NOT — see the regex note in "Do not
+    touch". A test now pins it against compose's `${VAR:?}` guards either way.
+
 15. 🔴 **(Agent — a real latent bug, found 2026-08-08) `listenPort` is assigned POSITIONALLY and
     can collide when a camera is added later.** `src/discover-local-cli.ts` computes
     `RELAY_PORT_BASE + index` over the API's returned order. `mergeConfigYaml` skips cameras whose
@@ -298,6 +314,14 @@ baton, the baton wins.
     generating it.
 
 ### Do not touch / gotchas
+
+- 🔴 **`[A-Z_]+` DOES NOT MATCH `GO2RTC_*` — the name contains a digit.** This produced three
+  confident false negatives in one session (2026-08-08): a compose grep that "found" only one
+  required env key instead of five, a pinning test that agreed with nothing, and a claim that
+  `.env.example` was missing four keys **when it has always had them**. Every check silently
+  reported clean. **Use `[A-Z0-9_]+`** for env-var names here, and pair any such extraction with
+  a positive control asserting it finds a digit-bearing name — a too-narrow pattern and a correct
+  one produce identical clean output.
 
 - Never commit `.env`, `secrets/`, real camera configuration, logs, tokens, camera IDs/names, or
   captured frames. **This applies to this file too.**
