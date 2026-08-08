@@ -102,13 +102,19 @@ baton, the baton wins.
 
 2. ✅ **SETTLED 2026-08-08 — no false positives overnight.** HKSV recording is proven and all three
    use `motion: detect`, so Alarm.com is out of the loop.
-   🔴 **THRESHOLDS CHANGED ON DISK BUT NOT YET LIVE — go2rtc has NOT been restarted.**
-   `config/go2rtc.yaml` now reads **front 4.0 · kitchen 4.0 · sunroom 3.5** (was 4.5 / 5.5 / 3.5);
-   the RUNNING process still has the old values. `npm run verify:config` = 0 blocking after the edit.
-   ⚠️ **Do not pair/unpair before the restart** — go2rtc persists its own config, so a write from
-   memory silently reverts the edit. Apply with `sudo docker-compose restart go2rtc` (config-only,
-   no rebuild). Backup, outside the repo and the build context, mode 600:
-   `~/go2rtc.yaml.bak-20260808-113942` on the NAS.
+   ✅ **THRESHOLDS NOW front 4.0 · kitchen 4.0 · sunroom 3.5** (was 4.5 / 5.5 / 3.5). Edited
+   2026-08-08 11:43, go2rtc restarted by David. Verified after the restart: file still reads 4.0,
+   **mtime unchanged at 11:43:28 so go2rtc did NOT rewrite it**, all 12 pairing entries intact,
+   `verify:config` 0 blocking, all three relays `connections: 1` with `bytesDown` climbing.
+   Backup, outside the repo and the build context, mode 600: `~/go2rtc.yaml.bak-20260808-113942`.
+   ⚠️ **One link is inferred, not observed:** go2rtc exposes no uptime and motion logging is off, so
+   "the running process holds 4.0" rests on the restart having come AFTER the 11:43 edit rather than
+   on a direct reading. Settle it with
+   `sudo docker-compose logs -t go2rtc | grep "go2rtc platform" | tail -1` — a banner after `16:43Z`
+   (11:43 local) proves it. `restart` keeps the container, so logs accumulate and the LAST banner is
+   the current process.
+   ⚠️ Whenever this file is edited again: **do not pair/unpair between edit and restart** — go2rtc
+   persists its own config, so a write from memory silently reverts the edit.
    🔑 **Why 4.0:** both 4.5 and 5.5 sat ABOVE the weakest real trigger observed (4.46), so they
    risked missing real motion; 4.0 is inside the measured 2.89-4.46 gap. Sunroom left at 3.5 — it is
    the only threshold with direct evidence behind it. ⚠️ That 4.46 trigger MUST have been sunroom
@@ -240,6 +246,12 @@ baton, the baton wins.
   read also printed every `pairings:` list ITEM (client_id / client_public) because the filter
   matched only `key: value` and not list entries. Redact by BLOCK, never by line pattern, and never
   print a line range from that file without knowing which block each line falls in.
+  🔴 **It then happened a SECOND time, the same day, a different way.** A filter redacting any key
+  matching `/pass|token|secret|url|host|user/` printed the status endpoint's `relays[].target`,
+  putting all three **camera LAN IPs** in a transcript — the field is called `target`, so it matched
+  nothing. 🔑 **That is the real rule: a DENYLIST fails open.** Both leaks were denylists that had
+  simply not anticipated the field. Name what to SHOW (an allowlist fails closed), and say plainly
+  what was withheld so the omission is visible rather than assumed.
 
 - **Report the HAP auth defect upstream** on [go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130).
   It is a real design gap, not a misconfiguration: HAP structurally cannot send Basic credentials, so
