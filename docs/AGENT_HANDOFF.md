@@ -88,15 +88,26 @@ baton, the baton wins.
 2. ⚠️ **Motion works; thresholds are MEASURED but not yet confirmed over a full night.**
    ✅ HKSV recording is proven and all three cameras use `motion: detect`, so Alarm.com is out
    of the loop. Current values: front 4.5, kitchen 5.5, sunroom 3.5.
-   🔑 **Measured 2026-08-07 via `log: { homekit: trace }`:** idle `ratio` sits at **0.68-1.22**
-   across all three, against baselines of ~1720 / ~1200 / ~700. That is 3-4.5× headroom, and no
-   trigger fired during the sample. **An earlier "false positives" reading was wrong** — those
-   counts came from a window whose occupancy was never verified, and were probably real motion.
+   🔑 **Measured 2026-08-07 via `log: { homekit: trace }`:** `ratio` sat at **0.68-1.22** across all
+   three, against baselines of ~1720 / ~1200 / ~700 — read at the time as 3-4.5× headroom.
+   🔴 **NOT REPRODUCED. Second sample 2026-08-08 16:05-16:09 (40 lines, 3 streams) gives
+   0.62-2.89** — 16 of 40 samples outside the old range, three above 2.0. By baseline cluster:
+   HIGH 1728-4467 → max **2.89**; MID 790-1084 → max 1.79; LOW 179-250 → max **2.26**.
+   ⚠️ **Neither window's occupancy was verified, so NEITHER is an idle measurement** and the
+   "3-4.5× headroom" figure inherits that. 16:05 on a Saturday is not idle; these highs may be real
+   motion. **Do not "correct" the thresholds from either sample.** (This is the same trap already
+   paid for once: an earlier "false positives" reading was wrong for exactly this reason.)
    ⚠️ `motion: status` samples 1 frame in 150 — it shows the noise FLOOR, never the spikes that
-   trigger. Only a `motion: ON` line carries a trigger's ratio.
-   ➡️ **Next: check the Home app timeline after a night with the house empty.** Clips at 3am =
-   false positives, raise. No clips = these values are right, and could even come down for
-   sensitivity.
+   trigger, so 2.89 is a LOWER BOUND on the peak, not the peak. Only a `motion: ON` line carries a
+   trigger's ratio. ⚠️ 13-14 samples per camera cannot bound a tail, and the tail is what fires.
+   🔴 **The log line carries NO stream name** — the three thresholds (front 4.5, kitchen 5.5,
+   sunroom 3.5) have no *measured* mapping to the three baselines. Rank-order matching against the
+   2026-08-07 figures is a guess, and weak: the low baseline moved ~700 → ~200 between samples.
+   ➡️ **Next, in this order.** (a) `sudo docker-compose logs go2rtc | grep -c "motion: ON"` over a
+   window covering a night — ⚠️ a `grep "motion:" | tail -40` shows only the floor and hides
+   triggers, which is why none have been counted yet. (b) Cross-check any hits against the Home app
+   timeline. Clips at 3am = false positives, raise. No clips = these values are right, and could
+   even come down for sensitivity.
    🔴 **`log: { homekit: trace }` is TEMPORARY and still enabled** — remove it and restart
    go2rtc once the thresholds are settled.
 
