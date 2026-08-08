@@ -134,12 +134,23 @@ The bridge runs a small relay per camera that presents the tunnelled stream as o
 go2rtc pulls it with its **native** client: H.264 passthrough straight into in-process HKSV muxing,
 with no ffmpeg in the media path at all.
 
-**1. Get each camera's endpoint.** `host` and `port` come from `LocalRtspEndpoint` in the
-`mobile.alarm.com` camera list, together with a per-camera `Login`/`Password`. ⚠️ The port is a
-per-camera HIGH port, not 554.
-🔴 **The bridge cannot fetch these itself yet** — they exist only on Alarm.com's mobile API, so
-today they are read from a proxied capture of the phone app. This is the main barrier to adoption
-and the work that would remove it is specified in [`MOBILE_API.md`](MOBILE_API.md).
+**1. Get each camera's endpoint.** ✅ **Let the bridge do it:**
+
+```bash
+npm run discover:local            # print ready-to-use blocks for all three files
+npm run discover:local -- --write # or merge them in place
+```
+
+`host` and `port` come from `LocalRtspEndpoint` in the `mobile.alarm.com` camera list, together
+with a per-camera `Login`/`Password`. ⚠️ The port is a per-camera HIGH port, not 554.
+
+⚠️ **The sign-in needs four device values only the phone app sends** — `Haiku`,
+`MobileDeviceUid`, `HashCode`, `TwoFactorId` — so the app must be proxied **once** to capture
+them. After that the tool enumerates every camera on the account by itself. Full detail,
+including what each value looks like and how to extract it:
+[`MOBILE_API.md`](MOBILE_API.md).
+🔎 To do it entirely by hand instead, read the same fields out of a capture yourself — the
+sections below describe the files the tool would have written.
 
 **2. `config/config.yaml`** — add a `localRtsp` block to the camera. No credentials go here:
 

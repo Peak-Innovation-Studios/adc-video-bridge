@@ -88,10 +88,14 @@ baton, the baton wins.
   (not `trace`): DBG keeps `motion: ON` and drops the 1-in-150 `motion: status` flood.
 - 🔑 **go2rtc logs in UTC; local is UTC-5. 3am local = `08Z`.** Its inline clock equals Docker's
   `-t` stamp exactly. A `16:05` line is 11:05 local — already mis-read once as "afternoon".
-- **Whose turn:** **DAVID.** Nothing is broken. ✅ The merge is DONE and pushed; ✅ item 2 is
-  SETTLED (no false positives overnight; keep the current thresholds).
-  **(1)** ONE `discover:local` from a cold start (item 3) — the last real blocker.
-  **(2)** Optional, any time: the `trace` → `debug` downgrade above.
+- **Whose turn:** **AGENT.** Nothing is broken and **no blocker remains.** ✅ merge done and
+  pushed; ✅ item 2 settled; ✅ **item 3 DONE — live sign-in succeeded 2026-08-08 13:04 and the
+  output matched production exactly.** The project is now adoptable by someone who has only an
+  Alarm.com username and password.
+  **(1)** Item 15 — the positional `listenPort` collision, a real latent bug.
+  **(2)** Push `agent/discover-local-write` (3 commits) and merge it.
+  **(3)** DAVID, whenever: `MOBILE_API.md`'s remaining "still to do" — refresh endpoints at
+  runtime so a camera that changes address self-heals rather than needing setup re-run.
 
 ### What's left (priority order)
 
@@ -159,7 +163,36 @@ baton, the baton wins.
    🔴 **`log: { homekit: trace }` is TEMPORARY and still enabled** — remove it and restart
    go2rtc once the thresholds are settled.
 
-3. 🔴 **(THE community blocker — BUILT, one controlled sign-in from done.)** A
+3. ✅ **DONE 2026-08-08 13:04 — THE COMMUNITY BLOCKER IS GONE. Live sign-in SUCCEEDED.**
+   `npm run discover:local` authenticated against `mobile.alarm.com` and returned all 3 cameras
+   with their local RTSP endpoints.
+   ⚠️ **Do NOT describe this as "onboarding is now just username and password" — it is not, and
+   an earlier draft of this line said so wrongly.** A new user must STILL proxy the app once, to
+   capture four device values (`Haiku`, `MobileDeviceUid`, `HashCode`, `TwoFactorId`). What
+   changed is WHAT they extract: **four fixed values instead of per-camera endpoints and
+   credentials** — and the tool then enumerates any number of cameras and re-reads them whenever
+   they change. The TLS-intercepting-proxy step is reduced, not removed.
+   ❓ **Untested and worth knowing:** whether `Haiku` is per-install or a client constant, and
+   whether a freshly generated `MobileDeviceUid` works in place of a captured one. Both were
+   among the variables permuted during the contaminated run, so nothing reliable is known. If
+   `Haiku` turns out to be a constant, the proxy step disappears entirely — that is the single
+   highest-value unknown left on this API. 🔴 Answer it by OFFLINE comparison or a single
+   deliberate attempt, never by permuting.
+   🔑 **PROVEN CORRECT, not merely non-empty.** Every generated field matched the running
+   production config — which was hand-extracted from a capture weeks earlier and is therefore an
+   INDEPENDENT artifact: all three camera ids, hosts, ports and RTSP credentials identical. That
+   exercises the whole chain — auth, gunzip, `<lnr>` parse, `lre` extraction, and the
+   `UnitId`+`did` → web-API-id reconstruction. A parser reading the wrong attribute would have
+   returned plausible data and failed this.
+   ⚠️ **What the match does NOT prove:** `listenPort` is assigned by the CLI positionally
+   (`8561 + index`), never read from the API. It matched only because Alarm.com happened to
+   return the cameras in the same order as the existing config. **See item 15 — that is a latent
+   bug, not a validated behaviour.**
+   ⚠️ Do not paste the generated `pin:` values into a PAIRED install (item 2's cameras are all
+   paired; new pins break pairing and lose HKSV history), and do not take the generated
+   `motion_threshold: 3.5` for front/kitchen — those are 4.0 by measurement.
+
+   *(historical, kept because the diagnosis is the reusable part)* **(THE community blocker)** A
    `mobile.alarm.com` client so endpoints and per-camera credentials are fetched rather than
    typed in by hand. 📄 **Full detail: [`MOBILE_API.md`](MOBILE_API.md).**
    ✅ **Captured and implemented 2026-08-07:** `POST /MobileServlet/SubmitRequest.aspx`,
@@ -250,6 +283,19 @@ baton, the baton wins.
    `OverlapOutcome` removed; the false "activeDied cannot be true here" comment in `reconnect()`
    corrected; `rtpCount` now reset in `cutOver()`; `tryConnect()` sets `_state = 'error'` on
    rejection instead of stranding it at `'connecting'`.
+
+15. 🔴 **(Agent — a real latent bug, found 2026-08-08) `listenPort` is assigned POSITIONALLY and
+    can collide when a camera is added later.** `src/discover-local-cli.ts` computes
+    `RELAY_PORT_BASE + index` over the API's returned order. `mergeConfigYaml` skips cameras whose
+    `id` already exists — so on a re-run after adding a camera, an EXISTING camera keeps its old
+    `listenPort` while a NEW camera at a lower index is handed the same number. Two relays then
+    try to bind one port.
+    🔑 **Fix shape:** derive the next port from what the existing config has already allocated,
+    not from array position. ⚠️ It went unnoticed because the first live run matched production
+    exactly — but only because Alarm.com happened to return the cameras in the same order the
+    config was written in. **That match validated the API parsing, NOT the port assignment.**
+    💡 `npm run verify:config` would catch the collision after the fact; this is about not
+    generating it.
 
 ### Do not touch / gotchas
 

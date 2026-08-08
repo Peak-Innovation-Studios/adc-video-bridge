@@ -28,10 +28,17 @@ ffmpeg in the media path**.
 RTSP is the only path that will ever work.** No amount of fixing on Alarm.com's side changes
 that.
 
-⚠️ **The catch, and it is a real one:** the per-camera RTSP endpoints and credentials are
-published only by Alarm.com's **mobile** API, which this project cannot yet call. Today you
-extract them by proxying the phone app. Closing that gap is the highest-value work
-outstanding — see [`docs/MOBILE_API.md`](docs/MOBILE_API.md).
+✅ **The bridge now fetches those endpoints itself.** `npm run discover:local` signs in to
+Alarm.com's **mobile** API and prints — or, with `--write`, merges — ready-to-use configuration
+for every camera on the account, including per-camera RTSP credentials. Verified against a
+hand-configured install: identical camera ids, hosts, ports and credentials.
+
+⚠️ **One manual step remains.** The sign-in needs four device-identification values that only
+the phone app sends (`Haiku`, `MobileDeviceUid`, `HashCode`, `TwoFactorId`), so you must proxy
+the app **once** to capture them. That is a real reduction — four fixed values instead of
+per-camera endpoints and credentials for every camera, and the tool then tracks cameras as they
+change — but it is not yet "just type your password". See
+[`docs/MOBILE_API.md`](docs/MOBILE_API.md).
 
 ### Historical note
 
@@ -164,9 +171,12 @@ The bridge refreshes video tokens every 10 minutes and rebuilds the token-bound 
 - Read-only status endpoint with relay, camera and event-listener diagnostics
 
 **Not yet done:**
-- 🔴 **Fetching local RTSP endpoints automatically** — they live on Alarm.com's mobile API, which
-  this project cannot yet call, so they are configured by hand. This is the main barrier to adoption:
-  [`docs/MOBILE_API.md`](docs/MOBILE_API.md)
+- ⚠️ **Fully unattended onboarding.** Endpoint fetching itself is ✅ **done** —
+  `npm run discover:local` reads every camera's local RTSP endpoint and credentials straight from
+  Alarm.com's mobile API. What remains is that its sign-in needs four device values only the phone
+  app sends, so the app must be proxied **once**: [`docs/MOBILE_API.md`](docs/MOBILE_API.md)
+- **Re-reading endpoints at runtime**, so a camera that changes address self-heals instead of
+  needing setup re-run
 - ~~go2rtc stream auto-configuration~~ — **done.** `npm run discover:local -- --write` merges the
   generated blocks into `config/config.yaml`, `.env` and `config/go2rtc.yaml` in place, preserving
   comments and backing each file up first. 🔴 It **refuses** to touch `config/go2rtc.yaml` once any

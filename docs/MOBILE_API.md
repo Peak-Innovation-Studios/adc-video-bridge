@@ -11,11 +11,16 @@ and impossible to ask of anyone adopting this project.
 🔑 **Closing that gap is the single highest-value piece of work remaining.** With a client
 here, onboarding becomes "type your Alarm.com username and password"; without it,
 onboarding requires a TLS-intercepting proxy and a trusted CA certificate on a phone.
-⚠️ **Status: the client is BUILT and unit-tested; no live sign-in has succeeded yet, but the
-cause is now KNOWN and fixed in code.** The request was missing a body field — `Haiku` — and
-Alarm.com answers an incomplete request with a zero-byte HTTP 200 that is indistinguishable
-from a rejected sign-in. See "The empty body was never a rate limit" below. The next attempt
-needs `ADC_MOBILE_HAIKU` set; the CLI now refuses to run without it rather than spend a login.
+✅ **STATUS: WORKING. Live sign-in succeeded 2026-08-08 13:04**, returning all cameras with their
+local RTSP endpoints. The blocker was a missing body field — `Haiku` — and Alarm.com answers an
+incomplete request with a zero-byte HTTP 200 indistinguishable from a rejected sign-in. See
+"the empty body was never a rate limit" below.
+
+🔑 **Verified correct, not merely non-empty.** The generated configuration matched a running
+production install field-for-field — camera ids, hosts, ports and RTSP credentials — and that
+install had been configured by hand from a proxy capture weeks earlier, so it is an
+**independent** artifact. A parser reading the wrong attribute would have produced plausible
+output and failed this comparison.
 
 ---
 
