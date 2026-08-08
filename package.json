@@ -20,7 +20,8 @@
     "probe": "tsx src/probe.ts",
     "ws-probe": "tsx src/ws-probe.ts",
     "verify:config": "tsx src/verify-config-cli.ts",
-    "homekit:label": "tsx src/homekit-label-cli.ts"
+    "homekit:label": "tsx src/homekit-label-cli.ts",
+    "discover:local": "tsx src/discover-local-cli.ts"
   },
   "engines": {
     "node": ">=20.0.0"

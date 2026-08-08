@@ -1,6 +1,6 @@
 # The Alarm.com mobile API
 
-Everything known about `mobile.alarm.com`, and the one thing still missing.
+Everything known about `mobile.alarm.com`, what is built against it, and the one thing still unresolved.
 
 **Why this matters:** the per-camera RTSP endpoints and credentials that make local
 streaming possible exist **only** on this API. The `www.alarm.com/web/api/…` surface this
@@ -11,6 +11,8 @@ and impossible to ask of anyone adopting this project.
 🔑 **Closing that gap is the single highest-value piece of work remaining.** With a client
 here, onboarding becomes "type your Alarm.com username and password"; without it,
 onboarding requires a TLS-intercepting proxy and a trusted CA certificate on a phone.
+⚠️ **Status: the client is BUILT and unit-tested, but no live sign-in has succeeded yet.**
+See "Still unresolved" below — it is one controlled attempt away, not a rebuild.
 
 ---
 
@@ -47,50 +49,90 @@ exactly, so the two APIs can be correlated without a second lookup.
 Copying one stream URL and changing only the port yields a 401 that presents as a stream
 that is simply "offline".
 
-## Authentication — what is known
+## The login call — CAPTURED and implemented
 
-Authenticated calls carry a mix of these, and **not all calls use the same set**:
+```
+POST https://mobile.alarm.com/MobileServlet/SubmitRequest.aspx
+Content-Type: application/x-www-form-urlencoded
+User-Agent: MoniAlarm/<version> CFNetwork/<v> Darwin/<v>
 
-| parameter | observed on | notes |
-|---|---|---|
-| `Password` | `GetAllFences` | 32 hex chars. **NOT a hash of the account password** — tested against md5/sha1 of the password alone and combined with the username; none match. It is a minted device token. |
-| `SessionToken` | `GetWebsocketAuthToken` | 32 hex chars |
-| `DeviceUid` / `MobileDeviceUid` | both | a stable per-install UUID |
-| `TwoFactorId` | `GetWebsocketAuthToken` | suggests a durable trusted-device token, like the web API's `ADC_MFA_TOKEN` |
-| `CustomerId` | `GetWebsocketAuthToken` | account identifier |
-| `ApplicationBuildNumber`, `DeviceFlavor`, `Haiku` | both | client identification; `Haiku` is a fixed string the app sends verbatim |
+Action=UberLoginNew&Username=<email>&Password=<PLAINTEXT>&MobileDeviceUid=<uuid>
+&TwoFactorId=<trusted-device token>&… ~18 more client-identification fields
+```
 
-## 🔴 What is MISSING — and exactly how to capture it
+🔑 **The password is sent in PLAINTEXT — there is no key derivation to reverse.** An earlier
+hypothesis that the 32-hex `Password` on other calls was a hash of the account password was
+tested and disproved; that value is the **session token** under a confusingly reused parameter
+name.
 
-**The login exchange.** Every capture so far is of an *already-authenticated* session, so
-the parameters above are known but not the call that **mints** them. Guessing at an auth
-endpoint risks locking the account, so this must be captured rather than inferred.
+**Response** — XML, gzipped, `Content-Type: text/html`:
 
-**Capture procedure — needed once, by someone with a proxy already working:**
+```
+<lnr st="<32-hex session token>" lr="0" tfas="0" dcid="<customer id>" …>
+  <cli model="ADC-V723" cd="Front Door" did="2050" UnitId="10000001"
+       srt="true" SupportsWebRTC="true" l="<user>" p="<pass>"
+       lre="rtsp://user:pass@<lan-ip>:<port>/s1"
+       pre="…" dre="…" re="…" />
+</lnr>
+```
 
-1. Start the intercepting proxy (Proxyman, mitmproxy, Charles) with its CA trusted on the phone.
-2. **Sign OUT of the Alarm.com/Brinks app completely.** A resumed session skips the exchange.
-3. Sign back in, including any two-factor prompt.
-4. Open the camera list so the enumeration call is captured too.
-5. Export **all** `mobile.alarm.com` traffic.
+🔑 **The login response contains the cameras — no second call is needed.** `<cli>` is one
+camera; `lre` is the local RTSP endpoint, `l`/`p` the credentials, and `UnitId` + `did`
+reconstruct the **web API's** camera id, so the two surfaces correlate without a lookup.
 
-⚠️ **Export request URLs, methods and HEADERS — not just bodies.** The existing captures
-are body-only, which is why the parameters are known but the endpoints they were posted to
-are not.
+### Three things measured the hard way
 
-🔴 **The captures are full of secrets** — camera RTSP passwords, MAC addresses, LAN and WAN
-addresses, session tokens, camera names and home GPS coordinates. `CLAUDE.md` forbids any
-of it reaching this repository. Extract what is needed, commit nothing.
+- 🔴 **A minimal request does not work.** Sending only Action/Username/Password/MobileDeviceUid
+  returns HTTP 200 with a body that is not a `<lnr>` document at all — the handler bails with
+  nothing to read. Send the app's full field set and a plausible `User-Agent`. There is no way
+  to learn *which* field it wants, so the client sends them all.
+- 🔴 **The response is gzipped and `fetch` does NOT transparently decode it.** `res.text()`
+  yields compressed bytes as mojibake, which parses as "not a login document" — identical to a
+  rejected login. This produced a wrong diagnosis before it was spotted; the client now gunzips
+  explicitly.
+- 🔴 **A REJECTED login still returns HTTP 200 with a well-formed `<lnr>`.** Only `lr`
+  distinguishes them: `0` is success. Trusting the status code accepts a failed sign-in.
 
-## Design sketch, once the login is known
+### ❓ Still unresolved
 
-- `src/mobile/mobile-api.ts` — login → durable device token → camera enumeration.
-- Store the device token the way the web API's MFA token is stored: an env var or Docker
-  secret, obtained once interactively, reused headlessly. This keeps the awkward step out
-  of the container.
-- Feed `src/discover.ts` so it emits complete `config.yaml` and `go2rtc.yaml` blocks with
-  endpoints and credentials filled in.
-- Optionally refresh endpoints at runtime, so a camera changing address self-heals.
+**A live sign-in has not yet succeeded from this client.** After the fixes above, the request
+reaches the login logic and receives a structured rejection (`lr=1`) rather than garbage. Two
+explanations remain, and they were not separated because further attempts against an
+authentication endpoint risk locking the account:
+
+1. **`HashCode`** — the app sends a numeric `HashCode`. Whether the server validates it is
+   unknown. The client accepts one via `hashCode` but never invents one, because a captured
+   value may be account- or device-specific.
+2. **A rotated `TwoFactorId`** — the captured token had already been replayed during testing,
+   which may have consumed or rotated it.
+
+➡️ **Next step, ONE controlled attempt:** sign in on the phone again to mint a fresh
+`TwoFactorId`, then run `npm run discover:local` with it. If that succeeds, `HashCode` is not
+required and the client is done. If it fails identically, pass the captured `HashCode` and try
+once more.
+
+⚠️ **Do not bisect this in a loop.** Every attempt is a login.
+
+## What is built
+
+- **`src/mobile/mobile-api.ts`** — `mobileLogin()` performs the single request and returns the
+  cameras. Makes **one** request and never retries.
+- **`npm run discover:local`** (`src/discover-local-cli.ts`) — signs in and prints ready-to-paste
+  blocks for `config.yaml`, `.env` and `go2rtc.yaml`, including suggested HomeKit pins and
+  `motion: detect` thresholds. Credentials come from the environment, never arguments, so they
+  do not land in shell history or `ps`.
+
+```bash
+export ADC_USERNAME=... ADC_PASSWORD=...
+export ADC_MOBILE_TWO_FACTOR_ID=...     # if the account uses 2FA
+npm run discover:local
+```
+
+💡 `ADC_MOBILE_DEVICE_UID` is generated if unset and printed so it can be persisted — Alarm.com
+ties trusted-device state to it, so a fresh UUID each run looks like a new device.
+
+**Still to do once a live sign-in succeeds:** refresh endpoints at runtime so a camera changing
+address self-heals, rather than only at setup.
 
 ⚠️ **Rate limits and lockout are real.** `README.md` documents Alarm.com banning accounts
 that poll aggressively. Any development against the login endpoint should be

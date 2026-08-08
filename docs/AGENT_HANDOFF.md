@@ -21,9 +21,8 @@ baton, the baton wins.
   motion from the H.264 stream itself, so no notification rule is needed on their side.
   ⚠️ Motion thresholds are **measured but unconfirmed over a full night** — item 2, and
   `log: { homekit: trace }` is still enabled for that measurement.
-  🔴 **The community/adoption gap is NOT closed** — the last mile is (pairing page, config
-  checker, docs), the first mile is not: obtaining camera credentials still needs a proxied
-  phone capture. Item 3. 📖 `Journal.md` 2026-08-07 (night).
+  🔑 **The community/adoption gap is nearly closed** — the mobile API login is captured and a
+  client is built (`npm run discover:local`); it needs ONE successful live sign-in. Item 3. 📖 `Journal.md` 2026-08-07 (night).
 - **Previously (evening):** ✅ **THE OUTAGE ENDED.** All three cameras
   are live in HomeKit over their own **local RTSP**, pulled by go2rtc's **native** client and muxed to
   HKSV in process — **zero ffmpeg in the media path**. The two ADC-V515s work for the first time ever;
@@ -61,7 +60,7 @@ baton, the baton wins.
   clone, pulled and rebuilt by hand. ⚠️ **Compose is v2.20.1**, despite the hyphenated
   `docker-compose` binary name — an earlier baton said v1, which was wrong. All v2 flags work
   (`--since`, `--index`).
-- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **22 files / 337
+- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **23 files / 357
   tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
   🔑 The relay's structural guards were **mutation-checked**, not just written: reverting each kills
   its own test and leaves the rest green. ⚠️ Calibration — the base64 bug passes **8 of 12** tests
@@ -138,27 +137,25 @@ baton, the baton wins.
    🔴 **`log: { homekit: trace }` is TEMPORARY and still enabled** — remove it and restart
    go2rtc once the thresholds are settled.
 
-3. 🔴 **(THE community blocker — needs ONE capture from David first.)** A `mobile.alarm.com` client,
-   so endpoints and per-camera credentials are fetched rather than typed in by hand.
-   📄 **Everything known + the exact capture procedure: [`MOBILE_API.md`](MOBILE_API.md).**
-   ⚠️ Reframed 2026-08-07: this is no longer about endpoint drift (ports survive IP changes and
-   DHCP reservations pin the address). It is about **adoption** — today the only way to obtain the
-   credentials is a TLS-intercepting proxy with a trusted CA on a phone, which is fine for one
-   developer and impossible to ask of anyone else.
-   🔎 Measured negative that narrows the work: the mobile API's `Password` is **NOT** a hash of the
-   account password (md5/sha1, alone and with the username, all tested). It is a minted device
-   token, so the login flow must be captured, not derived. They exist **only** on that
-   API — a legacy RPC-over-HTTP surface (`Action=` form POSTs) nothing in `src/` speaks.
-   🔑 **A camera's port survived an IP change**, so ports are device-assigned rather than
-   lease-derived, and the IPs are now pinned by DHCP reservation. Both halves are stable under the
-   drift actually observed.
-   ❓ Still unmeasured: does the port survive a camera REBOOT? Worth knowing, but it no longer
-   decides this item — adoption does.
-   ⚠️ Not cheap: the captures contain **no login exchange**, so it starts with obtaining one, and it
-   carries account-lockout risk. Do the power-cycle test first.
-   🔎 What the captures DO show: `GetAllFences` authenticates with a persistent `Password` +
-   `DeviceUid` and **no** session token, which suggests a durable device credential rather than a
-   per-session login. If that holds there may be no login flow to reverse at all.
+3. 🔴 **(THE community blocker — BUILT, one controlled sign-in from done.)** A
+   `mobile.alarm.com` client so endpoints and per-camera credentials are fetched rather than
+   typed in by hand. 📄 **Full detail: [`MOBILE_API.md`](MOBILE_API.md).**
+   ✅ **Captured and implemented 2026-08-07:** `POST /MobileServlet/SubmitRequest.aspx`,
+   `Action=UberLoginNew`, password in PLAINTEXT, and the response `<lnr>` **contains the
+   cameras** — `<cli>` elements carry `lre` (local RTSP), `l`/`p` credentials, and
+   `UnitId`+`did` which reconstruct the web API's camera id. No second call needed.
+   Built: `src/mobile/mobile-api.ts` + `npm run discover:local`, which prints paste-ready
+   blocks for all three config files.
+   ❓ **A live sign-in has NOT yet succeeded** — the request now reaches the login logic and
+   gets `lr=1` (structured rejection) rather than garbage. Two candidates, deliberately not
+   separated because each attempt is a login: a required `HashCode`, or a `TwoFactorId` rotated
+   by the testing itself.
+   ➡️ **Next: mint a fresh TwoFactorId by signing in on the phone, then ONE run of
+   `npm run discover:local`.** 🔴 **Do not bisect in a loop** — Alarm.com bans accounts that
+   poll authentication endpoints.
+   🔎 Three traps already paid for: a minimal field set returns a non-`<lnr>` body with no
+   error; the response is **gzipped and `fetch` does not decode it**; and a REJECTED login
+   still returns HTTP 200, so only `lr` distinguishes success.
 
 4. **(David — a decision, not code)** `PublicRtspEndpoint` publishes each camera's port on the **WAN**
    address: digest-auth RTSP behind a self-signed certificate that expired Dec 2024, reachable from
