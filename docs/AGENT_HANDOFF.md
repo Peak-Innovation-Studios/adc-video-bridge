@@ -16,15 +16,21 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-07 (wrap) — ✅ **THE OUTAGE IS OVER AND THE ARCHITECTURE CHANGED.** All three
-  cameras are live in HomeKit over their **own local RTSP**, pulled by go2rtc's native client,
-  muxed to HKSV in process — **zero ffmpeg in the media path**. Both ADC-V515s work for the first
-  time ever. HKSV **recording is proven**. Motion is detected by go2rtc itself, so **Alarm.com is
-  out of the video path entirely** — streaming, tokens and motion.
-  📖 `Journal.md` 2026-08-07 (evening / night / late).
-- 🔴 **UNMERGED BRANCH: `docs/community-onboarding`, 11 commits, pushed, NOT on `main`.**
-  Docs plus new CLIs and `src/mobile/` — **nothing `index.ts` imports at runtime**, so merging it
-  needs no rebuild. Review and merge at will.
+- **Updated:** 2026-08-08 — **merged `docs/community-onboarding` into `main`** (fast-forward, 12
+  commits). Reviewed and re-validated first; no code was written this session. The architecture
+  state below is unchanged from 2026-08-07: all three cameras live in HomeKit over their **own
+  local RTSP**, go2rtc's native client, in-process HKSV, **zero ffmpeg in the media path**. Both
+  ADC-V515s work. HKSV **recording is proven**. Motion is detected by go2rtc itself, so
+  **Alarm.com is out of the video path entirely**. 📖 `Journal.md` 2026-08-07 (evening/night/late).
+- 🔴 **`main` IS NOW 12 COMMITS AHEAD OF `origin/main` AND NOT PUSHED.** The merge was local.
+  ⚠️ The old baton claimed the branch was "pushed" — it was not: `origin/docs/community-onboarding`
+  stopped at `65fca25` and the wrap commit `5192eaf` existed only on disk. Nothing is lost, but
+  **nothing is backed up either until someone pushes.** Pushing was not authorised this session.
+- 🔑 **The merge does NOT require a rebuild or a deploy, and the reason is narrower than "docs
+  only".** It adds `src/mobile/`, `src/discover-local-cli.ts` and a `package.json` *script* (no
+  dependency change, lockfile untouched). `COPY src/ src/` matches by prefix, so a rebuild WOULD
+  produce a different image — but **nothing `index.ts` imports transitively changed** (verified by
+  grep, not assumed), and both new entry points are hand-run CLIs. The deployed image stays correct.
 - **Branch / HEAD:** `git fetch && git status --short && git log --oneline -1`.
   ⚠️ Pushing does NOT deploy. The NAS checkout at `/volume1/docker/adc-video-bridge` is a separate
   clone, pulled and rebuilt BY HAND, and every `docker-compose` command needs David's sudo — an
@@ -33,8 +39,12 @@ baton, the baton wins.
   `package.json`, `package-lock.json`, `tsconfig.json`, `src/`, `entrypoint.sh`. Match by PREFIX
   (`^src/`), never `^src/$`.
 - **Deployed:** `main` @ `37d1236`, image rebuilt, `/pair` and `events` both live and verified.
-- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **23 files / 358
-  tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
+  ⚠️ **The NAS is now 12 commits behind `main` ON PURPOSE** — see the merge note above. This is a
+  documentation/CLI gap, not a drift bug; do not "fix" it with a rebuild that nobody asked for.
+- **Validation:** re-run **2026-08-08 against the merged `main` (`5192eaf`)**, all three green:
+  `npm run build` clean, `npx vitest run` **23 files / 358 tests**, `npm run audit:prod` passes with
+  the documented GHSA-2p57-rm9w-gvfp exception. ⚠️ Re-run before trusting — these were measured
+  before any later change.
   🔑 The relay's structural guards were **mutation-checked**. ⚠️ Calibration: the base64 bug passed
   **8 of 12** tests including the whole handshake. A passing handshake test proves nothing here.
 - 🔑 **THREE SUDO-FREE TOOLS, in the order you will want them:**
@@ -66,7 +76,7 @@ baton, the baton wins.
   Remove it and restart go2rtc once the motion thresholds are settled.
 - **Whose turn:** **DAVID.** Nothing is broken. In order: **(1)** check the Home app timeline for
   3am clips — that settles the motion thresholds (item 2); **(2)** ONE `discover:local` from a cold
-  start (item 3); **(3)** merge the branch.
+  start (item 3); **(3)** decide whether to push `main` — ✅ the merge itself is DONE.
 
 ### What's left (priority order)
 
