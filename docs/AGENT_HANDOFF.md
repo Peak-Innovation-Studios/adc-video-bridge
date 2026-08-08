@@ -80,10 +80,12 @@ baton, the baton wins.
   ⚠️ **A leak check that reports without BLOCKING is not a check** — a fixture carrying the real
   camera username was committed this session while the scan printed the finding and the commit
   proceeded anyway. Both that and earlier camera names remain in history.
-- ⚠️ **`log: { homekit: trace }` is still enabled in `config/go2rtc.yaml`.** Thresholds are now
-  settled (item 2), so it can come down — but **to `debug`, NOT removed**: `motion: ON` is a DBG
-  line and `motion: status` is TRC, so `debug` keeps the only trigger visibility there is and drops
-  the 1-in-150 flood. Needs a go2rtc restart (David's sudo).
+- ✅ **`log: { homekit: trace }` REMOVED 2026-08-08 (David).** `config/go2rtc.yaml` now has just
+  `log:` → `level: info`, verified well-formed.
+  ⚠️ **Consequence: there is now NO motion visibility at all.** `motion: ON` is a **DBG** line, so
+  at `info` no trigger is ever logged — the only remaining feedback is clips appearing in the Home
+  app, which is slower and coarser. 🔑 If tuning thresholds again, set `log: { homekit: debug }`
+  (not `trace`): DBG keeps `motion: ON` and drops the 1-in-150 `motion: status` flood.
 - 🔑 **go2rtc logs in UTC; local is UTC-5. 3am local = `08Z`.** Its inline clock equals Docker's
   `-t` stamp exactly. A `16:05` line is 11:05 local — already mis-read once as "afternoon".
 - **Whose turn:** **DAVID.** Nothing is broken. ✅ The merge is DONE and pushed; ✅ item 2 is
@@ -98,8 +100,22 @@ baton, the baton wins.
    Runbook: [`SETUP.md`](SETUP.md) → "Step 2b". Design + traps: [`INVARIANTS.md`](INVARIANTS.md).
    ⚠️ What it still does NOT do: fetch its own endpoints (item 3), and prove HKSV *records* (item 2).
 
-2. ✅ **SETTLED 2026-08-08 — NO false positives overnight. Keep front 4.5, kitchen 5.5, sunroom 3.5.**
-   HKSV recording is proven and all three use `motion: detect`, so Alarm.com is out of the loop.
+2. ✅ **SETTLED 2026-08-08 — no false positives overnight.** HKSV recording is proven and all three
+   use `motion: detect`, so Alarm.com is out of the loop.
+   🔴 **THRESHOLDS CHANGED ON DISK BUT NOT YET LIVE — go2rtc has NOT been restarted.**
+   `config/go2rtc.yaml` now reads **front 4.0 · kitchen 4.0 · sunroom 3.5** (was 4.5 / 5.5 / 3.5);
+   the RUNNING process still has the old values. `npm run verify:config` = 0 blocking after the edit.
+   ⚠️ **Do not pair/unpair before the restart** — go2rtc persists its own config, so a write from
+   memory silently reverts the edit. Apply with `sudo docker-compose restart go2rtc` (config-only,
+   no rebuild). Backup, outside the repo and the build context, mode 600:
+   `~/go2rtc.yaml.bak-20260808-113942` on the NAS.
+   🔑 **Why 4.0:** both 4.5 and 5.5 sat ABOVE the weakest real trigger observed (4.46), so they
+   risked missing real motion; 4.0 is inside the measured 2.89-4.46 gap. Sunroom left at 3.5 — it is
+   the only threshold with direct evidence behind it. ⚠️ That 4.46 trigger MUST have been sunroom
+   (only camera then below 4.46), so front's and kitchen's real-motion ratios are **unmeasured** and
+   4.0 assumes their scenes behave like sunroom's. Accepted because the error directions are not
+   symmetric: **false positives show up as clips; missed motion is silent.** Revert to 4.5/5.5 if
+   clips appear at 3am.
    🔴 **go2rtc logs in UTC; local is UTC-5.** Its inline clock is byte-identical to Docker's `-t`
    stamp (`22:41:20.710` == `22:41:20.710Z`). **3am local = `08Z`.** An earlier reading in this repo
    mis-called a `16:05` line "afternoon"; it was 11:05 local. Convert before concluding anything.
@@ -215,6 +231,15 @@ baton, the baton wins.
   and Synology invariants. **Search it before changing any of those.**
 
 ### Open decisions
+
+- 🔴 **DAVID: decide whether to rotate a camera's RTSP password.** On 2026-08-08 an agent printed
+  `config/go2rtc.yaml` lines 17-22 to check the `log:` edit; line 22 begins `streams:`, so **one
+  camera's RTSP username and password went into a session transcript in clear text.** Nothing was
+  committed and the file on disk was not altered by it. The exposure is only as wide as that
+  transcript. ⚠️ **The lesson for agents: redacting `key: value` lines is not enough** — the same
+  read also printed every `pairings:` list ITEM (client_id / client_public) because the filter
+  matched only `key: value` and not list entries. Redact by BLOCK, never by line pattern, and never
+  print a line range from that file without knowing which block each line falls in.
 
 - **Report the HAP auth defect upstream** on [go2rtc#2130](https://github.com/AlexxIT/go2rtc/pull/2130).
   It is a real design gap, not a misconfiguration: HAP structurally cannot send Basic credentials, so
