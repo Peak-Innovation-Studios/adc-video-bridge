@@ -8,6 +8,59 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-07 (late) — The mobile API opens, then nine attempts measure a throttle
+
+**Claude Code (Opus 5).** David captured a fresh app sign-in. It gave the missing exchange and
+more: `POST /MobileServlet/SubmitRequest.aspx`, `Action=UberLoginNew`, and a response whose
+`<lnr>` document **already contains the cameras**. No second call. `<cli>` elements carry `lre`
+(the local RTSP URL), `l`/`p` credentials, and `UnitId`+`did` — which reconstruct the *web*
+API's camera id, confirming a rule derived two sessions earlier from arithmetic on a capture.
+
+The account password goes over in **plaintext**. So the earlier hash experiment — testing
+whether the 32-hex `Password` on other calls was derived from it — was asking the wrong
+question about the wrong field. That value is the **session token** under a reused parameter
+name. Two identically-shaped 32-hex fields, two entirely different things.
+
+`src/mobile/mobile-api.ts` and `npm run discover:local` are built, tested and committed.
+
+### Live-firing found three real bugs the unit tests could not
+
+- 🔴 **The response is gzipped and `fetch` does NOT transparently decode it.** `res.text()`
+  returns compressed bytes as mojibake, which parses as "not a login document" — **identical
+  to a rejected login**. That produced a confident wrong diagnosis before it was caught. It is
+  the same shape as the `404 Stream Not Found` that opened this whole day: a transport failure
+  wearing an application error's clothes.
+- 🔴 **A rejected login returns HTTP 200** with a well-formed `<lnr>`. Only `lr` separates
+  success from failure; the status code is decoration.
+- 🔴 **An unrecognised request returns an EMPTY body** — 200, zero bytes, no error document.
+  No code, no message, no distinguishing between "unknown device", "bad token" and "missing
+  field". A client here has to *manufacture* the explanation the API refuses to give.
+
+### And then I spent five attempts measuring the throttle
+
+The first attempts returned parseable `<lnr>` documents. **Every attempt after returned a
+byte-identical empty body regardless of what was varied** — device UID, two-factor token, field
+set, `HashCode` — including a faithful repeat of the app's complete captured request, which had
+worked minutes earlier.
+
+🔑 **That pattern fits RATE LIMITING, not field validation.** `README.md` has documented for
+months that Alarm.com bans accounts that poll. So the conclusions I drew along the way —
+"TwoFactorId is validated", "the device UID must be known", "HashCode is required" — are
+probably measurements of a throttle, and are now marked as contaminated in `docs/MOBILE_API.md`
+rather than left to mislead.
+
+⚠️ **The tell was there by attempt four and I kept going to nine.** When every variation
+produces the same result, the variable under test is no longer the one being measured. Worse,
+I introduced a confound myself: the CLI generates a `MobileDeviceUid` when none is set, so two
+runs I compared differed in *two* inputs while I attributed the difference to one. A convenience
+default made a comparison stop being a comparison, and it did not appear in the command I typed.
+
+That is the second time in one evening — the motion-threshold counts were taken in a window
+whose occupancy was never verified, and three config edits were made on the strength of them.
+Both corrections are recorded where the wrong version was.
+
+---
+
 ## 2026-08-07 (night) — HKSV proven, motion cut loose from Alarm.com, and the community gap named
 
 **Claude Code (Opus 5).** Recording works. The motion trigger turned out not to be our problem

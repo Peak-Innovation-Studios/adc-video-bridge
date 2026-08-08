@@ -16,10 +16,14 @@ Read items 0-2 in full. Everything below is reference: consult it when relevant,
 4. `Journal.md` — the narrative **why**: how the current state came about, what was tried and
    rejected, and measured findings. Read the **most recent entry**; `grep` for older ones. Older
    entries are archived under `docs/journal/`.
-5. `docs/UPSTREAM.md` — use when sending anything to Omar-L: what is open, what is held, and the
+5. `docs/MOBILE_API.md` — the `mobile.alarm.com` surface: the login exchange, the camera fields,
+   and which findings are trustworthy vs contaminated by rate limiting. Read **before** touching
+   `src/mobile/` or attempting a sign-in — every attempt is a login against an account
+   Alarm.com can lock.
+6. `docs/UPSTREAM.md` — use when sending anything to Omar-L: what is open, what is held, and the
    rules (verify against **their** lockfile; never ship internal docs).
-6. `docs/SETUP.md` — use for general deployment or Homebridge integration.
-7. `docs/SYNOLOGY.md` — use for Synology Container Manager deployment and operations.
-8. `docs/superpowers/specs/` and `docs/superpowers/plans/` — historical design and test-foundation context; search for the relevant decision.
+7. `docs/SETUP.md` — use for general deployment, local-RTSP setup, motion modes, or pairing.
+8. `docs/SYNOLOGY.md` — use for Synology Container Manager deployment and operations.
+9. `docs/superpowers/specs/` and `docs/superpowers/plans/` — historical design and test-foundation context; search for the relevant decision.
 
 If another document contradicts the baton, the baton wins. Do not commit `.env`, real camera configuration, credentials, tokens, camera names or IDs, logs, or captured media.
