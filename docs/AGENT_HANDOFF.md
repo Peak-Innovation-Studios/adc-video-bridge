@@ -232,9 +232,27 @@ baton, the baton wins.
    address — so the protection comes from the bind address, not the setting. `npm run verify:config`
    warns about it.
 
-6. **(Agent, small)** Make the pre-commit leak scan **BLOCK** rather than report. A fixture carrying
-   the real camera username was committed this session while the scan printed the finding and the
-   commit proceeded anyway.
+6. ✅ **DONE 2026-08-08 — `scripts/scan-secrets.mjs` + `.githooks/pre-commit`, and it EXITS 1.**
+   There was never an installed scan; what the old wording called "the scan" was an agent running
+   `grep` by hand, which is why nothing blocked.
+   🔑 **Enable once per clone — it is not automatic:** `git config core.hooksPath .githooks`.
+   Also `npm run scan:secrets`, and `--range A..B` / `--stdin` for checking history.
+   Rules: RTSP credentials, HomeKit `pairings`/`device_private`, MACs, long hex, camera ids,
+   private IPs (against an **allowlist** of documented examples), and `Haiku` **anchored on its
+   key**. Escape hatch: `leak-scan-ok` on the line.
+   ⚠️ **Scans ADDED lines in the staged diff, never the tree** — the repo already contains real
+   values in history, and a whole-tree scan would fail every commit and be switched off in a day.
+   ⚠️ It prints the rule and location but **truncates the matched value**: a scanner that echoes
+   what it found is itself a way to leak it.
+   🔑 **It caught a real mistake on its first run against history** — the **NAS's own LAN
+   address** had been used as a fixture in `src/setup/steps.test.ts` earlier the same day.
+   Changed to a documentation-range address. ⚠️ The original is committed in `df03624` and stays
+   in history. 💡 The scanner then blocked the very commit that documented it, because this
+   bullet originally quoted the address literally. Working as intended.
+   💡 A first draft matched `Haiku` by SHAPE (ten words, ~60 chars, ending in a period) and
+   flagged four passages of this repo's own prose. That shape is just an English sentence. The
+   rule is now key-anchored, which does mean a bare value pasted without its key is not caught —
+   accepted, because a scanner that fires on every paragraph gets disabled.
 
 7. ⚠️ **(BRINKS — technician session still pending; a real defect on their side, no longer blocking)** Alarm.com issues no
    end-to-end WebRTC config for **any** camera on the account (3 of 3, two models, two of them added

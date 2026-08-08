@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks a commit that would publish a secret. See scripts/scan-secrets.mjs.
+# Enable once per clone:  git config core.hooksPath .githooks
+exec node "$(git rev-parse --show-toplevel)/scripts/scan-secrets.mjs"

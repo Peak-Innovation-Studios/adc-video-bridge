@@ -22,7 +22,8 @@
     "verify:config": "tsx src/verify-config-cli.ts",
     "homekit:label": "tsx src/homekit-label-cli.ts",
     "discover:local": "tsx src/discover-local-cli.ts",
-    "setup": "tsx src/setup-cli.ts"
+    "setup": "tsx src/setup-cli.ts",
+    "scan:secrets": "node scripts/scan-secrets.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -10,8 +10,8 @@ const v4 = (address: string, internal = false) => ({ address, family: 'IPv4', in
 
 describe('pickBindAddress', () => {
   it('takes the single private LAN address', () => {
-    const r = pickBindAddress({ en0: [v4('192.168.7.42')], lo0: [v4('127.0.0.1', true)] });
-    expect(r.address).toBe('192.168.7.42');
+    const r = pickBindAddress({ en0: [v4('192.168.1.42')], lo0: [v4('127.0.0.1', true)] });
+    expect(r.address).toBe('192.168.1.42');
     expect(r.error).toBeUndefined();
   });
 
@@ -22,9 +22,9 @@ describe('pickBindAddress', () => {
   it('excludes docker and other virtual interfaces', () => {
     const r = pickBindAddress({
       docker0: [v4('172.17.0.1')], 'br-abc123': [v4('172.18.0.1')],
-      veth99: [v4('10.9.9.9')], en0: [v4('192.168.7.42')],
+      veth99: [v4('10.9.9.9')], en0: [v4('192.168.1.42')],
     });
-    expect(r.address).toBe('192.168.7.42');
+    expect(r.address).toBe('192.168.1.42');
   });
 
   // Positive control for the exclusion: without a real interface present it must
@@ -36,9 +36,9 @@ describe('pickBindAddress', () => {
   });
 
   it('refuses to guess between several candidates, and names them', () => {
-    const r = pickBindAddress({ en0: [v4('192.168.7.42')], en1: [v4('10.0.0.5')] });
+    const r = pickBindAddress({ en0: [v4('192.168.1.42')], en1: [v4('10.0.0.5')] });
     expect(r.address).toBeUndefined();
-    expect(r.candidates.sort()).toEqual(['10.0.0.5', '192.168.7.42']);
+    expect(r.candidates.sort()).toEqual(['10.0.0.5', '192.168.1.42']);
     expect(r.error).toMatch(/SILENTLY/);
     expect(r.error).toMatch(/--bind-address/);
   });
@@ -61,8 +61,8 @@ describe('pickBindAddress', () => {
   });
 
   it('treats one address on two interfaces as one candidate', () => {
-    const r = pickBindAddress({ en0: [v4('192.168.7.42')], en1: [v4('192.168.7.42')] });
-    expect(r.address).toBe('192.168.7.42');
+    const r = pickBindAddress({ en0: [v4('192.168.1.42')], en1: [v4('192.168.1.42')] });
+    expect(r.address).toBe('192.168.1.42');
   });
 });
 
