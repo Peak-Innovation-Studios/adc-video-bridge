@@ -12,7 +12,8 @@ and impossible to ask of anyone adopting this project.
 here, onboarding becomes "type your Alarm.com username and password"; without it,
 onboarding requires a TLS-intercepting proxy and a trusted CA certificate on a phone.
 ⚠️ **Status: the client is BUILT and unit-tested, but no live sign-in has succeeded yet.**
-See "Still unresolved" below — it is one controlled attempt away, not a rebuild.
+See "Measured, but PROBABLY CONFOUNDED" below — the remaining evidence is likely rate-limit
+noise, so the next step is one attempt from a cold start, not more code.
 
 ---
 

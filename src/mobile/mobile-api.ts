@@ -42,8 +42,10 @@ export interface MobileLoginOptions {
   twoFactorId?: string;
   /**
    * Observed in the app's login as `HashCode`. ⚠️ Whether the server validates
-   * it is UNKNOWN — a login omitting it was rejected, but a stale trusted-device
-   * token is an equally good explanation. Pass it if you have one.
+   * it is UNKNOWN, and the attempts that would have told us are probably
+   * contaminated by rate limiting — see `docs/MOBILE_API.md`. Pass it if you
+   * have one; the client never invents a value, since a captured one may be
+   * account-specific.
    */
   hashCode?: string;
   /** Test seam. Defaults to `globalThis.fetch`. */
