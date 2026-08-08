@@ -31,9 +31,18 @@ contain **no internal docs**. ⚠️ Status goes stale — re-check with
 | [#30](https://github.com/Omar-L/adc-video-bridge/pull/30) | `upstream-fix/config-validation` | open | validation + `ADC_*_FILE` |
 | [#31](https://github.com/Omar-L/adc-video-bridge/pull/31) | `upstream-fix/container-hardening` | open | non-root, read-only, digest pins |
 | [#32](https://github.com/Omar-L/adc-video-bridge/pull/32) | `upstream-fix/circuit-breaker` | open | closes `#9`; verified 108→136 tests on THEIR tree |
+| [#34](https://github.com/Omar-L/adc-video-bridge/pull/34) | `upstream-fix/media-watchdog` | open | fail an attempt that negotiates but delivers no media; 108→113 on THEIR tree |
 
-⚠️ **#28 and #23/#24 all touch `camera-stream.ts`**, and **#32 touches `alarm-event-listener.ts` and
-`camera-manager.ts`** — whichever merges last needs a trivial rebase.
+⚠️ **#28, #23/#24 and #34 all touch `camera-stream.ts`**, and **#32 touches
+`alarm-event-listener.ts` and `camera-manager.ts`** — whichever merges last needs a trivial rebase.
+
+🔑 **#34 is worth reading for what it says about THEIR test suite, not just the fix.** Every
+existing `camera-stream` test mocks `tryConnect()`, so nothing exercised the changed path — the
+port's 108 tests passed *immediately*, which read like good news and was actually the warning.
+⚠️ **Mutation testing then caught a gap in the new tests themselves:** removing the settle call
+broke nothing, because the positive control invoked the internal resolver directly and so
+substituted the exact wiring under test. Extracting a single `markStreaming()` transition fixed it.
+**Assume any test you add upstream is untested until a mutation kills it.**
 
 ### 🔴 Do NOT "sync fork" as PRs merge — wait until all six land, then reconcile once
 
