@@ -9,17 +9,41 @@ Synology deployment guidance, and stream-lifecycle fixes. Portable fixes can
 still be proposed upstream without mixing this project with the separate
 Alarm.com Homebridge plugin.
 
-## Problem
+## Two ways in, and the good one is local
 
-Alarm.com cameras cannot be accessed directly via RTSP **through the web API** — ADC re-provisions camera credentials via OpenVPN and randomly generates root passwords.
+Alarm.com cameras serve **their own RTSP stream on your LAN**, tunnelled over HTTPS. This
+bridge can reach it directly — no cloud, no video tokens, no WebRTC — and republish it to
+HomeKit through [go2rtc](https://github.com/AlexxIT/go2rtc), with **H.264 passthrough and no
+ffmpeg in the media path**.
 
-> 🔴 **Corrected 2026-08-07.** This premise, which the whole architecture rests on, is true only of the *web* API this project was ported from. Alarm.com's **mobile** API returns per-camera `LocalRtspEndpoint` / `PublicRtspEndpoint` values with working credentials and `SupportsRtspStreaming: true`, and their iOS app streams `connectionType: DIRECT`, `protocolType: RTSP`. The local port is not plain RTSP — it is **RTSP tunnelled over HTTPS**, and as of 2026-08-07 all three cameras have been pulled at live 1080p H.264 with stock ffmpeg (`ffprobe -rtsp_transport https -i "rtsp://<user>:<pass>@<lan-ip>:<port>/s1"`), no cloud and no video token involved. "Cannot be accessed" is simply wrong. ⚠️ That is a *spike*, not an integration — the endpoints still come from an API this codebase cannot yet call; see `docs/INVARIANTS.md` → "What the local-RTSP spike did NOT prove". ⚠️ Note also that **ADC-V515 cameras report `SupportsWebRTC: false`**, so the WebRTC design below cannot serve them at all. See `docs/INVARIANTS.md` and `Journal.md` 2026-08-07. The existing [homebridge-node-alarm-dot-com](https://github.com/node-alarm-dot-com/homebridge-node-alarm-dot-com) plugin handles alarm panel/sensors/locks but has no video support.
+| | **Local RTSP** (recommended) | WebRTC (original, legacy) |
+|---|---|---|
+| Path | camera → your LAN → go2rtc → HomeKit | camera → Alarm.com cloud → WebRTC → ffmpeg → go2rtc |
+| Cloud dependency | none for video | signalling, tokens refreshed every 10 min |
+| ffmpeg | none | one process per camera |
+| ADC-V515 cameras | ✅ works | 🔴 **impossible** — they report `SupportsWebRTC: false` |
+| Setup | needs per-camera endpoint + credentials | needs camera IDs |
 
-## Solution
+🔑 **If your cameras are ADC-V515 (or any model reporting `SupportsWebRTC: false`), local
+RTSP is the only path that will ever work.** No amount of fixing on Alarm.com's side changes
+that.
 
-This bridge authenticates with Alarm.com's web API, negotiates a WebRTC connection to the camera via ADC's end-to-end signaling protocol, receives the H.264 video stream server-side using [werift](https://github.com/nicknisi/werift-webrtc), and republishes it as a local RTSP stream via ffmpeg → [go2rtc](https://github.com/AlexxIT/go2rtc).
+⚠️ **The catch, and it is a real one:** the per-camera RTSP endpoints and credentials are
+published only by Alarm.com's **mobile** API, which this project cannot yet call. Today you
+extract them by proxying the phone app. Closing that gap is the highest-value work
+outstanding — see [`docs/MOBILE_API.md`](docs/MOBILE_API.md).
 
-The approach was proven by [kjjohnsen/HomeAssistantADCCameraIntegration](https://github.com/kjjohnsen/HomeAssistantADCCameraIntegration), which does the same thing in the browser. This project ports the signaling protocol to Node.js for headless server-side operation.
+### Historical note
+
+The original premise of this project was that Alarm.com cameras *cannot* be reached over
+RTSP, because ADC re-provisions camera credentials over OpenVPN with randomised root
+passwords. That is true of the **web** API this project was ported from, and false of the
+platform: the mobile API hands out working local RTSP endpoints, and Alarm.com's own app
+streams `connectionType: DIRECT, protocolType: RTSP`. Corrected 2026-08-07 —
+see [`docs/INVARIANTS.md`](docs/INVARIANTS.md) and `Journal.md`.
+
+The existing [homebridge-node-alarm-dot-com](https://github.com/node-alarm-dot-com/homebridge-node-alarm-dot-com)
+plugin handles alarm panel, sensors and locks, but has no video support.
 
 ## Architecture
 
@@ -29,41 +53,71 @@ HomeKit needs mDNS multicast, which bridge networking does not forward. They
 address each other over the host's LAN address (`ADC_BRIDGE_BIND_ADDRESS`),
 never `localhost`.
 
+### Local RTSP — the recommended path
+
+The camera serves RTSP tunnelled over HTTPS. `TunnelRelay` presents that as ordinary RTSP on
+a published port, and go2rtc pulls it with its **native** client — H.264 passthrough
+straight into in-process HKSV muxing, **no ffmpeg process at all**.
+
 ```
-┌───────────────────────────────────────────────────────────┐
-│         adc-video-bridge container (Node.js)              │
-│                                                           │
-│  [AlarmAuth] ──→ [TokenManager]                           │
-│       │               │                                   │
-│       │        [CameraManager]                            │
-│       │          │          │                              │
-│       │   [CameraStream] × N                              │
-│       │     │           │                                  │
-│       │  [ADC Signaling WS]    [werift PC]                │
-│       │   HELLO/SDP/ICE      WebRTC termination           │
-│       │                          │                        │
-│       │                    RTP packets                     │
-│       │                          │                        │
-│       │                   [ffmpeg pipe]                    │
-│       │                    RTSP publish ──────────────┐    │
-│       │                                              │    │
-│  [AlarmEventListener]                                │    │
-│   ADC WebSocket event stream                         │    │
-│   motion / sensor / clip events                      │    │
-│       │                                              │    │
-└───────┼──────────────────────────────────────────────┼────┘
-        │ motion webhook                    RTSP push  │
-        │                                ┌─────▼────────────────┐
-        │                                │ go2rtc container     │
-        │                                │ (network_mode: host) │
-        │                                │ RTSP in / RTSP out   │
-        │                                └─────┬────────────────┘
-        │                                      │ rtsp://<lan-ip>:8554/<cam>
-        │                            ┌─────────▼──────────┐
-        └───────────────────────────→│ homebridge-camera-  │
-                                     │ ffmpeg (HKSV)       │
-                                     └────────────────────┘
+   camera (your LAN)
+        │  RTSP tunnelled over HTTPS
+        ▼
+┌──────────────────────────────────┐
+│  adc-video-bridge container      │
+│                                  │
+│  [TunnelRelay] × N ──────────────┼──── plain RTSP on :8561+
+│   HTTPS tunnel → plain RTSP      │        │
+│   (holds NO camera credentials)  │        │
+│                                  │        │
+│  [StatusServer]  /  → JSON       │        │
+│                  /pair → QR codes│        │
+└──────────────────────────────────┘        │
+                                            ▼
+                              ┌───────────────────────────┐
+                              │ go2rtc (network_mode host)│
+                              │  native RTSP client       │
+                              │  native HKSV muxing       │
+                              │  HAP + SRTP → Apple Home  │
+                              └───────────────────────────┘
 ```
+
+🔑 The relay is a **byte relay**: the camera's own Digest challenge passes through it
+untouched, so go2rtc authenticates end to end and the camera credentials live in
+`config/go2rtc.yaml`, never in the container holding the Alarm.com login.
+
+### WebRTC — the original path, still supported
+
+Used for any camera without a `localRtsp` block. Requires Alarm.com's cloud for signalling
+and a video token refreshed every 10 minutes, and terminates WebRTC server-side with
+[werift](https://github.com/nicknisi/werift-webrtc) before piping through ffmpeg to go2rtc.
+
+```
+[AlarmAuth] → [TokenManager] → [CameraManager] → [CameraStream] × N
+                                                   │         │
+                                      [ADC Signaling WS]  [werift PC]
+                                                             │ RTP
+                                                        [ffmpeg] → RTSP push → go2rtc
+```
+
+⚠️ A camera configured with `localRtsp` is **excluded** from this path — both publish into
+the same go2rtc stream name, and running both interleaves rather than erroring.
+
+### Motion
+
+Motion drives HKSV recording, and go2rtc can source it three ways
+(`motion:` under each `homekit:` entry):
+
+| mode | trigger | dependency |
+|---|---|---|
+| `detect` | go2rtc analyses H.264 P-frame sizes itself | **none** |
+| `api` | the bridge POSTs Alarm.com events to go2rtc | an Alarm.com **notification rule** |
+| `continuous` | always recording | none |
+
+🔴 **`motion: api` fails silently without a rule.** Everything looks healthy — paired
+accessory, live view, connected event socket — and HKSV simply never records. `npm run
+verify:config` warns about this. `detect` needs a per-scene `motion_threshold`; a dim room
+generates enough sensor noise to trigger the default.
 
 ## How the signaling works
 
@@ -89,36 +143,32 @@ The bridge refreshes video tokens every 10 minutes and rebuilds the token-bound 
 
 ## Current status
 
-**Working:**
-- Alarm.com authentication via `node-alarm-dot-com`
-- Camera discovery CLI (`npx tsx src/discover.ts`)
-- Video token fetching and refresh (10-minute cycle)
-- End-to-end WebRTC signaling (HELLO/START_SESSION/SDP/ICE)
-- WebRTC connection establishment with STUN/TURN
-- H.264 RTP packet extraction from werift
-- H.264 fmtp passthrough (profile-level-id, sprop-parameter-sets from camera SDP offer)
-- ffmpeg RTSP output to go2rtc
-- Stable ffmpeg publisher ownership across intentional stops and WebRTC replacements
-- Hardened Docker containers: the credential-holding bridge and go2rtc are separate images and separate network namespaces
-- Multi-camera streaming (3 cameras verified, 1920x1080 H.264 @ 10fps)
-- Camera dial-in retry with exponential backoff (up to 12 attempts)
-- Circuit breakers on all three Alarm.com retry loops (see [Retry limits](#retry-limits))
-- Real-time motion detection via ADC WebSocket event stream
-- WebSocket event listener with proactive token refresh and exponential backoff on errors
-- Motion webhook forwarding to `@homebridge-plugins/homebridge-camera-ffmpeg`
-- HomeKit live view and motion notifications via Homebridge
-- HomeKit Secure Video (HKSV) recording triggered by motion events
+**Working — local RTSP path:**
+- Camera RTSP over its own HTTPS tunnel (`src/rtsp/tunnel-relay.ts`), no cloud and no video token
+- go2rtc pulls it with its native client — **no ffmpeg in the media path**
+- Works on ADC-V515 cameras, which WebRTC can never serve
+- Native HomeKit via go2rtc: live view, HKSV recording, in-process fMP4 muxing
+- Built-in motion detection (`motion: detect`) with per-camera thresholds — no Alarm.com dependency
+- Scannable pairing codes served at `GET /pair` on the status endpoint
+- Cross-file config checking (`npm run verify:config`) and printable labels (`npm run homekit:label`)
 
-- **Local RTSP over the camera's own HTTPS tunnel** (`src/rtsp/tunnel-relay.ts`) — no cloud, no video
-  token, no WebRTC, and **no ffmpeg in the media path**: go2rtc pulls it with its native client and
-  muxes HKSV in process. Enabled per camera with a `localRtsp` block; see [Setup](docs/SETUP.md).
-  This is the only possible path for ADC-V515 cameras.
+**Working — WebRTC path (original):**
+- Alarm.com authentication via `node-alarm-dot-com`, camera discovery CLI
+- Video token fetching and refresh, end-to-end signalling, werift termination, ffmpeg → go2rtc
+- Camera dial-in retry with exponential backoff, circuit breakers on all three retry loops
+- Real-time motion via the ADC WebSocket event stream, forwarded to go2rtc and/or Homebridge
+
+**Shared:**
+- Hardened containers: the credential-holding bridge and go2rtc are separate images in separate
+  network namespaces, non-root, read-only rootfs, capabilities dropped
+- Read-only status endpoint with relay, camera and event-listener diagnostics
 
 **Not yet done:**
-- Fetching the local RTSP endpoints automatically — they live on `mobile.alarm.com`, a different API
-  from the one this bridge speaks, so today they are configured by hand
+- 🔴 **Fetching local RTSP endpoints automatically** — they live on Alarm.com's mobile API, which
+  this project cannot yet call, so they are configured by hand. This is the main barrier to adoption:
+  [`docs/MOBILE_API.md`](docs/MOBILE_API.md)
 - go2rtc stream auto-configuration (currently manual in `config/go2rtc.yaml`)
-- Audio passthrough (the local RTSP stream carries no audio track at all)
+- Audio — the local RTSP stream carries no audio track at all
 
 ## Project structure
 
@@ -141,7 +191,11 @@ src/
 │   ├── parse-event.ts        # Event parsing (motion, sensor, clip events)
 │   └── types.ts              # Event type definitions
 ├── go2rtc/
-│   └── go2rtc-api.ts         # go2rtc REST API health checks
+│   └── go2rtc-api.ts         # go2rtc REST API: health, motion, HomeKit accessories
+├── homekit/
+│   ├── qr.ts                 # QR encoder (byte mode, single-block versions)
+│   ├── setup-uri.ts          # X-HM:// setup payloads, derived as go2rtc derives them
+│   └── label.ts              # printable pairing labels
 ├── rtsp/
 │   └── tunnel-relay.ts       # RTSP-over-HTTPS tunnel → plain RTSP, one listener per camera
 └── utils/
