@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { parse } from 'yaml';
 import { mobileLogin, MobileApiError, type MobileCamera } from './mobile/mobile-api.js';
 import { formatPin } from './homekit/setup-uri.js';
-import { mergeConfigYaml, mergeGo2rtcYaml, mergeEnv } from './config-writer.js';
+import { mergeConfigYaml, mergeGo2rtcYaml, mergeEnv, allocateListenPorts, portRangeCovering } from './config-writer.js';
 import { applyMerge } from './config-writer-fs.js';
 import { verifyConfigs, parseEnvFile } from './verify-config.js';
 import {
@@ -38,7 +38,6 @@ import {
  * lock, so nothing that can fail cheaply is allowed to fail after it.
  */
 
-const RELAY_PORT_BASE = 8561;
 const DEFAULT_MOTION_THRESHOLD = 3.5;
 
 function fail(message: string): never {
@@ -145,10 +144,16 @@ async function main(): Promise<void> {
   console.log(`  ✓  bind address ${bindAddress}`);
 
   // ---- 2. what still needs discovering ------------------------------------
+  // 🔑 The stored `listenPort` per camera is read, not just the count — it is
+  // what `allocateListenPorts` reserves so a new camera cannot be handed a port
+  // an existing one already binds.
   const existingCameras = (() => {
     try {
       const parsed = parse(readIfExists(CONFIG)) as { cameras?: unknown } | null;
-      return Array.isArray(parsed?.cameras) ? (parsed.cameras as Array<{ id?: string }>) : [];
+      if (!Array.isArray(parsed?.cameras)) return [];
+      return (parsed.cameras as Array<{ id?: unknown; localRtsp?: { listenPort?: unknown } }>)
+        .map((c) => ({ id: String(c.id ?? ''), listenPort: Number(c.localRtsp?.listenPort ?? NaN) }))
+        .filter((c) => c.id && Number.isInteger(c.listenPort));
     } catch { return []; }
   })();
   const alreadyConfigured = existingCameras.length > 0 && !has('--rediscover');
@@ -193,9 +198,14 @@ async function main(): Promise<void> {
   step(4, 'Writing configuration');
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
   const say = (l: string) => console.log(l);
+  // 🔴 Ports come from `allocateListenPorts`, never from array position — an
+  // existing camera keeps its stored port and a new one gets the next free
+  // number. The range must then COVER every port in use, existing included.
+  const ports = allocateListenPorts(existingCameras, cameras.map((c) => c.cameraId));
+  const allPorts = [...existingCameras.map((c) => c.listenPort), ...ports.values()];
   const portRange = alreadyConfigured
-    ? existingEnv.ADC_BRIDGE_RTSP_PORTS || `${RELAY_PORT_BASE}-${RELAY_PORT_BASE + existingCameras.length - 1}`
-    : `${RELAY_PORT_BASE}-${RELAY_PORT_BASE + cameras.length - 1}`;
+    ? existingEnv.ADC_BRIDGE_RTSP_PORTS || portRangeCovering(allPorts)
+    : portRangeCovering(allPorts);
 
   const additions = buildEnvAdditions({
     bindAddress,
@@ -215,15 +225,16 @@ async function main(): Promise<void> {
   }
 
   if (cameras.length > 0) {
+    const portOf = (c: MobileCamera) => ports.get(c.cameraId)!;
     applyMerge(CONFIG, (t) => mergeConfigYaml(t, cameras.map((c, i) => ({
       id: c.cameraId, name: streamName(c, i), quality: 'hd',
-      localRtsp: { host: c.localRtsp!.host, port: c.localRtsp!.port, listenPort: RELAY_PORT_BASE + i, path: c.localRtsp!.path },
+      localRtsp: { host: c.localRtsp!.host, port: c.localRtsp!.port, listenPort: portOf(c), path: c.localRtsp!.path },
     }))), stamp, say, 'config/config.yaml');
 
     applyMerge(GO2RTC, (t) => mergeGo2rtcYaml(t,
       cameras.map((c, i) => ({
         name: streamName(c, i),
-        url: `rtsp://${c.localRtsp!.username}:${c.localRtsp!.password}@\${GO2RTC_BIND}:${RELAY_PORT_BASE + i}${c.localRtsp!.path}`,
+        url: `rtsp://${c.localRtsp!.username}:${c.localRtsp!.password}@\${GO2RTC_BIND}:${portOf(c)}${c.localRtsp!.path}`,
       })),
       cameras.map((c, i) => ({
         name: streamName(c, i), pin: formatPin(suggestPin()),

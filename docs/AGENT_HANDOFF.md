@@ -300,18 +300,19 @@ baton, the baton wins.
     💡 `.env.example` was briefly believed incomplete; it is NOT — see the regex note in "Do not
     touch". A test now pins it against compose's `${VAR:?}` guards either way.
 
-15. 🔴 **(Agent — a real latent bug, found 2026-08-08) `listenPort` is assigned POSITIONALLY and
-    can collide when a camera is added later.** `src/discover-local-cli.ts` computes
-    `RELAY_PORT_BASE + index` over the API's returned order. `mergeConfigYaml` skips cameras whose
-    `id` already exists — so on a re-run after adding a camera, an EXISTING camera keeps its old
-    `listenPort` while a NEW camera at a lower index is handed the same number. Two relays then
-    try to bind one port.
-    🔑 **Fix shape:** derive the next port from what the existing config has already allocated,
-    not from array position. ⚠️ It went unnoticed because the first live run matched production
-    exactly — but only because Alarm.com happened to return the cameras in the same order the
-    config was written in. **That match validated the API parsing, NOT the port assignment.**
-    💡 `npm run verify:config` would catch the collision after the fact; this is about not
-    generating it.
+15. ✅ **FIXED 2026-08-08 — `listenPort` is ALLOCATED, never positional.**
+    `allocateListenPorts()` in `src/config-writer.ts` reserves every port the existing
+    `config.yaml` holds, keeps a already-configured camera on its stored port, and hands new
+    cameras the next free number. `portRangeCovering()` spans min→max rather than `base + count`,
+    so a gap (a removed camera, ports allocated across runs) cannot leave the highest port
+    unpublished. Both CLIs use them; `discover:local` now reads the existing config **even in
+    print mode**, so a printed block is safe to paste into a config that already has cameras.
+    🔑 The bug: `mergeConfigYaml` skips a camera whose `id` exists, so an EXISTING camera kept its
+    stored port while a NEW camera at a lower index got the same number — two relays, one port.
+    ⚠️ It hid because the first live run matched production exactly — but only because Alarm.com
+    happened to return the cameras in the order the config was written. **That match validated the
+    API parsing, NOT the port assignment.** 10 tests, including a case that reproduces the
+    collision (a new camera sorting ahead of a configured one).
 
 ### Do not touch / gotchas
 

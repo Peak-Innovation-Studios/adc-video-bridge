@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parse } from 'yaml';
-import { mergeGo2rtcYaml, mergeConfigYaml, mergeEnv } from './config-writer.js';
+import { mergeGo2rtcYaml, mergeConfigYaml, mergeEnv, allocateListenPorts, portRangeCovering } from './config-writer.js';
 
 const STREAMS = [{ name: 'front', url: 'rtsp://u:p@${GO2RTC_BIND}:8561/s1' }];
 const HOMEKIT = [{ name: 'front', pin: '123-45-678', displayName: 'Front', motionThreshold: 3.5 }];
@@ -192,5 +192,70 @@ describe('mergeEnv conflict messages', () => {
       { revealOnConflict: true });
     expect(r.refused).toContain('9000-9002');
     expect(r.refused).toContain('8561-8563');
+  });
+});
+
+describe('allocateListenPorts', () => {
+  it('numbers a fresh install from the base', () => {
+    const p = allocateListenPorts([], ['a', 'b', 'c']);
+    expect([...p.values()]).toEqual([8561, 8562, 8563]);
+  });
+
+  /**
+   * 🔴 The bug this replaces. mergeConfigYaml skips a camera whose id already
+   * exists, so with positional assignment an existing camera keeps its stored
+   * port while a new camera at a lower index is handed the same number.
+   */
+  it('never reuses a port an existing camera already holds', () => {
+    // "old" is configured on 8561. A new camera sorts FIRST in this run — under
+    // positional assignment it would also get 8561.
+    const p = allocateListenPorts([{ id: 'old', listenPort: 8561 }], ['new', 'old']);
+    expect(p.get('old')).toBe(8561);
+    expect(p.get('new')).not.toBe(8561);
+    expect(new Set(p.values()).size).toBe(2);
+  });
+
+  it('keeps an existing camera on its stored port even when it is unusual', () => {
+    const p = allocateListenPorts([{ id: 'a', listenPort: 8999 }], ['a', 'b']);
+    expect(p.get('a')).toBe(8999);
+    expect(p.get('b')).toBe(8561);
+  });
+
+  // A camera configured but absent from this run still binds its port.
+  it('reserves ports held by cameras not in this run', () => {
+    const p = allocateListenPorts(
+      [{ id: 'gone', listenPort: 8561 }, { id: 'also', listenPort: 8562 }],
+      ['fresh'],
+    );
+    expect(p.get('fresh')).toBe(8563);
+  });
+
+  it('fills a gap left by a removed camera', () => {
+    const p = allocateListenPorts([{ id: 'a', listenPort: 8561 }, { id: 'c', listenPort: 8563 }],
+      ['a', 'c', 'new']);
+    expect(p.get('new')).toBe(8562);
+  });
+
+  it('assigns distinct ports to every new camera', () => {
+    const p = allocateListenPorts([], ['a', 'b', 'c', 'd', 'e']);
+    expect(new Set(p.values()).size).toBe(5);
+  });
+});
+
+describe('portRangeCovering', () => {
+  it('spans min to max, not base plus count', () => {
+    expect(portRangeCovering([8561, 8562, 8563])).toBe('8561-8563');
+    // ⚠️ A gap: base+count would give 8561-8562 and leave 8563 unpublished —
+    // a stream go2rtc reports offline with nothing logged.
+    expect(portRangeCovering([8561, 8563])).toBe('8561-8563');
+  });
+
+  it('handles a single port and an empty set', () => {
+    expect(portRangeCovering([8561])).toBe('8561-8561');
+    expect(portRangeCovering([])).toBe('8561-8561');
+  });
+
+  it('covers ports allocated above the base', () => {
+    expect(portRangeCovering([8562, 8999])).toBe('8562-8999');
   });
 });

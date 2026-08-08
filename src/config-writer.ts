@@ -52,6 +52,64 @@ export interface HomekitEntry {
   motionThreshold: number;
 }
 
+/** First relay port. Shared so the two CLIs cannot drift apart. */
+export const RELAY_PORT_BASE = 8561;
+
+/**
+ * Assign a `listenPort` to each camera, avoiding every port already in use.
+ *
+ * 🔴 **Replaces `RELAY_PORT_BASE + arrayIndex`, which collides.** `mergeConfigYaml`
+ * skips a camera whose `id` is already present, so on a re-run an EXISTING
+ * camera keeps its stored port while a NEW camera sitting at a lower index gets
+ * handed the same number — two relays binding one port. It went unnoticed
+ * because the first live run matched production exactly, but only because
+ * Alarm.com happened to return the cameras in the order the config was written.
+ * **That match validated the API parsing, not the port assignment.**
+ *
+ * 🔑 A camera already in the config keeps the port it already has. Renumbering a
+ * working camera would silently break it: `config.yaml`, the `go2rtc.yaml`
+ * stream URL and the published compose range all have to agree, and nothing
+ * fails loudly when they stop — the stream simply reads offline.
+ */
+export function allocateListenPorts(
+  existing: Array<{ id: string; listenPort: number }>,
+  cameraIds: string[],
+  base = RELAY_PORT_BASE,
+): Map<string, number> {
+  const stored = new Map(existing.map((e) => [e.id, e.listenPort]));
+  // Every stored port is reserved, INCLUDING cameras not in this run — they are
+  // still configured and still bind their port.
+  const taken = new Set(existing.map((e) => e.listenPort));
+  const out = new Map<string, number>();
+
+  for (const id of cameraIds) {
+    const reuse = stored.get(id);
+    if (reuse !== undefined) {
+      out.set(id, reuse);
+      continue;
+    }
+    let port = base;
+    while (taken.has(port)) port++;
+    taken.add(port);
+    out.set(id, port);
+  }
+  return out;
+}
+
+/**
+ * The `ADC_BRIDGE_RTSP_PORTS` range that covers every allocated port.
+ *
+ * ⚠️ Must span the MIN and MAX actually in use, not `base + count`. With a gap
+ * — a camera removed, or ports allocated across several runs — a count-derived
+ * range leaves the highest port unpublished, and `.env.example` records what
+ * that looks like: a stream go2rtc reports as offline, with no error logged
+ * anywhere. Spare ports inside the range are harmless.
+ */
+export function portRangeCovering(ports: number[], base = RELAY_PORT_BASE): string {
+  if (ports.length === 0) return `${base}-${base}`;
+  return `${Math.min(...ports)}-${Math.max(...ports)}`;
+}
+
 export interface CameraEntry {
   id: string;
   name: string;

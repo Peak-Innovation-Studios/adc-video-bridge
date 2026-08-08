@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parse } from 'yaml';
 import { mobileLogin, MobileApiError, type MobileCamera } from './mobile/mobile-api.js';
 import { formatPin } from './homekit/setup-uri.js';
 import {
   mergeConfigYaml,
   mergeGo2rtcYaml,
   mergeEnv,
+  allocateListenPorts,
+  portRangeCovering,
   type CameraEntry,
   type StreamEntry,
   type HomekitEntry,
@@ -35,7 +39,6 @@ import { applyMerge } from './config-writer-fs.js';
  * hand rather than looping.
  */
 
-const RELAY_PORT_BASE = 8561;
 
 /**
  * Starting `motion_threshold` for a scene nothing is known about.
@@ -144,6 +147,25 @@ async function main(): Promise<void> {
   // write. `suggestPin()` is random, so generating inside each output path
   // would print one pin and write a different one — and a pin that disagrees
   // with the paired accessory is unrecoverable without re-pairing.
+  // 🔴 Ports are ALLOCATED against whatever `config/config.yaml` already holds,
+  // never derived from array position. A camera already configured keeps its
+  // stored port; a new one takes the next free number. Position collides — see
+  // `allocateListenPorts`. ⚠️ This reads the existing config even in PRINT mode,
+  // so the block on screen is safe to paste into a config that already has
+  // cameras.
+  const existing = (() => {
+    try {
+      const parsed = parse(readFileSync(resolve('config', 'config.yaml'), 'utf-8')) as
+        { cameras?: unknown } | null;
+      if (!Array.isArray(parsed?.cameras)) return [];
+      return (parsed.cameras as Array<{ id?: unknown; localRtsp?: { listenPort?: unknown } }>)
+        .map((c) => ({ id: String(c.id ?? ''), listenPort: Number(c.localRtsp?.listenPort ?? NaN) }))
+        .filter((c) => c.id && Number.isInteger(c.listenPort));
+    } catch { return []; }
+  })();
+  const ports = allocateListenPorts(existing, usable.map((c) => c.cameraId));
+  const portOf = (c: MobileCamera) => ports.get(c.cameraId)!;
+
   const cameras: CameraEntry[] = usable.map((c, i) => ({
     id: c.cameraId,
     name: streamName(c, i),
@@ -151,13 +173,13 @@ async function main(): Promise<void> {
     localRtsp: {
       host: c.localRtsp!.host,
       port: c.localRtsp!.port,
-      listenPort: RELAY_PORT_BASE + i,
+      listenPort: portOf(c),
       path: c.localRtsp!.path,
     },
   }));
   const streams: StreamEntry[] = usable.map((c, i) => ({
     name: streamName(c, i),
-    url: `rtsp://${c.localRtsp!.username}:${c.localRtsp!.password}@\${GO2RTC_BIND}:${RELAY_PORT_BASE + i}${c.localRtsp!.path}`,
+    url: `rtsp://${c.localRtsp!.username}:${c.localRtsp!.password}@\${GO2RTC_BIND}:${portOf(c)}${c.localRtsp!.path}`,
   }));
   const homekit: HomekitEntry[] = usable.map((c, i) => ({
     name: streamName(c, i),
@@ -165,7 +187,7 @@ async function main(): Promise<void> {
     displayName: c.description,
     motionThreshold: DEFAULT_MOTION_THRESHOLD,
   }));
-  const portRange = `${RELAY_PORT_BASE}-${RELAY_PORT_BASE + usable.length - 1}`;
+  const portRange = portRangeCovering([...existing.map((c) => c.listenPort), ...ports.values()]);
 
   const printConfigYaml = () => {
     console.log('\n' + '='.repeat(70));
