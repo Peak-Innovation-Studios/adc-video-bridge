@@ -134,3 +134,103 @@ describe('PeerSession', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * 🔴 'disconnected' is WebRTC's RECOVERABLE state; 'failed' is the terminal
+ * one. Treating both as terminal tore down a live session on a transient ICE
+ * blip, costing a fresh video token and a full renegotiation.
+ */
+describe('PeerSession ICE disconnect grace', () => {
+  const event = () => {
+    const subs: any[] = [];
+    return { subscribe: (fn: any) => subs.push(fn), emit: (v: any) => subs.forEach((f) => f(v)) };
+  };
+
+  const makeSession = () => {
+    const onFailed = vi.fn();
+    const session = new PeerSession('cam', { onRtp: vi.fn(), onFailed });
+    const conn = event();
+    const pc: any = {
+      onRemoteTransceiverAdded: event(), onTrack: event(), ontrack: null,
+      connectionStateChange: conn, onIceCandidate: event(),
+      iceConnectionStateChange: event(), iceGatheringStateChange: event(),
+      getTransceivers: vi.fn().mockReturnValue([]),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    (session as any).pc = pc;
+    (session as any).setupPeerConnection();
+    return { session, conn, onFailed };
+  };
+
+  afterEach(() => vi.useRealTimers());
+
+  it('fails IMMEDIATELY on failed — that state is terminal', () => {
+    vi.useFakeTimers();
+    const { conn, onFailed } = makeSession();
+    conn.emit('failed');
+    expect(onFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT fail immediately on disconnected', () => {
+    vi.useFakeTimers();
+    const { conn, onFailed } = makeSession();
+    conn.emit('disconnected');
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it('fails once the grace period expires while still disconnected', async () => {
+    vi.useFakeTimers();
+    const { conn, onFailed } = makeSession();
+    conn.emit('disconnected');
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(onFailed).toHaveBeenCalledTimes(1);
+  });
+
+  // The whole point: recovery must cancel the deadline.
+  it('cancels the deadline when the connection comes back', async () => {
+    vi.useFakeTimers();
+    const { conn, onFailed } = makeSession();
+    conn.emit('disconnected');
+    conn.emit('connected');
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it('arms the deadline ONCE however often disconnected repeats', async () => {
+    // Without the re-arm guard a repeat does not restart the clock — it LEAKS a
+    // second timer, so the first still fires on schedule and a short window
+    // sees one call either way. The failure only shows up past the second
+    // timer's own deadline, as a duplicate onFailed for one disconnection.
+    vi.useFakeTimers();
+    const { conn, onFailed } = makeSession();
+    conn.emit('disconnected');
+    await vi.advanceTimersByTimeAsync(5_000);
+    conn.emit('disconnected');          // would arm a second timer for t=13s
+    await vi.advanceTimersByTimeAsync(4_000);   // t=9s: first deadline passed
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(6_000);   // t=15s: past the second
+    expect(onFailed, 'a repeat must not arm a second timer').toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fire for a session that was closed while disconnected', async () => {
+    // A timer left armed would kill the SUCCESSOR session.
+    vi.useFakeTimers();
+    const { session, conn, onFailed } = makeSession();
+    conn.emit('disconnected');
+    await session.close();
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it('close() actually disarms the timer, rather than relying on the callback guard', async () => {
+    // The callback also checks `closed`, so behaviour alone cannot distinguish
+    // "cleared" from "left pending and ignored". Assert the handle directly, or
+    // removing clearDisconnectGrace() from close() passes every other test.
+    vi.useFakeTimers();
+    const { session, conn } = makeSession();
+    conn.emit('disconnected');
+    expect((session as any).disconnectTimer).not.toBeNull();
+    await session.close();
+    expect((session as any).disconnectTimer, 'close() must disarm, not just ignore').toBeNull();
+  });
+});

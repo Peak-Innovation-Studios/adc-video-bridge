@@ -303,12 +303,23 @@ baton, the baton wins.
     `<lnr>` response into these functions is not.
 13. *(Agent, low)* Audio passthrough. ⚠️ **The local RTSP stream has no `m=audio` line at all**,
     so on this path audio is not merely unimplemented — the camera does not send it.
-14. *(Agent — WebRTC path only; unblocked but low value now)* `onFailed` fires on `'disconnected'` as well as
-   `'failed'` ([`peer-session.ts:235`](../src/camera/peer-session.ts)), so a transient ICE blip
-   forces a full teardown. `'disconnected'` is the recoverable state in WebRTC and `'failed'` the
-   terminal one, so the shape of the fix (debounce, and act only if it has not recovered) is not in
-   doubt — but the timeout is a *tuning* value, and choosing it without a real camera would be
-   guessing. ⚠️ Deliberately not attempted 2026-08-05.
+14. ✅ **FIXED 2026-08-08 — ICE `'disconnected'` is now debounced, not terminal.**
+    `peer-session.ts` fails immediately on `'failed'` (terminal) but gives `'disconnected'`
+    `ICE_DISCONNECT_GRACE_MS = 8s` to recover; any other state stands the timer down. A repeat
+    `'disconnected'` does NOT re-arm, and `close()` disarms.
+    ⚠️ **The 8s is NOT measured** — it is chosen from how ICE behaves generally, since these
+    cameras now run local RTSP where this code never executes. It is a named constant so someone
+    watching a real WebRTC session can tune it. 🔑 The number is not the point: any grace at all is
+    correct where zero is not.
+    🔑 **Mutation-tested four ways, and TWO of the mutations initially survived** — both were gaps
+    in the tests, not the code. (a) `close()`'s `clearDisconnectGrace()` is defence in depth: the
+    timer callback already guards on `closed`, so only asserting the timer HANDLE distinguishes
+    "cleared" from "left pending and ignored". (b) Removing the re-arm guard does not restart the
+    clock, it LEAKS a second timer — the first still fires on schedule, so a short window sees one
+    call either way; the duplicate only appears past the second timer's own deadline.
+    💡 The old entry said the timeout could not be chosen without a real camera. True, and it still
+    is — but that argued for a *named constant with the uncertainty written down*, not for leaving
+    a known-wrong immediate teardown in place.
    ✅ The other four deferred review nits are **DONE** (2026-08-05): dead `'fallback'` member of
    `OverlapOutcome` removed; the false "activeDied cannot be true here" comment in `reconnect()`
    corrected; `rtpCount` now reset in `cutOver()`; `tryConnect()` sets `_state = 'error'` on

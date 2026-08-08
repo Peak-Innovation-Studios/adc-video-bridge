@@ -6,6 +6,21 @@ import type { EndToEndWebrtcConfig, RTCSessionDescriptionLike, RTCIceCandidateLi
 
 const log = createChildLogger('peer-session');
 
+/**
+ * How long ICE may sit in 'disconnected' before it is treated as failed.
+ *
+ * ⚠️ **This value is NOT measured.** It is chosen from how ICE behaves
+ * generally — a recoverable blip settles in a few seconds — not from
+ * observation of these cameras, which now run on local RTSP where this code
+ * does not execute. It is a named constant precisely so it can be tuned by
+ * someone who can watch a real WebRTC session.
+ *
+ * 🔑 The important part is not the number. Any grace period at all is correct
+ * where zero is not: 'disconnected' is recoverable by definition, and a
+ * teardown costs a fresh video token plus a full renegotiation.
+ */
+const ICE_DISCONNECT_GRACE_MS = 8_000;
+
 let nextSessionId = 1;
 
 export interface PeerSessionCallbacks {
@@ -27,6 +42,8 @@ export class PeerSession {
 
   private pc: RTCPeerConnection | null = null;
   private closed = false;
+  /** Armed while ICE is 'disconnected'; see the connectionStateChange handler. */
+  private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private rtpSubscribed = false;
 
   constructor(
@@ -53,11 +70,26 @@ export class PeerSession {
     if (this.closed) return;
     this.closed = true;
 
+    this.clearDisconnectGrace();
     this.signaling.removeAllListeners();
     this.signaling.close();
 
     await this.pc?.close().catch(() => {});
     this.pc = null;
+  }
+
+  /**
+   * Stand down the disconnect deadline.
+   *
+   * ⚠️ Must run on close() as well as on recovery: a timer left armed would
+   * fire onFailed for a session that has already been torn down and replaced,
+   * killing its successor.
+   */
+  private clearDisconnectGrace(): void {
+    if (this.disconnectTimer) {
+      clearTimeout(this.disconnectTimer);
+      this.disconnectTimer = null;
+    }
   }
 
   private createPeerConnection(config: EndToEndWebrtcConfig): RTCPeerConnection {
@@ -232,9 +264,39 @@ export class PeerSession {
     pc.connectionStateChange.subscribe((state) => {
       if (pc !== this.pc) return; // stale PC after close
       log.info({ camera: this.cameraName, session: this.id, connectionState: state }, 'Connection state changed');
-      if (state === 'failed' || state === 'disconnected') {
+
+      // 🔴 'disconnected' and 'failed' are NOT the same thing. In WebRTC
+      // 'disconnected' is the RECOVERABLE state — connectivity checks are
+      // failing but ICE has not given up — and 'failed' is the terminal one.
+      // Treating both as terminal tore the whole session down on a transient
+      // blip, which then costs a fresh video token and a full renegotiation.
+      if (state === 'failed') {
+        this.clearDisconnectGrace();
         this.callbacks.onFailed?.(this);
+        return;
       }
+
+      if (state === 'disconnected') {
+        // Already counting: a repeat notification must not restart the clock,
+        // or a connection flapping in and out of 'disconnected' would never
+        // reach the deadline and would hang here indefinitely.
+        if (this.disconnectTimer) return;
+        this.disconnectTimer = setTimeout(() => {
+          this.disconnectTimer = null;
+          if (pc !== this.pc || this.closed) return;
+          log.warn(
+            { camera: this.cameraName, session: this.id },
+            'Still disconnected after %ds — treating as failed',
+            ICE_DISCONNECT_GRACE_MS / 1000,
+          );
+          this.callbacks.onFailed?.(this);
+        }, ICE_DISCONNECT_GRACE_MS);
+        return;
+      }
+
+      // Any other state — notably 'connected' or 'completed' — means it came
+      // back. Stand the timer down.
+      this.clearDisconnectGrace();
     });
   }
 
