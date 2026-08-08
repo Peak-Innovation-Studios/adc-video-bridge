@@ -22,10 +22,16 @@ baton, the baton wins.
   local RTSP**, go2rtc's native client, in-process HKSV, **zero ffmpeg in the media path**. Both
   ADC-V515s work. HKSV **recording is proven**. Motion is detected by go2rtc itself, so
   **Alarm.com is out of the video path entirely**. 📖 `Journal.md` 2026-08-07 (evening/night/late).
-- 🔴 **`main` IS NOW 12 COMMITS AHEAD OF `origin/main` AND NOT PUSHED.** The merge was local.
-  ⚠️ The old baton claimed the branch was "pushed" — it was not: `origin/docs/community-onboarding`
-  stopped at `65fca25` and the wrap commit `5192eaf` existed only on disk. Nothing is lost, but
-  **nothing is backed up either until someone pushes.** Pushing was not authorised this session.
+- 🔴 **Do NOT write push state here. Run the command:** `git fetch && git log --oneline origin/main..main`
+  ⚠️ **Twice in two days this line has been wrong in this repo, in both directions.** The 08-07 baton
+  said the branch was "pushed" when `origin/docs/community-onboarding` had stopped at `65fca25`; the
+  08-08 baton said `main` was "12 commits ahead and NOT pushed" and was overtaken by a real push
+  ~90 seconds after it was committed. A count is stale the moment anything happens; the command
+  never is. 🔑 Verify with `git ls-remote origin refs/heads/main`, not a local `origin/*` ref —
+  those are only as fresh as the last fetch.
+  📌 What git cannot tell you, so it belongs here: **`origin/docs/community-onboarding` is
+  abandoned at `65fca25`.** `main` contains everything that branch had; the stale ref is not a
+  missing push and needs no reconciling. Delete it when convenient.
 - 🔑 **The merge does NOT require a rebuild or a deploy, and the reason is narrower than "docs
   only".** It adds `src/mobile/`, `src/discover-local-cli.ts` and a `package.json` *script* (no
   dependency change, lockfile untouched). `COPY src/ src/` matches by prefix, so a rebuild WOULD
@@ -39,9 +45,11 @@ baton, the baton wins.
   `package.json`, `package-lock.json`, `tsconfig.json`, `src/`, `entrypoint.sh`. Match by PREFIX
   (`^src/`), never `^src/$`.
 - **Deployed:** `main` @ `37d1236`, image rebuilt, `/pair` and `events` both live and verified.
-  ⚠️ **The NAS is now 12 commits behind `main` ON PURPOSE** — see the merge note above. This is a
-  documentation/CLI gap, not a drift bug; do not "fix" it with a rebuild that nobody asked for.
-- **Validation:** re-run **2026-08-08 against the merged `main` (`5192eaf`)**, all three green:
+  ⚠️ **The NAS is DELIBERATELY behind `main`** — see the rebuild note above. What it is behind by is
+  a count; get it from `git log --oneline 37d1236..main`. It is a documentation/CLI gap, not drift;
+  do not "fix" it with a rebuild nobody asked for.
+- **Validation:** run **2026-08-08 against `5192eaf`** (the merge commit — later baton-only commits
+  do not affect it), all three green:
   `npm run build` clean, `npx vitest run` **23 files / 358 tests**, `npm run audit:prod` passes with
   the documented GHSA-2p57-rm9w-gvfp exception. ⚠️ Re-run before trusting — these were measured
   before any later change.
@@ -74,9 +82,11 @@ baton, the baton wins.
   proceeded anyway. Both that and earlier camera names remain in history.
 - 🔴 **`log: { homekit: trace }` is still enabled in `config/go2rtc.yaml`** and marked TEMPORARY.
   Remove it and restart go2rtc once the motion thresholds are settled.
-- **Whose turn:** **DAVID.** Nothing is broken. In order: **(1)** check the Home app timeline for
-  3am clips — that settles the motion thresholds (item 2); **(2)** ONE `discover:local` from a cold
-  start (item 3); **(3)** decide whether to push `main` — ✅ the merge itself is DONE.
+- **Whose turn:** **DAVID.** Nothing is broken. ✅ The merge is DONE and pushed. In order:
+  **(1)** count real triggers over a night — `sudo docker-compose logs go2rtc | grep -c "motion: ON"`
+  — then cross-check any hits against the Home app timeline; that settles the thresholds (item 2).
+  ⚠️ `grep "motion:" | tail -N` shows only the noise floor and hides triggers — it is why none have
+  been counted yet. **(2)** ONE `discover:local` from a cold start (item 3).
 
 ### What's left (priority order)
 
