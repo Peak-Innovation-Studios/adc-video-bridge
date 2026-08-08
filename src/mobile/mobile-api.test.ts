@@ -80,6 +80,18 @@ describe('parseLoginResponse', () => {
     expect(() => parseLoginResponse('<html>Sign in</html>')).toThrow(/not a <lnr>/);
   });
 
+  /**
+   * 🔑 "Not a login document" covers an EMPTY body, an HTML error page and an
+   * unrecognised challenge shape — three different problems needing three
+   * different fixes. Each blind retry costs a login attempt against an account
+   * Alarm.com can lock, so the error has to say which one it got.
+   */
+  it('says what it actually received, not just that parsing failed', () => {
+    expect(() => parseLoginResponse('')).toThrow(/EMPTY body/);
+    expect(() => parseLoginResponse('<html>Access Denied</html>')).toThrow(/Access Denied/);
+    expect(() => parseLoginResponse('<x/>', 'HTTP 200, 4 raw bytes')).toThrow(/HTTP 200, 4 raw bytes/);
+  });
+
   it('flags two-factor when tfas is non-zero', () => {
     expect(parseLoginResponse(LOGIN_XML.replace('tfas="0"', 'tfas="1"')).twoFactorRequired).toBe(true);
   });

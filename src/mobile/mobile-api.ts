@@ -131,11 +131,17 @@ export function parseRtspEndpoint(value: string | undefined): MobileCameraRtsp |
  * `cli` camera list item · `lre` local RTSP · `l`/`p` camera credentials ·
  * `did` device id · `cd` description · `srt` supports RTSP streaming.
  */
-export function parseLoginResponse(xml: string): MobileLoginResult {
+export function parseLoginResponse(xml: string, context = ''): MobileLoginResult {
   const root = /<lnr\b([^>]*)>/.exec(xml);
   if (!root) {
+    // ⚠️ Say WHAT came back. "Not a login document" covers an empty body, an
+    // HTML error page and an unrecognised challenge shape — three different
+    // problems that need three different fixes, and each blind retry costs a
+    // login attempt against an account Alarm.com can lock.
+    const preview = xml.slice(0, 160).replace(/\s+/g, ' ').trim();
+    const shape = xml.length === 0 ? 'EMPTY body' : `${xml.length} chars starting: ${preview}`;
     throw new MobileApiError(
-      'response is not a <lnr> login document — the login was rejected or the API changed shape.',
+      `response is not a <lnr> login document — got ${shape}${context ? ` (${context})` : ''}`,
     );
   }
   const lnr = attributes(root[1]!);
@@ -248,7 +254,11 @@ export async function mobileLogin(options: MobileLoginOptions): Promise<MobileLo
     xml = buffer.toString('utf-8');
   }
 
-  const result = parseLoginResponse(xml);
+  const result = parseLoginResponse(
+    xml,
+    `HTTP ${res.status}, content-encoding=${res.headers.get('content-encoding') ?? 'none'}, ` +
+      `${buffer.length} raw bytes, twoFactorId=${options.twoFactorId ? 'sent' : 'omitted'}`,
+  );
 
   if (result.loginResult !== 0) {
     throw new MobileApiError(
