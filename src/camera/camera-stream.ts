@@ -11,6 +11,27 @@ const MAX_DIAL_IN_RETRIES = 12;
 const DIAL_IN_RETRY_DELAY_MS = 10_000;
 const INITIAL_WAKE_DELAY_MS = 5_000;
 
+/**
+ * How long a negotiated session may stay silent before the attempt is failed.
+ *
+ * 🔴 **`SESSION_STARTED` is not media.** Without this, a session that negotiates
+ * and then never delivers a track is recorded as a SUCCESS — `CameraManager`
+ * calls `breaker.recordSuccess()` when `start()` resolves — which **resets the
+ * circuit breaker that exists to catch exactly this**, while `state` sits at
+ * `'connecting'` forever and the status endpoint reports something that looks
+ * like a connection in progress.
+ *
+ * 🔑 This is `README.md`'s own rule applied one layer down: *"did not produce a
+ * usable result"* is the failure, not *"threw"*. The breaker already treats a
+ * token response with no WebRTC block as a failure; a signalling handshake with
+ * no media is the same shape and was not covered.
+ *
+ * ⚠️ Generous on purpose. ADC cameras wake on demand and the first packets can
+ * lag the handshake by several seconds; too short converts a slow camera into a
+ * retry storm against an API that rate-limits.
+ */
+const MEDIA_TIMEOUT_MS = 20_000;
+
 // How long a pending overlap session may negotiate before it is given up on.
 // The old token has no server-enforced timeout, so giving up costs nothing —
 // the next 600s refresh just tries again.
@@ -60,6 +81,14 @@ export class CameraStream {
   /** Called when ffmpeg exits unexpectedly while the stream was active. */
   onUnexpectedExit: (() => void) | null = null;
 
+  /**
+   * Resolves the media watchdog. Non-null only while `tryConnect()` is waiting.
+   * ⚠️ Cleared by `stop()` as well as on settle — a waiter surviving a stop
+   * would be resolved by a LATER attempt's track and silently pass an attempt
+   * that produced nothing.
+   */
+  private settleMedia: (() => void) | null = null;
+
   private readonly sessionCallbacks: PeerSessionCallbacks = {
     onRtp: (session, packet) => this.handleRtp(session, packet),
     onTrackReady: (session) => {
@@ -70,7 +99,13 @@ export class CameraStream {
       if (session !== this.active && session !== this.pending) return;
       this.startFfmpeg(session);
       if (!this.videoSocket) this.videoSocket = createSocket('udp4');
-      if (session === this.active) this._state = 'streaming';
+      if (session === this.active) {
+        this._state = 'streaming';
+        // Media arrived — release tryConnect()'s watchdog. Only the ACTIVE
+        // session counts: a pending session's track is the overlap's business
+        // and is settled by cutOver(), not by this attempt.
+        this.settleMedia?.();
+      }
     },
     onFailed: (session) => this.handleSessionFailed(session),
   };
@@ -258,6 +293,10 @@ export class CameraStream {
       this.videoSocket = null;
     }
 
+    // A waiter left armed across a stop would be settled by a LATER attempt's
+    // track, passing an attempt that itself produced nothing.
+    this.settleMedia = null;
+
     this.rtpCount = 0;
     this._state = 'idle';
     log.info({ camera: this.cameraName }, 'Stream stopped');
@@ -285,6 +324,10 @@ export class CameraStream {
     this.active = session;
     try {
       await session.connect(config);
+      // 🔴 SESSION_STARTED means ADC accepted the handshake, NOT that video is
+      // flowing. Resolving here would have CameraManager record a success and
+      // reset the breaker for an attempt that produced no media at all.
+      await this.awaitMedia();
     } catch (err) {
       // start() corrects this in its own catch, but reconnect()'s fallback
       // path calls tryConnect() directly. Without this, a rejection there
@@ -292,9 +335,42 @@ export class CameraStream {
       // reconnect() then refuses to run ever again, since it requires
       // 'streaming'. The stream is stuck, and the status endpoint reports a
       // connection attempt that does not exist.
+      //
+      // ⚠️ stop() FIRST, then set 'error' — stop() sets 'idle', so the reverse
+      // order silently discards the error state. It also tears down the dead
+      // session, its ffmpeg and its socket, which a media timeout would
+      // otherwise leak once per retry.
+      await this.stop();
       this._state = 'error';
       throw err;
     }
+  }
+
+  /**
+   * Wait for the active session to actually deliver media.
+   *
+   * Resolves immediately if a track already arrived — `onTrackReady` can fire
+   * before `connect()`'s promise settles, and a watchdog that missed that race
+   * would fail a perfectly healthy stream.
+   */
+  private awaitMedia(): Promise<void> {
+    if (this._state === 'streaming') return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.settleMedia = null;
+        reject(
+          new Error(
+            `no media within ${MEDIA_TIMEOUT_MS / 1000}s of SESSION_STARTED — ` +
+              'the signalling handshake succeeded but no track arrived',
+          ),
+        );
+      }, MEDIA_TIMEOUT_MS);
+      this.settleMedia = () => {
+        clearTimeout(timer);
+        this.settleMedia = null;
+        resolve();
+      };
+    });
   }
 
   /** Forward RTP from the active session to ffmpeg over the loopback UDP socket. */

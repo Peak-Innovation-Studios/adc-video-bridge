@@ -575,6 +575,10 @@ describe('CameraStream.tryConnect', () => {
       (stream as any).active = null;
     });
     vi.spyOn(stream as any, 'allocateUdpPort').mockResolvedValue(12345);
+    // tryConnect now also waits for MEDIA, not just SESSION_STARTED. That is
+    // covered by "media watchdog" below; this test is about pending-discard, so
+    // the new concern is stubbed rather than simulated.
+    vi.spyOn(stream as any, 'awaitMedia').mockResolvedValue(undefined);
     const connectSpy = vi.spyOn(PeerSession.prototype as any, 'connect').mockResolvedValue(undefined);
 
     try {
@@ -1381,5 +1385,83 @@ describe('CameraStream ffmpeg stderr scrubbing', () => {
 
     expect(logSpy.info).not.toHaveBeenCalled();
     expect(logSpy.debug).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 SESSION_STARTED is not media. Without the watchdog, a session that
+ * negotiates and then delivers nothing resolves start(), CameraManager calls
+ * breaker.recordSuccess(), and the breaker meant to catch exactly this is
+ * reset — while state sits at 'connecting' forever.
+ */
+describe('CameraStream media watchdog', () => {
+  let stream: CameraStream;
+
+  beforeEach(() => {
+    stream = new CameraStream('cam-1', 'front', 'rtsp://127.0.0.1:8554');
+    vi.spyOn(stream as any, 'allocateUdpPort').mockResolvedValue(12345);
+    vi.spyOn(stream as any, 'startFfmpeg').mockImplementation(() => {});
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it('REJECTS when the handshake succeeds but no track ever arrives', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(PeerSession.prototype as any, 'connect').mockResolvedValue(undefined);
+    vi.spyOn(stream, 'stop').mockImplementation(async () => { (stream as any).active = null; });
+
+    const attempt = (stream as any).tryConnect(makeConfig());
+    const assertion = expect(attempt).rejects.toThrow(/no media within/);
+    await vi.advanceTimersByTimeAsync(21_000);
+    await assertion;
+  });
+
+  it('leaves state at error, not connecting, after a media timeout', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(PeerSession.prototype as any, 'connect').mockResolvedValue(undefined);
+    vi.spyOn(stream, 'stop').mockImplementation(async () => { (stream as any).active = null; });
+
+    const attempt = (stream as any).tryConnect(makeConfig()).catch(() => {});
+    await vi.advanceTimersByTimeAsync(21_000);
+    await attempt;
+    // 🔴 'connecting' is the bug: the status endpoint then reports a
+    // connection in progress that nothing is progressing.
+    expect(stream.state).toBe('error');
+  });
+
+  // Positive control — without this, a watchdog that ALWAYS rejected would pass
+  // the two tests above.
+  it('RESOLVES when the active session delivers a track', async () => {
+    vi.spyOn(PeerSession.prototype as any, 'connect').mockResolvedValue(undefined);
+    const attempt = (stream as any).tryConnect(makeConfig());
+
+    // tryConnect awaits stop(), discardPending() and allocateUdpPort() before
+    // installing `active` — a single microtask turn is not enough, and firing
+    // the callback with a null session makes onTrackReady return early
+    // (correctly: a track from a discarded session must be ignored).
+    for (let i = 0; i < 50 && !(stream as any).active; i++) {
+      await new Promise((r) => setImmediate(r));
+    }
+    expect((stream as any).active, 'active session was never installed').not.toBeNull();
+
+    (stream as any).sessionCallbacks.onTrackReady((stream as any).active);
+    await expect(attempt).resolves.toBeUndefined();
+    expect(stream.state).toBe('streaming');
+  });
+
+  it('resolves immediately when the track beat connect() resolving', async () => {
+    // onTrackReady can fire before connect()'s promise settles; a watchdog that
+    // missed that race would fail a perfectly healthy stream.
+    (stream as any)._state = 'streaming';
+    await expect((stream as any).awaitMedia()).resolves.toBeUndefined();
+  });
+
+  it('does not let a later track settle a waiter a stop() abandoned', async () => {
+    vi.useFakeTimers();
+    const pending = (stream as any).awaitMedia();
+    const guard = expect(pending).rejects.toThrow(/no media/);
+    await stream.stop();
+    expect((stream as any).settleMedia).toBeNull();
+    await vi.advanceTimersByTimeAsync(21_000);
+    await guard;
   });
 });

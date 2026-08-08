@@ -261,15 +261,27 @@ baton, the baton wins.
    critical path** — item 1 routes around it entirely, and cannot help the two V515s regardless.
    Full evidence in the blocker above.
 
-8. *(Agent — now UNBLOCKED, a real camera is available)* **Two observability
-   defects, found 2026-08-06. Both let a dead stream look calm:**
-   - **No media watchdog after `SESSION_STARTED`** — a trackless session is recorded as a *success*
-     (`breaker.recordSuccess()`), resetting the breaker that should catch it, and `state` sits at
-     `'connecting'` forever. Fix shape: fail the attempt if no track arrives within N seconds.
-   - **A camera never attempted reports `idle` with zero errors** for ~30 min, until the token
-     breaker opens (`VIDEO_TOKEN_FAILURE_THRESHOLD = 3` × `VIDEO_TOKEN_REFRESH_MS = 600s`).
-   🔑 Both are the trap `README.md` documents one layer up — *"did not produce a usable result"* is
-   the failure, not *"threw"* — never applied downward. 📖 Reasoning: `Journal.md` 2026-08-06.
+8. ⚠️ **HALF DONE 2026-08-08.**
+   ✅ **Media watchdog — FIXED.** `tryConnect()` now awaits actual media after `SESSION_STARTED`
+   (`MEDIA_TIMEOUT_MS = 20s`) and fails the attempt if no track arrives, so a trackless session is
+   no longer recorded as a success that resets the breaker. On timeout it `stop()`s first and then
+   sets `'error'` — that ORDER matters, since `stop()` sets `'idle'` — which also tears down the
+   ffmpeg and socket a timeout would otherwise leak once per retry.
+   🔑 `awaitMedia()` returns immediately if a track already arrived: `onTrackReady` can fire before
+   `connect()` settles, and a watchdog that missed that race would fail a healthy stream.
+   🔑 Mutation-tested three ways — never-fires kills 3 tests, always-fires kills 1, and removing
+   the waiter-clear in `stop()` kills 1.
+   🔎 **This is the most upstreamable thing here:** `camera-stream.ts` is code Omar-L actually
+   runs, unlike anything on the local-RTSP path. See [`UPSTREAM.md`](UPSTREAM.md) — branch off
+   `upstream/main` and verify against THEIR lockfile.
+   ⏳ **STILL OPEN:** a camera never attempted reports `idle` with zero errors for ~30 min, until
+   the token breaker opens (`VIDEO_TOKEN_FAILURE_THRESHOLD = 3` × `VIDEO_TOKEN_REFRESH_MS = 600s`).
+   ⚠️ Lower value than it looks: it is WebRTC-path only, and the production path is local RTSP.
+   💡 The local-RTSP relay already has the equivalent guard — `idleTimeoutMs: 120_000` in
+   `tunnel-relay.ts`, armed on connect and reset per chunk — so a relay session that never carries
+   data does get closed. Checked 2026-08-08; do not "add" it again.
+   🔑 Both defects are the trap `README.md` documents one layer up — *"did not produce a usable
+   result"* is the failure, not *"threw"* — never applied downward. 📖 `Journal.md` 2026-08-06.
 9. *(David — after item 2 verifies)* **Remove the Homebridge camera accessory** and its config. Until
    then both accessories exist deliberately — that is the documented cutover.
 10. **(David — 1 min)** `/volume1/homebridge/config.json` is **775**; world-read remains, and
