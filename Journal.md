@@ -8,6 +8,109 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-08 — The blocker was a missing field, and the evidence had been on disk all along
+
+**Claude Code (Opus 5).** The community blocker is gone. `discover:local` signed in to
+`mobile.alarm.com` and returned all three cameras with their local RTSP endpoints. The cause of
+every previous failure was a single missing body field — `Haiku` — and the way it was found
+matters more than the fix.
+
+### The cold-start test refuted its own hypothesis
+
+Yesterday's entry closed confident that the empty bodies were rate limiting. The plan followed
+from that: wait for a cold start, make **one** attempt, judge from that single result.
+
+We waited ~15 hours. The attempt returned a **byte-identical** empty body: `HTTP 200,
+content-encoding=none, 0 raw bytes`. 🔑 **A throttle does not survive 15 hours of silence.** One
+measurement moved the diagnosis from "we were punished" to "our request is wrong" — and that
+second hypothesis is testable *offline*.
+
+The HAR of the real app was already in `~/Downloads`. It had been there since before the nine
+attempts began. Diffing it **structurally** — field and header *names* only, never values —
+took one command: the app sends **24** body fields, this client sent **23**, and the one name
+absent from ours was `Haiku`. Adding it worked on the first try.
+
+⚠️ **Nine logins were spent against a lockable account to learn something a free, zero-risk
+structural diff would have shown immediately.** That is the lesson, not the field name. A
+capture of a working request is a specification; comparing against it costs nothing and risks
+nothing. Probing a live authentication endpoint costs a login every time. **Exhaust the diff
+first.**
+
+Two findings fell out of the same diff for free: every one of the 18 hardcoded constants
+already matched the app exactly, so the values were never in question; and `HashCode` is **not**
+a timestamp despite its 10-digit width — tested against the capture's own `startedDateTime` it
+is off by ~1188 days, so a captured one is stable and reusable.
+
+🔎 `Haiku` is literally what it says: ~60 characters, ten words separated by spaces, all
+letters, ending in a period. A human-readable device fingerprint.
+
+### The result was verified against an independent artifact
+
+The generated configuration matched the running production install field-for-field — camera
+ids, hosts, ports, RTSP credentials. That install was hand-extracted from a capture weeks ago,
+so it is **independent evidence**, not a restatement of the same parse. A parser reading the
+wrong attribute would have produced plausible output and failed that comparison.
+
+⚠️ It also showed what the match does *not* cover: `listenPort` is assigned positionally
+(`8561 + index`) and agreed only because Alarm.com happened to return the cameras in the same
+order the config was written. That is now filed as a real latent bug (item 15) rather than
+mistaken for a validated behaviour.
+
+### Motion thresholds: an absence that was actually a measurement
+
+Item 2 settled the same morning. `motion: ON` counts per hour across the night ran `23:00` 2 ·
+`00:00` 1 · **`01:00`-`05:00` zero** · `06:00` 1 · `07:00` 15.
+
+🔑 **The zero counts as evidence because it is BRACKETED.** Events sit on both sides of it, so
+the detector and the log path were provably live entering and leaving the silent window —
+"nothing fired" cannot be "logging stopped". The `07:00` spike of 15 corroborates by shape: a
+false-positive process has no reason to track a household waking up. Front and kitchen came down
+to 4.0 afterwards, both having sat *above* the weakest real trigger observed (4.46).
+
+A prior step mattered as much: an earlier `grep -c "motion: ON"` returning **42** was the
+positive control for the whole pipeline. Had it returned 0, "no false positives", "detector
+dead" and "wrong grep pattern" would have been indistinguishable.
+
+### Three mistakes, and two of them are the same mistake
+
+- 🔴 **A redaction denylist fails open, twice.** Filtering `key: value` lines out of
+  `config/go2rtc.yaml` printed every `pairings:` **list item**, and a line range taken to check
+  an unrelated `log:` block ran into `streams:` and put a camera's RTSP password in a
+  transcript. Later, a filter redacting keys matching `pass|token|secret|url|host|user` printed
+  `relays[].target` — all three camera LAN IPs — because the field is called `target`. Both
+  filters enumerated the sensitive things *currently known*, so each was one unanticipated field
+  name away from leaking, and the output looked clean either way. **Name what to SHOW.**
+- 🔴 **`[A-Z_]+` does not match `GO2RTC_*`.** The name contains a digit. That single wrong
+  character class produced **three** confident false negatives in one session: a compose grep
+  that found one required env key instead of five, a pinning test that agreed with nothing, and
+  a claim that `.env.example` was missing four keys **it has always had**. Every check reported
+  clean. The fix is `[A-Z0-9_]+` plus a positive control asserting the extraction finds a
+  digit-bearing name.
+- ⚠️ **A branch was rebased after it had been published** — by a command I had written and David
+  had run. Publication state is not a property of one's own actions. `git range-diff` proved the
+  rewrite lossless before anything was forced.
+
+### Built on top
+
+`npm run discover:local -- --write` merges generated config in place, and `npm run setup` runs
+the whole path: preflight → one login → write → **verify gate** → `compose up` → pairing codes.
+It deliberately does **not** generate `docker-compose.yml`: every per-install value there is
+already a `${VAR}` substitution, so a generated copy would be a second, unaudited statement of
+the security posture `SECURITY_AUDIT.md` describes.
+
+🔑 **Both were found buggy by being run, not by being tested.** `--write` re-runs generated
+fresh secrets for keys that already had one, manufacturing a conflict — and the conflict message
+then echoed the stored credential to stdout. Twenty-four unit tests passed throughout; the
+defect only exists on the second run.
+
+⚠️ **Onboarding is still not "type your username and password", and an earlier draft of the
+baton said it was.** A new user must still capture `Haiku` once. What changed is *what* they
+extract: four fixed device values instead of per-camera endpoints and credentials, with the tool
+then enumerating cameras itself. Whether even that survives depends on the one open question —
+is `Haiku` per-install, or a client constant? One other person's capture answers it for free.
+
+---
+
 ## 2026-08-07 (late) — The mobile API opens, then nine attempts measure a throttle
 
 **Claude Code (Opus 5).** David captured a fresh app sign-in. It gave the missing exchange and
