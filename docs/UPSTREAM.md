@@ -15,7 +15,13 @@ most of what made the baton long. The baton keeps a one-line pointer and the cur
 
 ---
 
-## Pull requests — 2 merged, 6 open (as of 2026-08-06)
+## Pull requests — 2 merged, 7 open (as of 2026-08-08)
+
+🔑 **Live state 2026-08-08, from the API not this file.** All seven open PRs are `MERGEABLE`.
+Six report `mergeStateStatus: BLOCKED`, which here means **branch protection awaiting review, not a
+problem with the PR** — #30 is `CLEAN` and shows what an unblocked one looks like. Only #23 and #34
+have CI results (`SUCCESS`); the rest show no checks at all, which predates the #26 CI hardening.
+⚠️ Do not read `BLOCKED` as "something is wrong with our branch" — it cost a diagnosis once.
 
 Omar-L asked for help making the fork more stable. All of these branch off `upstream/main` and
 contain **no internal docs**. ⚠️ Status goes stale — re-check with
@@ -30,7 +36,7 @@ contain **no internal docs**. ⚠️ Status goes stale — re-check with
 | [#29](https://github.com/Omar-L/adc-video-bridge/pull/29) | `upstream-fix/log-redaction` | ✅ **MERGED** | redaction, log level, shutdown |
 | [#30](https://github.com/Omar-L/adc-video-bridge/pull/30) | `upstream-fix/config-validation` | open | validation + `ADC_*_FILE` |
 | [#31](https://github.com/Omar-L/adc-video-bridge/pull/31) | `upstream-fix/container-hardening` | open | non-root, read-only, digest pins |
-| [#32](https://github.com/Omar-L/adc-video-bridge/pull/32) | `upstream-fix/circuit-breaker` | open | closes `#9`; verified 108→136 tests on THEIR tree |
+| [#32](https://github.com/Omar-L/adc-video-bridge/pull/32) | `upstream-fix/circuit-breaker` | open | closes `#9`; 136 tests on THEIR tree. ⚠️ **REBASED 2026-08-08** — see below |
 | [#34](https://github.com/Omar-L/adc-video-bridge/pull/34) | `upstream-fix/media-watchdog` | open | fail an attempt that negotiates but delivers no media; 108→113 on THEIR tree |
 
 ⚠️ **#28, #23/#24 and #34 all touch `camera-stream.ts`**, and **#32 touches
@@ -43,6 +49,28 @@ port's 108 tests passed *immediately*, which read like good news and was actuall
 broke nothing, because the positive control invoked the internal resolver directly and so
 substituted the exact wiring under test. Extracting a single `markStreaming()` transition fixed it.
 **Assume any test you add upstream is untested until a mutation kills it.**
+
+### ⚠️ The predicted rebase tax came due — #32, 2026-08-08
+
+**#32 went `CONFLICTING` and could not be merged**, exactly as the "whichever merges last needs a
+trivial rebase" note below predicted. Cause: **#29 merged** and touched `src/index.ts`, which #32
+also touches. The conflict was a single hunk — #29 added a `statusTimer` handle so the status
+interval can be cleared on shutdown; #32 changed the same `setInterval` call to add an
+`eventCircuit` field. **Resolution keeps both.**
+
+🔑 **How it was verified before force-pushing**, and the pattern to reuse:
+- `git merge-tree --write-tree --name-only origin/main <branch>` names the conflicted files and
+  touches nothing. ⚠️ The **3-argument** `merge-tree` form is the old one and does NOT report
+  conflicts usefully — it prints a merge diff and looks clean. Use `--write-tree`.
+- `git range-diff` after the rebase showed **one** changed line, the resolution itself. That is the
+  proof the rebase dropped nothing.
+- `npm ci` + build + suite against THEIR lockfile: 136 tests.
+- Pushed with `--force-with-lease=<branch>:<old-sha>`, so it aborts if the remote moved.
+- Left a comment on the PR saying why the branch moved — a force-push under an open PR is confusing
+  otherwise.
+
+⚠️ **Expect this again.** #23, #24, #28 and #34 all touch `camera-stream.ts`; the moment one merges,
+the others need the same treatment.
 
 ### 🔴 Do NOT "sync fork" as PRs merge — wait until all six land, then reconcile once
 
