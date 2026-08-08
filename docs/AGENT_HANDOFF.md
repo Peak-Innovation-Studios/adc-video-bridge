@@ -146,13 +146,14 @@ baton, the baton wins.
    `UnitId`+`did` which reconstruct the web API's camera id. No second call needed.
    Built: `src/mobile/mobile-api.ts` + `npm run discover:local`, which prints paste-ready
    blocks for all three config files.
-   ❓ **A live sign-in has NOT yet succeeded** — the request now reaches the login logic and
-   gets `lr=1` (structured rejection) rather than garbage. Two candidates, deliberately not
-   separated because each attempt is a login: a required `HashCode`, or a `TwoFactorId` rotated
-   by the testing itself.
-   ➡️ **Next: mint a fresh TwoFactorId by signing in on the phone, then ONE run of
-   `npm run discover:local`.** 🔴 **Do not bisect in a loop** — Alarm.com bans accounts that
-   poll authentication endpoints.
+   ❓ **A live sign-in has NOT yet succeeded, and the evidence is contaminated.** ~9 attempts
+   were made in one evening; the FIRST returned a parseable `<lnr lr="1">`, and **every one
+   after returned an empty body regardless of what was varied** — including the app's exact
+   captured field set. 🔑 **That fits RATE LIMITING, not field validation**, so the conclusions
+   drawn from the later attempts are unreliable.
+   ➡️ **Next: wait several hours for a cold start, then make ONE attempt** with the captured
+   `ADC_MOBILE_DEVICE_UID`, `ADC_MOBILE_TWO_FACTOR_ID` and `ADC_MOBILE_HASH_CODE`, and judge
+   from that single result. 🔴 **Do not permute** — that is what produced the noise.
    🔎 Three traps already paid for: a minimal field set returns a non-`<lnr>` body with no
    error; the response is **gzipped and `fetch` does not decode it**; and a REJECTED login
    still returns HTTP 200, so only `lr` distinguishes success.

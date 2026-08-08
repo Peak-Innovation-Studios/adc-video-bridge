@@ -80,38 +80,34 @@ name.
 camera; `lre` is the local RTSP endpoint, `l`/`p` the credentials, and `UnitId` + `did`
 reconstruct the **web API's** camera id, so the two surfaces correlate without a lookup.
 
-### Three things measured the hard way
+### Measured, and trustworthy
 
-- 🔴 **A minimal request does not work.** Sending only Action/Username/Password/MobileDeviceUid
-  returns HTTP 200 with a body that is not a `<lnr>` document at all — the handler bails with
-  nothing to read. Send the app's full field set and a plausible `User-Agent`. There is no way
-  to learn *which* field it wants, so the client sends them all.
 - 🔴 **The response is gzipped and `fetch` does NOT transparently decode it.** `res.text()`
   yields compressed bytes as mojibake, which parses as "not a login document" — identical to a
-  rejected login. This produced a wrong diagnosis before it was spotted; the client now gunzips
-  explicitly.
+  rejected login. The client gunzips explicitly.
 - 🔴 **A REJECTED login still returns HTTP 200 with a well-formed `<lnr>`.** Only `lr`
   distinguishes them: `0` is success. Trusting the status code accepts a failed sign-in.
+- 🔴 **An unrecognised request returns an EMPTY body** — HTTP 200, zero bytes, no error
+  document at all. There is no status code, message, or distinction between causes. Any client
+  built against this must translate that silence into an explanation, because the API gives none.
 
-### ❓ Still unresolved
+### ⚠️ Measured, but PROBABLY CONFOUNDED — do not build on these
 
-**A live sign-in has not yet succeeded from this client.** After the fixes above, the request
-reaches the login logic and receives a structured rejection (`lr=1`) rather than garbage. Two
-explanations remain, and they were not separated because further attempts against an
-authentication endpoint risk locking the account:
+A sequence of ~9 sign-in attempts was made in one evening while varying `MobileDeviceUid`,
+`TwoFactorId`, the field set and `HashCode`. The **first** attempts returned parseable `<lnr>`
+documents; **every attempt after that returned an empty body regardless of what was varied**,
+including a repeat of the app's complete field set with captured values.
 
-1. **`HashCode`** — the app sends a numeric `HashCode`. Whether the server validates it is
-   unknown. The client accepts one via `hashCode` but never invents one, because a captured
-   value may be account- or device-specific.
-2. **A rotated `TwoFactorId`** — the captured token had already been replayed during testing,
-   which may have consumed or rotated it.
+🔑 **That pattern fits RATE LIMITING far better than it fits field validation.** `README.md`
+already documents Alarm.com banning accounts that poll. If the later responses were throttle
+responses, then the conclusions drawn from them — "TwoFactorId is validated", "the device UID
+must be known", "HashCode is required" — are measurements of the throttle, not of the API.
 
-➡️ **Next step, ONE controlled attempt:** sign in on the phone again to mint a fresh
-`TwoFactorId`, then run `npm run discover:local` with it. If that succeeds, `HashCode` is not
-required and the client is done. If it fails identically, pass the captured `HashCode` and try
-once more.
+➡️ **Retry from a cold start**: leave it alone for several hours, then make **ONE** attempt
+with the app's exact captured values. Judge from that single result. Do not permute.
 
-⚠️ **Do not bisect this in a loop.** Every attempt is a login.
+⚠️ The lesson generalises past this API: **when every variation returns the same failure, stop
+varying and suspect the channel.** Nine attempts produced one real datum and a lot of noise.
 
 ## What is built
 
