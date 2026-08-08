@@ -80,13 +80,16 @@ baton, the baton wins.
   ⚠️ **A leak check that reports without BLOCKING is not a check** — a fixture carrying the real
   camera username was committed this session while the scan printed the finding and the commit
   proceeded anyway. Both that and earlier camera names remain in history.
-- 🔴 **`log: { homekit: trace }` is still enabled in `config/go2rtc.yaml`** and marked TEMPORARY.
-  Remove it and restart go2rtc once the motion thresholds are settled.
-- **Whose turn:** **DAVID.** Nothing is broken. ✅ The merge is DONE and pushed. In order:
-  **(1)** count real triggers over a night — `sudo docker-compose logs go2rtc | grep -c "motion: ON"`
-  — then cross-check any hits against the Home app timeline; that settles the thresholds (item 2).
-  ⚠️ `grep "motion:" | tail -N` shows only the noise floor and hides triggers — it is why none have
-  been counted yet. **(2)** ONE `discover:local` from a cold start (item 3).
+- ⚠️ **`log: { homekit: trace }` is still enabled in `config/go2rtc.yaml`.** Thresholds are now
+  settled (item 2), so it can come down — but **to `debug`, NOT removed**: `motion: ON` is a DBG
+  line and `motion: status` is TRC, so `debug` keeps the only trigger visibility there is and drops
+  the 1-in-150 flood. Needs a go2rtc restart (David's sudo).
+- 🔑 **go2rtc logs in UTC; local is UTC-5. 3am local = `08Z`.** Its inline clock equals Docker's
+  `-t` stamp exactly. A `16:05` line is 11:05 local — already mis-read once as "afternoon".
+- **Whose turn:** **DAVID.** Nothing is broken. ✅ The merge is DONE and pushed; ✅ item 2 is
+  SETTLED (no false positives overnight; keep the current thresholds).
+  **(1)** ONE `discover:local` from a cold start (item 3) — the last real blocker.
+  **(2)** Optional, any time: the `trace` → `debug` downgrade above.
 
 ### What's left (priority order)
 
@@ -95,24 +98,33 @@ baton, the baton wins.
    Runbook: [`SETUP.md`](SETUP.md) → "Step 2b". Design + traps: [`INVARIANTS.md`](INVARIANTS.md).
    ⚠️ What it still does NOT do: fetch its own endpoints (item 3), and prove HKSV *records* (item 2).
 
-2. ⚠️ **Motion works; thresholds are MEASURED but not yet confirmed over a full night.**
-   ✅ HKSV recording is proven and all three cameras use `motion: detect`, so Alarm.com is out
-   of the loop. Current values: front 4.5, kitchen 5.5, sunroom 3.5.
-   🔑 **Measured 2026-08-07 via `log: { homekit: trace }`:** `ratio` sat at **0.68-1.22** across all
-   three, against baselines of ~1720 / ~1200 / ~700 — read at the time as 3-4.5× headroom.
-   🔴 **NOT REPRODUCED. Second sample 2026-08-08 16:05-16:09 (40 lines, 3 streams) gives
-   0.62-2.89** — 16 of 40 samples outside the old range, three above 2.0. By baseline cluster:
-   HIGH 1728-4467 → max **2.89**; MID 790-1084 → max 1.79; LOW 179-250 → max **2.26**.
-   ⚠️ **Neither window's occupancy was verified, so NEITHER is an idle measurement** and the
-   "3-4.5× headroom" figure inherits that. 16:05 on a Saturday is not idle; these highs may be real
-   motion. **Do not "correct" the thresholds from either sample.** (This is the same trap already
-   paid for once: an earlier "false positives" reading was wrong for exactly this reason.)
-   ⚠️ `motion: status` samples 1 frame in 150 — it shows the noise FLOOR, never the spikes that
-   trigger, so 2.89 is a LOWER BOUND on the peak, not the peak. Only a `motion: ON` line carries a
-   trigger's ratio. ⚠️ 13-14 samples per camera cannot bound a tail, and the tail is what fires.
-   🔴 **The log line carries NO stream name** — the three thresholds (front 4.5, kitchen 5.5,
-   sunroom 3.5) have no *measured* mapping to the three baselines. Rank-order matching against the
-   2026-08-07 figures is a guess, and weak: the low baseline moved ~700 → ~200 between samples.
+2. ✅ **SETTLED 2026-08-08 — NO false positives overnight. Keep front 4.5, kitchen 5.5, sunroom 3.5.**
+   HKSV recording is proven and all three use `motion: detect`, so Alarm.com is out of the loop.
+   🔴 **go2rtc logs in UTC; local is UTC-5.** Its inline clock is byte-identical to Docker's `-t`
+   stamp (`22:41:20.710` == `22:41:20.710Z`). **3am local = `08Z`.** An earlier reading in this repo
+   mis-called a `16:05` line "afternoon"; it was 11:05 local. Convert before concluding anything.
+   🔑 **The measurement.** `motion: ON` counts per hour over the night of 08-07→08:
+   `23:00` 2 · `00:00` 1 · **`01:00`-`05:00` ZERO** · `06:00` 1 · `07:00` 15 · `08:00`-`11:00` 25.
+   ✅ **The zero is BRACKETED** by events at 00:00 and 06:00, so the detector and log path were
+   demonstrably live straight through it — that is what makes it a measurement and not an
+   instrument gap. The 07:00 spike of 15 has the shape of a household waking up; a false-positive
+   process has no reason to respect that.
+   🔑 **Clean separation, and the thresholds sit in the gap:** noise floor (`motion: status`) tops
+   out at **2.89**; real triggers (`motion: ON`) run **4.46-12.51**; nothing observed between.
+   ⚠️ **ONE night, not three.** `motion: ON` is a **DBG** line and the earliest is `08-08T04Z`, so
+   debug logging only began ~12h before the sample. The log's 65.6h span is NOT the measurement
+   window — silence on 08-05→07 is a logging artifact, not evidence.
+   ⚠️ **The risk has FLIPPED to under-sensitivity.** Kitchen's 5.5 is above the weakest real trigger
+   seen (4.46). Five sampled ratios is too few to act on — watch, do not change blind.
+   🔑 **Neither line type carries a stream name, but ratio bounds partially attribute:** a trigger
+   fires only above its own threshold, so any `ON` below 4.5 **must** be sunroom (3.5), and only
+   one above 5.5 can be kitchen. That is the only attribution available.
+   ⚠️ `motion: status` samples 1 frame in 150 — it is the noise FLOOR, never the spikes that
+   trigger, so 2.89 is a LOWER BOUND. Only `motion: ON` carries a real trigger's ratio; a
+   `grep "motion:" | tail -N` shows only the floor and hides triggers.
+   ➡️ **Next (agent, small): drop `log: { homekit: trace }` to `debug` rather than removing it.**
+   `motion: ON` is DBG and `motion: status` is TRC, so `debug` keeps the one useful line and drops
+   the 1-in-150 flood. Removing the key entirely also removes the only trigger visibility there is.
    ➡️ **Next, in this order.** (a) `sudo docker-compose logs go2rtc | grep -c "motion: ON"` over a
    window covering a night — ⚠️ a `grep "motion:" | tail -40` shows only the floor and hides
    triggers, which is why none have been counted yet. (b) Cross-check any hits against the Home app
