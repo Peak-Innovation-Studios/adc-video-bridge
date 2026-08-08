@@ -107,12 +107,16 @@ baton, the baton wins.
    **mtime unchanged at 11:43:28 so go2rtc did NOT rewrite it**, all 12 pairing entries intact,
    `verify:config` 0 blocking, all three relays `connections: 1` with `bytesDown` climbing.
    Backup, outside the repo and the build context, mode 600: `~/go2rtc.yaml.bak-20260808-113942`.
-   ⚠️ **One link is inferred, not observed:** go2rtc exposes no uptime and motion logging is off, so
-   "the running process holds 4.0" rests on the restart having come AFTER the 11:43 edit rather than
-   on a direct reading. Settle it with
-   `sudo docker-compose logs -t go2rtc | grep "go2rtc platform" | tail -1` — a banner after `16:43Z`
-   (11:43 local) proves it. `restart` keeps the container, so logs accumulate and the LAST banner is
-   the current process.
+   ✅ **CONFIRMED LIVE, not inferred.** go2rtc's startup banner reads `2026-08-08T17:44:41Z`
+   (12:44:41 local) against an edit at 11:43:28 local (`16:43:28Z`) — the restart came **1h 1m
+   after** the edit, so the running process loaded 4.0. `revision=506cfa7.dirty` unchanged, i.e. a
+   restart and not a rebuild, exactly as a config-only change should be.
+   🔑 **How to re-verify, and why this command and not another:** an unmodified config file is
+   equally consistent with "restarted and read it" and "never restarted" — a state carries no time.
+   The banner is an EVENT, so it timestamps itself:
+   `sudo docker-compose logs -t go2rtc | grep "go2rtc platform" | tail -1`. `restart` reuses the
+   container so logs accumulate; `tail -1` is the CURRENT process. ⚠️ Compare against the config's
+   mtime in the SAME zone — go2rtc logs UTC, local is UTC-5.
    ⚠️ Whenever this file is edited again: **do not pair/unpair between edit and restart** — go2rtc
    persists its own config, so a write from memory silently reverts the edit.
    🔑 **Why 4.0:** both 4.5 and 5.5 sat ABOVE the weakest real trigger observed (4.46), so they
