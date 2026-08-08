@@ -16,6 +16,7 @@ import { formatPin } from './homekit/setup-uri.js';
  *   ADC_USERNAME, ADC_PASSWORD           account login
  *   ADC_MOBILE_DEVICE_UID                stable per-install UUID (generated if unset)
  *   ADC_MOBILE_TWO_FACTOR_ID             trusted-device token, if the account uses 2FA
+ *   ADC_MOBILE_HASH_CODE                 the app's HashCode, if the server requires it
  *
  * 🔴 Runs ONE login request and never retries — Alarm.com bans accounts that
  * poll authentication endpoints. If it fails, fix the input and run it again by
@@ -58,12 +59,14 @@ async function main(): Promise<void> {
   }
   const deviceUid = process.env.ADC_MOBILE_DEVICE_UID?.trim() || randomUUID().toUpperCase();
   const twoFactorId = process.env.ADC_MOBILE_TWO_FACTOR_ID?.trim();
+  const hashCode = process.env.ADC_MOBILE_HASH_CODE?.trim();
 
   const result = await mobileLogin({
     username,
     password,
     deviceUid,
     ...(twoFactorId ? { twoFactorId } : {}),
+    ...(hashCode ? { hashCode } : {}),
   });
 
   const usable = result.cameras.filter((c) => c.localRtsp);
