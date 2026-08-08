@@ -217,7 +217,18 @@ baton, the baton wins.
    volume's default ACL is 0777 and the UI rewrites the file.
 11. *(Agent, low)* **A/B `-reorder_queue_size 0`** — production logs show repeated
    `Non-monotonic DTS ...`. Test only once video is stable, or it measures the link.
-12. *(Agent, low)* go2rtc stream auto-configuration; `src/discover.ts` already generates both blocks.
+12. ✅ **DONE 2026-08-08 — `npm run discover:local -- --write`** merges the generated blocks into
+    `config/config.yaml`, `.env` and `config/go2rtc.yaml` in place. `src/config-writer.ts` is the
+    merge as pure `string → string`; `src/config-writer-fs.ts` applies it to disk. 24 new tests.
+    🔴 **REFUSES `config/go2rtc.yaml` once anything is paired** — go2rtc writes that file itself and
+    `device_private` is unrecoverable — and falls back to printing the block. Merges into existing
+    maps (never appends, so no duplicate key), never overwrites an existing key, backs up first at
+    0600, preserves comments, refuses a file it cannot parse.
+    🔑 Both guards **mutation-tested in both directions**: the paired-refusal fails 2 tests when it
+    can never fire and 6 when it always fires; dropping the unconditional `chmod` fails 1.
+    ⚠️ **Still UNPROVEN end-to-end** — no live sign-in has ever succeeded (item 3), so `--write` has
+    never run against real Alarm.com output. The merge layer is covered; the path from a real
+    `<lnr>` response into these functions is not.
 13. *(Agent, low)* Audio passthrough. ⚠️ **The local RTSP stream has no `m=audio` line at all**,
     so on this path audio is not merely unimplemented — the camera does not send it.
 14. *(Agent — WebRTC path only; unblocked but low value now)* `onFailed` fires on `'disconnected'` as well as

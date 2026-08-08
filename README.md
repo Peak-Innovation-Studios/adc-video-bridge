@@ -167,7 +167,11 @@ The bridge refreshes video tokens every 10 minutes and rebuilds the token-bound 
 - 🔴 **Fetching local RTSP endpoints automatically** — they live on Alarm.com's mobile API, which
   this project cannot yet call, so they are configured by hand. This is the main barrier to adoption:
   [`docs/MOBILE_API.md`](docs/MOBILE_API.md)
-- go2rtc stream auto-configuration (currently manual in `config/go2rtc.yaml`)
+- ~~go2rtc stream auto-configuration~~ — **done.** `npm run discover:local -- --write` merges the
+  generated blocks into `config/config.yaml`, `.env` and `config/go2rtc.yaml` in place, preserving
+  comments and backing each file up first. 🔴 It **refuses** to touch `config/go2rtc.yaml` once any
+  accessory is paired, because go2rtc writes that file itself and `device_private` exists nowhere
+  else — in that case it prints the block for you to merge by hand, exactly as before.
 - Audio — the local RTSP stream carries no audio track at all
 
 ## Project structure

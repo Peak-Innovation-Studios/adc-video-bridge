@@ -33,6 +33,11 @@ npx tsx src/discover.ts
 
 This prints a table of cameras on your account and outputs ready-to-paste YAML for the config files. Note the camera IDs and names.
 
+💡 On the local-RTSP path, `npm run discover:local -- --write` merges those blocks into the three
+files for you instead of printing them — backing each up first, never overwriting an existing key,
+and refusing `config/go2rtc.yaml` outright if anything is already paired. See
+[`MOBILE_API.md`](MOBILE_API.md).
+
 ## Step 2: Configure the bridge
 
 Copy the example configs:

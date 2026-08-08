@@ -1,6 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { mobileLogin, MobileApiError, type MobileCamera } from './mobile/mobile-api.js';
 import { formatPin } from './homekit/setup-uri.js';
+import {
+  mergeConfigYaml,
+  mergeGo2rtcYaml,
+  mergeEnv,
+  type CameraEntry,
+  type StreamEntry,
+  type HomekitEntry,
+} from './config-writer.js';
+import { applyMerge } from './config-writer-fs.js';
 
 /**
  * Discover cameras and their LOCAL RTSP endpoints, and print ready-to-paste
@@ -24,6 +34,18 @@ import { formatPin } from './homekit/setup-uri.js';
  */
 
 const RELAY_PORT_BASE = 8561;
+
+/**
+ * Starting `motion_threshold` for a scene nothing is known about.
+ *
+ * 🔑 Measured 2026-08-08 on this account: the idle noise floor topped out at
+ * `ratio` 2.89 and real triggers ran 4.46-12.51, so anything in that gap works.
+ * 3.5 sits at the sensitive end ON PURPOSE — for a new install, a threshold
+ * slightly too LOW produces extra clips, which the user can see and then raise.
+ * One slightly too HIGH produces nothing at all, which is indistinguishable
+ * from a broken install. Prefer the failure the user can diagnose.
+ */
+const DEFAULT_MOTION_THRESHOLD = 3.5;
 
 function fail(message: string): never {
   console.error(`\n${message}\n`);
@@ -52,6 +74,13 @@ function suggestPin(): string {
 }
 
 async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const unknown = argv.filter((a) => a !== '--write');
+  if (unknown.length > 0) {
+    fail(`Unrecognised argument(s): ${unknown.join(', ')}. Usage: npm run discover:local [-- --write]`);
+  }
+  const write = argv.includes('--write');
+
   const username = process.env.ADC_USERNAME?.trim();
   const password = process.env.ADC_PASSWORD?.trim();
   if (!username || !password) {
@@ -89,51 +118,115 @@ async function main(): Promise<void> {
 
   if (usable.length === 0) fail('No camera published a local RTSP endpoint.');
 
-  console.log('\n' + '='.repeat(70));
-  console.log('config/config.yaml');
-  console.log('='.repeat(70) + '\n');
-  console.log('cameras:');
-  usable.forEach((c, i) => {
-    const local = c.localRtsp!;
-    console.log(`  # ${c.model} — ${c.description}`);
-    console.log(`  - id: "${c.cameraId}"`);
-    console.log(`    name: "${streamName(c, i)}"`);
-    console.log(`    quality: "hd"`);
-    console.log(`    localRtsp:`);
-    console.log(`      host: "${local.host}"`);
-    console.log(`      port: ${local.port}`);
-    console.log(`      listenPort: ${RELAY_PORT_BASE + i}`);
-    if (local.path !== '/s1') console.log(`      path: "${local.path}"`);
-  });
+  // 🔑 Build every generated value ONCE, before deciding whether to print or
+  // write. `suggestPin()` is random, so generating inside each output path
+  // would print one pin and write a different one — and a pin that disagrees
+  // with the paired accessory is unrecoverable without re-pairing.
+  const cameras: CameraEntry[] = usable.map((c, i) => ({
+    id: c.cameraId,
+    name: streamName(c, i),
+    quality: 'hd',
+    localRtsp: {
+      host: c.localRtsp!.host,
+      port: c.localRtsp!.port,
+      listenPort: RELAY_PORT_BASE + i,
+      path: c.localRtsp!.path,
+    },
+  }));
+  const streams: StreamEntry[] = usable.map((c, i) => ({
+    name: streamName(c, i),
+    url: `rtsp://${c.localRtsp!.username}:${c.localRtsp!.password}@\${GO2RTC_BIND}:${RELAY_PORT_BASE + i}${c.localRtsp!.path}`,
+  }));
+  const homekit: HomekitEntry[] = usable.map((c, i) => ({
+    name: streamName(c, i),
+    pin: formatPin(suggestPin()),
+    displayName: c.description,
+    motionThreshold: DEFAULT_MOTION_THRESHOLD,
+  }));
+  const portRange = `${RELAY_PORT_BASE}-${RELAY_PORT_BASE + usable.length - 1}`;
 
-  console.log('\n' + '='.repeat(70));
-  console.log('.env');
-  console.log('='.repeat(70) + '\n');
-  console.log(`ADC_BRIDGE_RTSP_PORTS=${RELAY_PORT_BASE}-${RELAY_PORT_BASE + usable.length - 1}`);
+  const printConfigYaml = () => {
+    console.log('\n' + '='.repeat(70));
+    console.log('config/config.yaml');
+    console.log('='.repeat(70) + '\n');
+    console.log('cameras:');
+    cameras.forEach((cam, i) => {
+      console.log(`  # ${usable[i]!.model} — ${usable[i]!.description}`);
+      console.log(`  - id: "${cam.id}"`);
+      console.log(`    name: "${cam.name}"`);
+      console.log(`    quality: "${cam.quality}"`);
+      console.log(`    localRtsp:`);
+      console.log(`      host: "${cam.localRtsp.host}"`);
+      console.log(`      port: ${cam.localRtsp.port}`);
+      console.log(`      listenPort: ${cam.localRtsp.listenPort}`);
+      if (cam.localRtsp.path !== '/s1') console.log(`      path: "${cam.localRtsp.path}"`);
+    });
+  };
 
-  console.log('\n' + '='.repeat(70));
-  console.log('config/go2rtc.yaml   ⚠️ contains camera passwords — mode 600, never commit');
-  console.log('='.repeat(70) + '\n');
-  console.log('streams:');
-  usable.forEach((c, i) => {
-    const l = c.localRtsp!;
-    console.log(`  ${streamName(c, i)}: rtsp://${l.username}:${l.password}@\${GO2RTC_BIND}:${RELAY_PORT_BASE + i}${l.path}`);
-  });
-  console.log('\nhomekit:');
-  usable.forEach((c, i) => {
-    console.log(`  ${streamName(c, i)}:`);
-    console.log(`    pin: "${formatPin(suggestPin())}"`);
-    console.log(`    name: "${c.description}"`);
-    console.log(`    hksv: true`);
-    console.log(`    motion: detect`);
-    console.log(`    motion_threshold: 3.5`);
-  });
+  const printEnv = () => {
+    console.log('\n' + '='.repeat(70));
+    console.log('.env');
+    console.log('='.repeat(70) + '\n');
+    console.log(`ADC_BRIDGE_RTSP_PORTS=${portRange}`);
+  };
+
+  const printGo2rtc = () => {
+    console.log('\n' + '='.repeat(70));
+    console.log('config/go2rtc.yaml   ⚠️ contains camera passwords — mode 600, never commit');
+    console.log('='.repeat(70) + '\n');
+    console.log('streams:');
+    for (const s of streams) console.log(`  ${s.name}: ${s.url}`);
+    console.log('\nhomekit:');
+    for (const h of homekit) {
+      console.log(`  ${h.name}:`);
+      console.log(`    pin: "${h.pin}"`);
+      console.log(`    name: "${h.displayName}"`);
+      console.log(`    hksv: true`);
+      console.log(`    motion: detect`);
+      console.log(`    motion_threshold: ${h.motionThreshold}`);
+    }
+  };
 
   if (skipped.length > 0) {
     console.log(`\n⚠️ Omitted (no local endpoint): ${skipped.map((c) => c.description).join(', ')}`);
   }
 
-  console.log('\nNext: paste the blocks above, then `npm run verify:config -- .` before deploying.');
+  if (!write) {
+    printConfigYaml();
+    printEnv();
+    printGo2rtc();
+    console.log('\nNext: paste the blocks above, then `npm run verify:config -- .` before deploying.');
+    console.log('💡 Or re-run with `--write` to merge them in place (backs up, never overwrites).');
+  } else {
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
+    console.log('\nWriting configuration:\n');
+
+    const say = (line: string) => console.log(line);
+    const results = [
+      applyMerge(resolve('config', 'config.yaml'), (t) => mergeConfigYaml(t, cameras),
+        stamp, say, 'config/config.yaml'),
+      applyMerge(resolve('.env'), (t) => mergeEnv(t, 'ADC_BRIDGE_RTSP_PORTS', portRange),
+        stamp, say, '.env'),
+      applyMerge(resolve('config', 'go2rtc.yaml'), (t) => mergeGo2rtcYaml(t, streams, homekit),
+        stamp, say, 'config/go2rtc.yaml'),
+    ];
+
+    // 🔑 Print ONLY the blocks that were refused. Printing all of them would
+    // bury the one thing the user still has to act on, and the go2rtc block
+    // carries camera passwords — do not put it on screen without cause.
+    const refused = results.filter((r) => r.refused);
+    if (refused.length > 0) {
+      console.log(`\n⚠️  ${refused.length} file(s) left untouched. Merge these by hand:`);
+      if (results[0]!.refused) printConfigYaml();
+      if (results[1]!.refused) printEnv();
+      if (results[2]!.refused) printGo2rtc();
+    }
+
+    console.log('\nNext: `npm run verify:config -- .` before deploying.');
+    if (results[2]!.written) {
+      console.log('⚠️ config/go2rtc.yaml now holds camera passwords — confirm it is mode 600 and gitignored.');
+    }
+  }
   console.log('⚠️ motion_threshold is a property of the SCENE — expect to tune it per camera.\n');
 }
 

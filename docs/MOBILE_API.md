@@ -118,12 +118,39 @@ varying and suspect the channel.** Nine attempts produced one real datum and a l
   blocks for `config.yaml`, `.env` and `go2rtc.yaml`, including suggested HomeKit pins and
   `motion: detect` thresholds. Credentials come from the environment, never arguments, so they
   do not land in shell history or `ps`.
+- **`npm run discover:local -- --write`** — merges those blocks into the three files in place
+  instead of printing them. `src/config-writer.ts` holds the merge as pure `string → string`
+  functions; `src/config-writer-fs.ts` applies the verdict to disk.
 
 ```bash
 export ADC_USERNAME=... ADC_PASSWORD=...
 export ADC_MOBILE_TWO_FACTOR_ID=...     # if the account uses 2FA
-npm run discover:local
+npm run discover:local                  # print the blocks
+npm run discover:local -- --write       # or merge them in place
 ```
+
+### What `--write` will and will not do
+
+🔴 **It REFUSES `config/go2rtc.yaml` outright once any accessory has `pairings`.** go2rtc writes
+that file itself, and `device_private` — the private half of a completed HomeKit pairing — exists
+nowhere else and is not recoverable from a backup that predates it. A refused file is printed for
+hand-merging instead, so the paired case degrades to the old behaviour rather than failing.
+
+Also true of every write:
+
+- **Merges INTO existing maps**, never appends. A second `streams:` key would be a duplicate
+  top-level key, which `verify-config.ts` documents as silently discarding one block *and*
+  disabling go2rtc's own config writes.
+- **Never overwrites an existing key.** A stream, camera `id` or env var that is already present is
+  reported and left exactly as it was. Cameras are matched on Alarm.com `id`, not name or position,
+  so a camera you renamed is still recognised.
+- **Backs up before writing** (`<file>.bak-<stamp>`), and forces both the file and its backup to
+  mode 0600 — all three carry credentials, and `writeFileSync`'s `mode` applies only on creation.
+- **Preserves comments**, via `yaml`'s `parseDocument` rather than parse-and-restringify.
+- **Refuses a file it cannot parse** rather than rewriting it from scratch.
+
+⚠️ Backup paths are covered by the existing `config/*.yaml*` and `.env.*` ignore rules — verified by
+canary, together with a control confirming `config/config.example.yaml` is still *not* ignored.
 
 💡 `ADC_MOBILE_DEVICE_UID` is generated if unset and printed so it can be persisted — Alarm.com
 ties trusted-device state to it, so a fresh UUID each run looks like a new device.
