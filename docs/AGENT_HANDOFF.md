@@ -50,12 +50,19 @@ baton, the baton wins.
   committed and pushed (verify with `git ls-remote origin refs/heads/main`, **not** the printed push
   output — RTK has reported "Everything up-to-date" for a push that succeeded).
   ⚠️ Pushing does NOT deploy. The NAS checkout at `/volume1/docker/adc-video-bridge` is a *separate*
-  clone, pulled and rebuilt by hand. This NAS has **Compose v1** (`docker-compose`, hyphen).
-- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **19 files / 286
+  clone, pulled and rebuilt by hand. ⚠️ **Compose is v2.20.1**, despite the hyphenated
+  `docker-compose` binary name — an earlier baton said v1, which was wrong. All v2 flags work
+  (`--since`, `--index`).
+- **Validation (re-run before trusting):** `npm run build` clean, `npx vitest run` **21 files / 317
   tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp exception.
   🔑 The relay's structural guards were **mutation-checked**, not just written: reverting each kills
   its own test and leaves the rest green. ⚠️ Calibration — the base64 bug passes **8 of 12** tests
   including the entire handshake. A passing handshake test proves nothing here.
+- ✅ **ALL THREE CAMERAS PAIRED AND PERSISTED** (2026-08-07 18:59). Confirmed on disk, not inferred:
+  `pairings:` present for all three in `config/go2rtc.yaml`, mode still 600 after go2rtc rewrote it.
+  🔴 **A pairing that is not in that file exists in MEMORY ONLY and dies on restart** — see
+  [`INVARIANTS.md`](INVARIANTS.md) → "ONE duplicate YAML key ... disables EVERY config write". That
+  is what an accessory stuck on **"Connecting…"** means.
 - ✅ **DEPLOYED AND HEALTHY.** Confirmed by measurement, not inference: three relays `listening: true`
   having served real traffic, `producers=1` on all three go2rtc streams, and all three HomeKit
   accessories advertising over mDNS (`dns-sd -B _hap._tcp local`) and paired.

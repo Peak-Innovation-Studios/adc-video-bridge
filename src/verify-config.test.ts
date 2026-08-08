@@ -83,6 +83,13 @@ describe('verifyConfigs — the failures that actually happened', () => {
     expect(blocking).toMatch(/defines "streams:" 2 times/);
   });
 
+  it('catches a duplicate key NESTED inside a block, not just at the top level', () => {
+    // yaml.Patch rejects duplicates at any depth, and a rejected patch means
+    // pairings never reach disk — the failure that cost a camera's pairing.
+    const nested = GO2RTC.replace('    hksv: true\n  backyard:', '    hksv: true\n    hksv: true\n  backyard:');
+    expect(run({ go2rtcYaml: nested }).blocking.join('\n')).toMatch(/not strictly valid YAML|pairings are lost/);
+  });
+
   it('catches a homekit block with no matching stream', () => {
     const orphan = GO2RTC.replace('  backyard: rtsp://camuser:CCCC3333DDDD4444@${GO2RTC_BIND}:8562/s1\n', '');
     const blocking = run({ go2rtcYaml: orphan }).blocking.join('\n');

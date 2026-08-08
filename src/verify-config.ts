@@ -138,6 +138,23 @@ export function verifyConfigs(input: VerifyInput): VerifyResult {
     }
   }
 
+  // 🔴 STRICT parse first. go2rtc's `yaml.Patch` unmarshals the file to read it
+  // AND unmarshals its own output to validate, and yaml.v3 rejects duplicate
+  // keys at ANY nesting level. So one duplicate anywhere silently disables
+  // EVERY persisted write — HomeKit pairings, device keys, stream edits — while
+  // go2rtc otherwise runs normally. Measured 2026-08-07: a duplicate `streams:`
+  // cost a camera's pairing, which lived in memory only and vanished on
+  // restart, presenting as an accessory stuck on "Connecting…".
+  try {
+    parse(input.go2rtcYaml);
+  } catch (err) {
+    const message = err instanceof Error ? err.message.split('\n')[0] : String(err);
+    blocking.push(
+      `go2rtc.yaml is not strictly valid YAML (${message}) — go2rtc will still RUN, but every ` +
+        'config write it attempts fails silently, so HomeKit pairings are lost on restart.',
+    );
+  }
+
   let go2rtc: Record<string, unknown> = {};
   try {
     // uniqueKeys:false so a duplicate key (reported above) still yields a

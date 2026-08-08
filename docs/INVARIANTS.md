@@ -244,6 +244,41 @@ with no error logged anywhere — the bridge says it is listening, and it is, wh
 💡 Option B also retires a documented residual risk: no ffmpeg child means no go2rtc RTSP password in
 a process argv (`SECURITY_AUDIT.md` → "go2rtc RTSP password in the bridge's process table").
 
+### 🔴 ONE duplicate YAML key anywhere in `go2rtc.yaml` silently disables EVERY config write
+
+Measured 2026-08-07, and it cost a camera's HomeKit pairing.
+
+`app.PatchConfig` is read-modify-write over the WHOLE file, and `yaml.Patch` unmarshals it to read it
+**and** unmarshals its own output to validate. `yaml.v3` rejects duplicate keys at **any** nesting
+level. So a single duplicate — even in a section that has nothing to do with what is being saved —
+makes every persisted write fail: HomeKit `pairings`, `device_id`, `device_private`, stream edits.
+
+⚠️ **go2rtc otherwise runs completely normally.** The only signal is
+`WRN error="yaml: unmarshal errors: … already defined at line N"` at a log level nobody is watching.
+
+🔑 **The failure surfaces much later, and looks like something else.** A pairing created during that
+window lives in memory and works perfectly — go2rtc calls `savePairings()` only at the instant a pair
+is added and never retries — so it vanishes on the next restart. Removing the accessory in the Home
+app then leaves memory and disk disagreeing: go2rtc keeps advertising `sf=0` ("already paired"), the
+Home app attempts pair-**verify** with credentials it no longer has, and the add hangs on
+**"Connecting…"** forever, never reaching pair-setup. The QR is irrelevant at that point.
+
+➡️ **Recovery:** confirm the pairing is absent from `go2rtc.yaml`, then `docker-compose restart
+go2rtc`. It reloads from disk, the accessory comes up genuinely unpaired (`sf=1`), and pairing works.
+⚠️ Restarting is only safe once the OTHER accessories' pairings are confirmed on disk.
+
+🔎 **Diagnostics, no sudo needed:**
+```bash
+dns-sd -L "<Accessory Name>" _hap._tcp local     # want sf=1 to pair, sf=0 = already paired
+npm run verify:config -- <deployment-root>       # strict-parses go2rtc.yaml, blocks on duplicates
+```
+✅ `npm run verify:config` now strict-parses for exactly this. ⚠️ A regex over top-level keys is NOT
+enough — the duplicate can be nested.
+
+💡 `PatchConfig` calls `os.WriteFile(path, b, 0644)`. Go preserves the mode when truncating an
+existing file, so mode 600 survives — verified after a real pairing write. It would only land 0644 if
+the file were ever recreated rather than overwritten.
+
 ### ⚠️ What the local-RTSP spike did NOT prove — this is the adoption backlog
 
 The things that made the spike cheap are exactly the production constraints it removed:
