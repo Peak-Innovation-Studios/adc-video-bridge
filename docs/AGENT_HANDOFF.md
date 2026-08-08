@@ -88,14 +88,17 @@ baton, the baton wins.
   (not `trace`): DBG keeps `motion: ON` and drops the 1-in-150 `motion: status` flood.
 - 🔑 **go2rtc logs in UTC; local is UTC-5. 3am local = `08Z`.** Its inline clock equals Docker's
   `-t` stamp exactly. A `16:05` line is 11:05 local — already mis-read once as "afternoon".
-- **Whose turn:** **AGENT.** Nothing is broken and **no blocker remains.** ✅ merge done and
-  pushed; ✅ item 2 settled; ✅ **item 3 DONE — live sign-in succeeded 2026-08-08 13:04 and the
-  output matched production exactly.** The project is now adoptable by someone who has only an
-  Alarm.com username and password.
-  **(1)** Item 15 — the positional `listenPort` collision, a real latent bug.
-  **(2)** Push `agent/discover-local-write` (3 commits) and merge it.
-  **(3)** DAVID, whenever: `MOBILE_API.md`'s remaining "still to do" — refresh endpoints at
-  runtime so a camera that changes address self-heals rather than needing setup re-run.
+- **Whose turn:** **DAVID.** Nothing is broken and **the agent backlog is essentially empty** —
+  items 2, 3, 5, 6, 12, 14, 15 and half of 8 all closed 2026-08-08; 11 and 13 are moot rather than
+  pending. ⚠️ Two changes are **written but NOT LIVE**, both awaiting one restart:
+  `sudo docker-compose restart go2rtc` (item 5's `local_auth: true`).
+  **(1)** That restart, at any convenient moment.
+  **(2)** Item 9 — remove the Homebridge camera accessory. Gated on "after item 2 verifies", and
+  item 2 verified today, so the documented cutover is complete.
+  **(3)** Item 4 — decide about the WAN-exposed `PublicRtspEndpoint`.
+  🔑 **The one piece of work with real leverage left is a QUESTION, not code:** is `Haiku`
+  per-install or a client constant? If constant, the proxy-and-CA-cert step disappears and
+  onboarding becomes username + password. One other person's capture answers it for free.
 
 ### What's left (priority order)
 
@@ -227,10 +230,14 @@ baton, the baton wins.
    the internet, almost certainly created by UPnP. Not probed from outside. Worth deciding on
    deliberately rather than inheriting. ⚠️ More pointed now that local RTSP is the production path.
 
-5. **(Agent, small)** `api.local_auth: false` in the deployed `config/go2rtc.yaml`; the example and
-   `SECURITY_AUDIT.md` both specify `true`. Exposure is nil today only because `api.listen` is the LAN
-   address — so the protection comes from the bind address, not the setting. `npm run verify:config`
-   warns about it.
+5. ✅ **DONE ON DISK 2026-08-08 — `api.local_auth: true`. ⏳ NOT LIVE until go2rtc restarts.**
+   `verify:config` is now **0 blocking, 0 warnings** (was 1 warning all session). Backup:
+   `~/go2rtc.yaml.bak-20260808-154429` on the NAS, mode 600.
+   🔑 Safe because go2rtc runs `network_mode: host`, so requests arrive from the LAN address and
+   are never loopback — auth already applied in practice. The setting closes the gap between what
+   protects it (the bind address) and what `SECURITY_AUDIT.md` claims protects it (the setting).
+   The compose healthcheck expects a 401 and gets one either way.
+   ➡️ `sudo docker-compose restart go2rtc` at any convenient moment; nothing is broken meanwhile.
 
 6. ✅ **DONE 2026-08-08 — `scripts/scan-secrets.mjs` + `.githooks/pre-commit`, and it EXITS 1.**
    There was never an installed scan; what the old wording called "the scan" was an agent running
@@ -287,8 +294,13 @@ baton, the baton wins.
 10. **(David — 1 min)** `/volume1/homebridge/config.json` is **775**; world-read remains, and
    `INVARIANTS.md` sets 600 as the standard. ⚠️ Re-check after any Homebridge settings change: the
    volume's default ACL is 0777 and the UI rewrites the file.
-11. *(Agent, low)* **A/B `-reorder_queue_size 0`** — production logs show repeated
-   `Non-monotonic DTS ...`. Test only once video is stable, or it measures the link.
+11. 🚫 **MOOT on the production path — do not pick this up as written.** `-reorder_queue_size 0`
+    is an **ffmpeg** flag, and since local RTSP was adopted there is **no ffmpeg in the media
+    path** — go2rtc pulls the relay with its native client. The `Non-monotonic DTS` lines came
+    from the WebRTC path's ffmpeg, which nothing here now runs.
+    ⚠️ Still real for anyone on the WebRTC path (upstream included), so it is not deleted — but it
+    cannot be A/B'd here without first standing a camera back up on WebRTC, which would be work
+    done solely to enable the measurement.
 12. ✅ **DONE 2026-08-08 — `npm run discover:local -- --write`** merges the generated blocks into
     `config/config.yaml`, `.env` and `config/go2rtc.yaml` in place. `src/config-writer.ts` is the
     merge as pure `string → string`; `src/config-writer-fs.ts` applies it to disk. 24 new tests.
@@ -301,8 +313,13 @@ baton, the baton wins.
     ⚠️ **Still UNPROVEN end-to-end** — no live sign-in has ever succeeded (item 3), so `--write` has
     never run against real Alarm.com output. The merge layer is covered; the path from a real
     `<lnr>` response into these functions is not.
-13. *(Agent, low)* Audio passthrough. ⚠️ **The local RTSP stream has no `m=audio` line at all**,
-    so on this path audio is not merely unimplemented — the camera does not send it.
+13. 🚫 **NOT IMPLEMENTABLE on the production path — this is a hardware/protocol fact, not a task.**
+    The local RTSP stream carries **no `m=audio` line at all**, so there is no audio to pass
+    through: the camera does not send any. No amount of go2rtc or HomeKit configuration changes
+    that. ⚠️ Leave it here rather than deleting it, so the question is not re-opened and
+    re-investigated a third time — but do not treat it as work.
+    💡 The only paths that could ever carry audio are WebRTC (legacy, and the V515s cannot do it
+    at all) or a camera model that publishes an audio track.
 14. ✅ **FIXED 2026-08-08 — ICE `'disconnected'` is now debounced, not terminal.**
     `peer-session.ts` fails immediately on `'failed'` (terminal) but gives `'disconnected'`
     `ICE_DISCONNECT_GRACE_MS = 8s` to recover; any other state stands the timer down. A repeat
