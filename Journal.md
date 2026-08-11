@@ -8,6 +8,60 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-11 — These cameras have no audio, and the old answer blamed the wrong layer
+
+**Claude Code (Opus 5).** A short session. David asked whether any of his cameras support audio.
+The answer is no, and getting it took no new API calls at all.
+
+Alarm.com reports four audio capability fields per camera, and all four are `false` on all three
+here: `SupportsDownstreamAudio`, `SupportsUpstreamAudio`, `SupportsFullDuplex`, `IsAudioOnly`. One
+ADC-V723 and two ADC-V515.
+
+🔑 **The old answer was true but pointed at the wrong layer.** Item 13 had recorded that the local
+RTSP stream carries no `m=audio` line, which reads as a limitation of the local RTSP path and
+implies some other path might do better. Nothing can. The cameras report no audio capability on any
+surface Alarm.com exposes, so the missing SDP line is a symptom rather than the cause. Scoped
+honestly in the baton: this is what Alarm.com *reports*, not a hardware teardown, but it is every
+interface this project can reach.
+
+⚠️ **Answered from a capture already on disk, which is the same move that found the missing `Haiku`
+field three days ago.** The instinct was to reason from product specs, which would have been a guess
+dressed as a fact. The evidence was sitting in `~/Downloads`.
+
+🔎 **Side finding worth having:** the mobile API's `Json=true` camera list is considerably richer
+than the `<lnr>` login response we had mapped. It carries pan/tilt support, MJPEG, record-now,
+per-camera RTSP buffer hints, calibration data and firmware, none of which the login document
+returns. Recorded in `MOBILE_API.md` **with a note that `discover:local` needs none of it**, because
+the obvious next thought is to add a second call, and every extra request is another authenticated
+hit on an API that rate-limits. That response also carries a `CameraSessionToken`, so the whole
+document is a secret.
+
+⚠️ **Most of the captures are gone.** Only one file survives in `~/Downloads`, and it is not the
+login capture. Good hygiene, since they held camera passwords and home GPS, but that is where
+`ADC_MOBILE_HAIKU` and the other three device values came from. If they are not saved elsewhere,
+the next `discover:local` or `npm run setup` needs a fresh proxied capture. Flagged in the baton
+because it fails at the worst moment otherwise.
+
+### Three process mistakes, all mine, all caught
+
+- 🔴 **A public comment said the opposite of the evidence.** Someone on go2rtc#2130 asked whether
+  two-way audio had been tested. The reply as first posted said the cameras "have audio available",
+  which is the reverse of what the flags say. It was a typo, but it read as "I had audio and chose
+  not to test it", which invites a follow-up that cannot be answered. Corrected to state the actual
+  capability flags, which is also the more useful answer to the person asking.
+- ⚠️ **The date was carried forward from three days earlier.** The session resumed after a gap and
+  the audio finding went into the docs dated 2026-08-08 while git stamped the commit 2026-08-11. A
+  baton that misdates its own evidence is the sort of thing a later session reasons from without
+  checking.
+- 🔴 **The baton's "Current handoff" block had gone stale under me.** Individual backlog items were
+  updated diligently all cycle and the top block, which is the first thing any session reads, was
+  never rewritten. It claimed validation was 23 files / 358 tests, that the go2rtc restart was
+  pending, that item 9 was undone and item 4 undecided. All four were wrong by then. The protocol
+  says rewrite that block at every handoff precisely because stale is worse than terse, and
+  updating the details underneath it is not the same thing.
+
+---
+
 ## 2026-08-08 — The blocker was a missing field, and the evidence had been on disk all along
 
 **Claude Code (Opus 5).** The community blocker is gone. `discover:local` signed in to
