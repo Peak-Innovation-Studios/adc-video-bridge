@@ -16,12 +16,16 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-08 — **merged `docs/community-onboarding` into `main`** (fast-forward, 12
-  commits). Reviewed and re-validated first; no code was written this session. The architecture
-  state below is unchanged from 2026-08-07: all three cameras live in HomeKit over their **own
-  local RTSP**, go2rtc's native client, in-process HKSV, **zero ffmpeg in the media path**. Both
-  ADC-V515s work. HKSV **recording is proven**. Motion is detected by go2rtc itself, so
-  **Alarm.com is out of the video path entirely**. 📖 `Journal.md` 2026-08-07 (evening/night/late).
+- **Updated:** 2026-08-11. ✅ **THE COMMUNITY BLOCKER IS CLOSED (item 3).** A live
+  `mobile.alarm.com` sign-in works and reproduces the hand-built production config field for field.
+  The cause of every earlier failure was one missing body field, `Haiku`.
+  Architecture unchanged since 2026-08-07: all three cameras in HomeKit over their **own local
+  RTSP**, go2rtc's native client, in-process HKSV, **zero ffmpeg in the media path**. Both
+  ADC-V515s work. HKSV recording proven. Motion from go2rtc's own detector, so **Alarm.com is out
+  of the video path entirely**. 📖 `Journal.md` 2026-08-08.
+  🔑 **Also closed since:** `npm run setup` (one command, preflight → sign-in → write → verify gate
+  → compose up → pairing codes), `discover:local -- --write`, a **blocking** pre-commit secret scan,
+  the media watchdog, the ICE-disconnect grace period, and allocated (not positional) `listenPort`.
 - 🔴 **Do NOT write push state here. Run the command:** `git fetch && git log --oneline origin/main..main`
   ⚠️ **Twice in two days this line has been wrong in this repo, in both directions.** The 08-07 baton
   said the branch was "pushed" when `origin/docs/community-onboarding` had stopped at `65fca25`; the
@@ -48,11 +52,12 @@ baton, the baton wins.
   ⚠️ **The NAS is DELIBERATELY behind `main`** — see the rebuild note above. What it is behind by is
   a count; get it from `git log --oneline 37d1236..main`. It is a documentation/CLI gap, not drift;
   do not "fix" it with a rebuild nobody asked for.
-- **Validation:** run **2026-08-08 against `5192eaf`** (the merge commit — later baton-only commits
-  do not affect it), all three green:
-  `npm run build` clean, `npx vitest run` **23 files / 358 tests**, `npm run audit:prod` passes with
-  the documented GHSA-2p57-rm9w-gvfp exception. ⚠️ Re-run before trusting — these were measured
-  before any later change.
+- **Validation:** run **2026-08-11 against `6e247a2`**, all three green: `npm run build` clean,
+  `npx vitest run` **26 files / 436 tests**, `npm run audit:prod` passes with the documented
+  GHSA-2p57-rm9w-gvfp exception. ⚠️ Re-run before trusting.
+  🔴 **A pre-commit secret scan now BLOCKS.** Enable it once per clone, it is not automatic:
+  `git config core.hooksPath .githooks`. Also `npm run scan:secrets`. It caught three real leaks on
+  its first day, including two in commits an agent was in the middle of making.
   🔑 The relay's structural guards were **mutation-checked**. ⚠️ Calibration: the base64 bug passed
   **8 of 12** tests including the whole handshake. A passing handshake test proves nothing here.
 - 🔑 **THREE SUDO-FREE TOOLS, in the order you will want them:**
@@ -80,25 +85,35 @@ baton, the baton wins.
   ⚠️ **A leak check that reports without BLOCKING is not a check** — a fixture carrying the real
   camera username was committed this session while the scan printed the finding and the commit
   proceeded anyway. Both that and earlier camera names remain in history.
-- ✅ **`log: { homekit: trace }` REMOVED 2026-08-08 (David).** `config/go2rtc.yaml` now has just
-  `log:` → `level: info`, verified well-formed.
-  ⚠️ **Consequence: there is now NO motion visibility at all.** `motion: ON` is a **DBG** line, so
-  at `info` no trigger is ever logged — the only remaining feedback is clips appearing in the Home
-  app, which is slower and coarser. 🔑 If tuning thresholds again, set `log: { homekit: debug }`
-  (not `trace`): DBG keeps `motion: ON` and drops the 1-in-150 `motion: status` flood.
+- ✅ **`log: { homekit: trace }` REMOVED 2026-08-08 (David).** `config/go2rtc.yaml` has just
+  `log:` → `level: info`.
+  ⚠️ **Consequence: there is NO motion visibility at all**, and it is currently blocking a real
+  question (see whose-turn). `motion: ON` is a **DBG** line, so at `info` no trigger is ever
+  logged. 🔑 To tune thresholds, set `log: { homekit: debug }` — **not `trace`**: DBG keeps
+  `motion: ON` and drops the 1-in-150 `motion: status` flood.
 - 🔑 **go2rtc logs in UTC; local is UTC-5. 3am local = `08Z`.** Its inline clock equals Docker's
   `-t` stamp exactly. A `16:05` line is 11:05 local — already mis-read once as "afternoon".
-- **Whose turn:** **DAVID.** Nothing is broken and **the agent backlog is essentially empty** —
-  items 2, 3, 5, 6, 12, 14, 15 and half of 8 all closed 2026-08-08; 11 and 13 are moot rather than
-  pending. ⚠️ Two changes are **written but NOT LIVE**, both awaiting one restart:
-  `sudo docker-compose restart go2rtc` (item 5's `local_auth: true`).
-  **(1)** That restart, at any convenient moment.
-  **(2)** Item 9 — remove the Homebridge camera accessory. Gated on "after item 2 verifies", and
-  item 2 verified today, so the documented cutover is complete.
-  **(3)** Item 4 — decide about the WAN-exposed `PublicRtspEndpoint`.
-  🔑 **The one piece of work with real leverage left is a QUESTION, not code:** is `Haiku`
-  per-install or a client constant? If constant, the proxy-and-CA-cert step disappears and
-  onboarding becomes username + password. One other person's capture answers it for free.
+- 🔑 **Upstream (Omar-L): 2 merged, 7 open PRs, 3 issues.** Newest are **PR #34** (media watchdog)
+  and **issue #35** (the local RTSP finding, offered rather than PR'd). #32 was `CONFLICTING` and
+  was rebased 2026-08-08. Details and the rebase-verification recipe: [`UPSTREAM.md`](UPSTREAM.md).
+  ⚠️ We carry a **local go2rtc patch** for the HAP auth defect (`patches/`, applied in
+  `Dockerfile.go2rtc` over a pinned commit). Reported on go2rtc#2130. **Delete the patch when it
+  lands upstream** — until then it is a liability that rots when the pin moves.
+- **Whose turn:** **DAVID.** Nothing is broken and **the agent backlog is empty.** Items 2, 3, 5, 6,
+  9, 10, 12, 13, 14, 15 and half of 8 are closed; 4 is decided; 11 and 13 are moot rather than
+  pending. Everything written this cycle is LIVE: go2rtc restarted, Homebridge restarted, `main`
+  pushed.
+  🔴 **(1) The one item with a clock on it: is kitchen at 4.0 too sensitive?** Relay
+  `totalConnections` went 3 → 198 on kitchen after the threshold drop, roughly one HKSV recording
+  every 83 seconds. **One glance at the Home app timeline settles it.** Flooded ⇒ raise toward
+  4.5-5.5. See item 2. ⚠️ It cannot be confirmed from logs while `log:` is at `info`.
+  ⚠️ **(2) The mobile-API capture values may be GONE.** Only one file survives in `~/Downloads`
+  and it is not the login capture. If `ADC_MOBILE_HAIKU` / `DEVICE_UID` / `HASH_CODE` /
+  `TWO_FACTOR_ID` are not saved elsewhere, the next `discover:local` or `npm run setup` needs a
+  fresh proxied capture. Cheap to check now.
+  🔑 **(3) The remaining leverage is a QUESTION, not code:** is `Haiku` per-install or a client
+  constant? If constant, the proxy-and-CA-cert step disappears and onboarding really does become
+  username + password. Asked publicly in issue #35; one other person's capture answers it free.
 
 ### What's left (priority order)
 
