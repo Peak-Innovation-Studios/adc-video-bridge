@@ -369,13 +369,16 @@ baton, the baton wins.
     ⚠️ **Still UNPROVEN end-to-end** — no live sign-in has ever succeeded (item 3), so `--write` has
     never run against real Alarm.com output. The merge layer is covered; the path from a real
     `<lnr>` response into these functions is not.
-13. 🚫 **NOT IMPLEMENTABLE on the production path — this is a hardware/protocol fact, not a task.**
-    The local RTSP stream carries **no `m=audio` line at all**, so there is no audio to pass
-    through: the camera does not send any. No amount of go2rtc or HomeKit configuration changes
-    that. ⚠️ Leave it here rather than deleting it, so the question is not re-opened and
-    re-investigated a third time — but do not treat it as work.
-    💡 The only paths that could ever carry audio are WebRTC (legacy, and the V515s cannot do it
-    at all) or a camera model that publishes an audio track.
+13. 🚫 **CLOSED 2026-08-08 — THESE CAMERAS HAVE NO AUDIO. Not a task, and not path-specific.**
+    Alarm.com's own per-camera capability flags read **false on all three**, for all four audio
+    fields: `SupportsDownstreamAudio`, `SupportsUpstreamAudio`, `SupportsFullDuplex`, `IsAudioOnly`.
+    One ADC-V723 and two ADC-V515.
+    🔑 So the missing `m=audio` line in the local RTSP SDP is a SYMPTOM, not the cause. Earlier
+    wording blamed the local RTSP path; the truth is upstream of it and no path can do better.
+    ⚠️ Scope: this is what Alarm.com *reports*, not a hardware teardown. A V723 may physically have
+    a microphone that Alarm.com does not expose. No practical difference to this project.
+    ➡️ **Do not re-investigate.** Evidence: the mobile API camera list (JSON form), 2026-08-07
+    capture.
 14. ✅ **FIXED 2026-08-08 — ICE `'disconnected'` is now debounced, not terminal.**
     `peer-session.ts` fails immediately on `'failed'` (terminal) but gives `'disconnected'`
     `ICE_DISCONNECT_GRACE_MS = 8s` to recover; any other state stands the timer down. A repeat

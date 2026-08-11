@@ -53,6 +53,28 @@ DirectConnectionMayWork true
 the account. Verified 2026-08-07: constructing ids this way reproduced the known-good id
 exactly, so the two APIs can be correlated without a second lookup.
 
+### The JSON camera list is RICHER than the login response
+
+🔑 The `Json=true` variant returns `CameraItems[]` with fields the `<lnr>` login document does
+**not** carry. Confirmed from a 2026-08-07 capture. Beyond the endpoints and credentials that
+appear in both, it adds at least:
+
+```
+SupportsDownstreamAudio  SupportsUpstreamAudio  SupportsFullDuplex  IsAudioOnly
+SupportsPanTilt  PanTiltPresetItems  SupportsEnhancedMode  IsInEnhancedMode
+SupportsMjpegStreaming  SupportsRecordNow  SupportsCenterCommand
+SupportsChangingLiveViewResolutionFromMobile  CameraCalibrationInformation
+BufferForMobileRtspDirectStreamingInMs  BufferForMobileRtspVpnStreamingInMs
+CameraSessionToken (+ expiry)  Firmware  MacAddress
+```
+
+💡 Worth knowing before adding a second call for any of it: **`discover:local` needs none of
+these**, and every extra request is another authenticated hit on an API that rate-limits.
+🔑 **It already answered one real question for free:** all four audio flags are `false` on all
+three cameras here, which is why the local RTSP stream has no `m=audio` line. See baton item 13 —
+that is a property of the cameras, not of the local RTSP path.
+⚠️ `CameraSessionToken` is in this response. Treat the whole document as secret.
+
 🔑 **The RTSP username is a shared stock account name; the PASSWORD differs per camera.**
 Copying one stream URL and changing only the port yields a 401 that presents as a stream
 that is simply "offline".
