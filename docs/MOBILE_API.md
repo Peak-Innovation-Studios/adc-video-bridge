@@ -56,7 +56,7 @@ exactly, so the two APIs can be correlated without a second lookup.
 ### The JSON camera list is RICHER than the login response
 
 🔑 The `Json=true` variant returns `CameraItems[]` with fields the `<lnr>` login document does
-**not** carry. Confirmed from a 2026-08-07 capture. Beyond the endpoints and credentials that
+**not** carry. Confirmed 2026-08-11 from a 2026-08-07 capture. Beyond the endpoints and credentials that
 appear in both, it adds at least:
 
 ```
