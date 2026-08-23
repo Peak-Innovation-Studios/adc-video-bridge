@@ -9,19 +9,31 @@ most of what made the baton long. The baton keeps a one-line pointer and the cur
 
 > 🔄 **Refresh before trusting the table.** Whether a PR is still open is a fact GitHub owns, not
 > this file:
+>
 > ```bash
 > gh pr list --repo Omar-L/adc-video-bridge --author @me --state all --limit 20
+> ```
+>
+> 🔴 **And do NOT report BRANCH state from this clone either.** The fork's `upstream-fix/*` branches
+> get rebased without this checkout hearing about it. Measured 2026-08-11: `stale-ffmpeg-exit` was
+> `1bec1ae` locally and `d537457c` on the fork, `webrtc-track-subscription` `82e595a` locally and
+> `d0eb67d1` on the fork, and neither rebase was done from here. Reading local refs would have
+> reported #24 as needing a rebase it had already had.
+>
+> ```bash
+> git ls-remote git@github.com:Peak-Innovation-Studios/adc-video-bridge.git 'refs/heads/upstream-fix/*'
 > ```
 
 ---
 
-## Pull requests — 2 merged, 7 open (as of 2026-08-08)
+## Pull requests — 2 merged, 7 open (as of 2026-08-11)
 
-🔑 **Live state 2026-08-08, from the API not this file.** All seven open PRs are `MERGEABLE`.
-Six report `mergeStateStatus: BLOCKED`, which here means **branch protection awaiting review, not a
-problem with the PR** — #30 is `CLEAN` and shows what an unblocked one looks like. Only #23 and #34
-have CI results (`SUCCESS`); the rest show no checks at all, which predates the #26 CI hardening.
-⚠️ Do not read `BLOCKED` as "something is wrong with our branch" — it cost a diagnosis once.
+🔑 **Live state 2026-08-11, from the API not this file.** All seven open PRs are `MERGEABLE` and
+every one reports `mergeStateStatus: BLOCKED`, which resolves to `reviewDecision: REVIEW_REQUIRED`.
+That is **branch protection waiting on the maintainer, not a defect in any branch**. Nothing is
+blocked on us. ⚠️ Do not read `BLOCKED` as "something is wrong with our branch" — it cost a
+diagnosis once.
+🔑 **All three of our issues (#25, #27, #35) have zero comments.** No maintainer response on any.
 
 Omar-L asked for help making the fork more stable. All of these branch off `upstream/main` and
 contain **no internal docs**. ⚠️ Status goes stale — re-check with
