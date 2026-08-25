@@ -8,6 +8,88 @@ to `docs/journal/` unedited and leave a pointer here — do **not** start a new 
 
 ---
 
+## 2026-08-25 — Two cameras were dead for 17 days, and I built the detector wrong the first time
+
+**Claude Code (Opus 5).** Started as a question about someone else's comment on go2rtc#2130 and
+ended with a fix for a blind spot in our own system. Three things happened, and the middle one
+invalidates a conclusion from 08-08.
+
+### The reported defect came back implemented
+
+Mo3he is running the HKSV branch across 9 cameras and posted what he had to fix. One of them was
+ours: the HAP auth exemption we reported on 08-08, implemented in `6f76ea9a` and credited to the
+report. His version is better than our patch. We hardcoded `/pair-setup` and `/pair-verify` in the
+middleware; he added a `HandleFuncNoAuth` registration so `internal/homekit` declares its own paths
+and the api package stops knowing about homekit's URLs.
+
+His branch turned out to be our exact pin plus 25 commits, zero behind. Verified before adopting:
+builds clean, `go vet` clean, HKSV and HAP suites pass, and a package-level diff of the full suite
+against `506cfa7` showed zero regressions and **two packages fixed**. Those two matter, because they
+fail on the commit we had been running: `pkg/hap/tlv8` emits `0xff` as the separator between
+repeated tags where it must be `0x00`. We had been running with those tests red without knowing.
+
+Adopted, `patches/go2rtc-hap-auth-exempt.patch` deleted, and the verification sent back to the
+thread. That closes the loop `INVARIANTS.md` opened on 08-04.
+
+### The 08-08 threshold conclusion was wrong
+
+Checking the relay counters after the rebuild showed kitchen at 45,518 reconnects and sunroom at
+41,966, against 198 and 6 on 08-08. Neither was streaming. A TCP connect to their configured
+endpoints from the NAS returned `EHOSTUNREACH`; front connected in 13ms. Both failing cameras are
+ADC-V515, the working one is the ADC-V723. David confirmed the two are off the network.
+
+🔴 **So the 08-08 reading was wrong.** That entry recorded the reconnect spike as the lowered motion
+threshold causing constant HKSV recordings, argued from a "dose-response match" because kitchen
+dropped furthest and moved most. Sunroom's threshold was never changed and it now sits at 41,966.
+The pattern was liveness, not thresholds.
+
+⚠️ Three data points and a plausible mechanism produced a confident wrong answer that stood for 17
+days, and the confounder was in the same table being read. The dose-response framing made it feel
+measured rather than guessed, which is exactly what made it stick.
+
+**HKSV recording on those two cameras had been dead for up to 17 days, and nothing said so.**
+
+### Then I built the detector with the same blind spot
+
+The real defect is ours: the relay retried ~45,000 times, delivered almost nothing, and never
+escalated. No log, no alert, no status flag, and `verify:config` reported 0 blocking throughout
+because it validates configuration and not liveness. The signal was already being collected and
+thrown away, since a working camera holds one long connection and moves a lot of data while a dead
+one churns and moves almost none.
+
+First attempt counted consecutive sessions that closed having carried under 4 KiB. Tested, mutation
+tested four ways, deployed.
+
+🔴 **On its first live deploy it reported both dead cameras as `healthy: true`.** go2rtc had stopped
+connecting to them entirely, so `totalConnections` was 0, and **a relay with no sessions has no
+failed sessions to count**. I built a detector for "silence read as health" and then read silence as
+health. The production log line makes it plainest: `consecutiveFailures: 0` next to a camera that is
+definitively dead.
+
+`healthy` is now two conditions rather than one: not churning through failures, and not silent.
+`msSinceDelivery` past `stalledAfterMs` is unhealthy on its own, reported once from the existing 60s
+tick so a relay nobody connects to can still speak. ⚠️ It assumes the stream is continuously
+consumed, which `motion: detect` guarantees; that assumption is written next to the option because
+it is deployment-shaped, and `stalledAfterMs: 0` disables it.
+
+Confirmed against the real hardware rather than the fake camera: both flipped to unhealthy on
+crossing 600s while front held `healthy(0s)` throughout, and exactly two `error` lines appeared, not
+two per minute.
+
+### What mutation testing caught, twice, in the tests rather than the code
+
+- **Attempt one:** removing the byte accumulation from `get.on('data')` broke nothing, because every
+  healthy-path test fed bytes through `trailing`, which arrives with the tunnel header and is counted
+  on a different path. That gap was the inverse of the bug being fixed: had the streaming path
+  stopped counting, a **working** camera would have been declared unhealthy.
+- **Attempt two:** removing the delivery-clock update broke nothing, because the positive control ran
+  240ms against a 400ms window and so could never have detected a frozen clock either way. A test
+  named for a property it did not test.
+
+🔑 Both were tests that passed for the wrong reason. Neither would have been found by reading them.
+
+---
+
 ## 2026-08-11 — These cameras have no audio, and the old answer blamed the wrong layer
 
 **Claude Code (Opus 5).** A short session. David asked whether any of his cameras support audio.
