@@ -466,6 +466,11 @@ baton, the baton wins.
 ### Open decisions
 
 - 🔑 **(DAVID) Move the go2rtc build from `skrashevich@506cfa7` to `Mo3he/go2rtc@2464e567`?**
+  ✅ **PREPARED ON BRANCH `agent/go2rtc-mo3he-pin`, NOT merged and NOT deployed.** `main` still
+  builds the current working image, so nothing changes until this is merged AND the NAS is
+  rebuilt. The branch repoints `Dockerfile.go2rtc`, deletes
+  `patches/go2rtc-hap-auth-exempt.patch`, and updates `SECURITY_AUDIT.md` provenance and
+  `INVARIANTS.md`.
   **Verified 2026-08-25, locally, touching nothing on the NAS.** His `hksv` branch is our exact pin
   plus 25 commits, **0 behind**, so nothing is lost.
   ✅ Builds clean (`CGO_ENABLED=0 go build ./...`), `go vet` clean, HKSV + HAP suites pass.

@@ -1,5 +1,5 @@
 # HKSV is not in an official go2rtc release yet (AlexxIT/go2rtc#2130 is open),
-# so go2rtc is built from the PR branch. The upstream digest pin is replaced by
+# so go2rtc is built from a fork of the PR branch. The upstream digest pin is replaced by
 # pinning what is underneath: the toolchain by digest, the source by commit SHA.
 # 🔴 REVERT TRIGGER: when #2130 ships, delete this build stage and return to the
 # official digest-pinned alexxit/go2rtc image.
@@ -15,20 +15,39 @@
 # originally sketched) is too old and would fail the build; 1.24.13-alpine3.22
 # is used instead, paired with the alpine:3.22 runtime base below.
 FROM golang:1.24.13-alpine3.22@sha256:3641e0d9b931dc4f2f185dcd669c4679670e9277c8166a838ddb98a2d4389cb5 AS build
-ARG GO2RTC_REF=506cfa7df508058b0d46a3457130a9cd3a647ae8
+# 🔑 SOURCE CHANGED 2026-08-25: skrashevich/go2rtc@506cfa7 -> Mo3he/go2rtc@2464e567.
+# A DIFFERENT MAINTAINER, so this is a supply-chain change and is recorded as one
+# in docs/SECURITY_AUDIT.md rather than treated as a routine pin bump.
+#
+# The branch is `506cfa7` plus 25 commits and ZERO behind, so nothing is given up.
+# Verified locally 2026-08-25 against this exact SHA: builds clean, `go vet` clean,
+# HKSV + HAP suites pass, and a package-level diff of the FULL suite against
+# 506cfa7 shows zero regressions and two packages fixed.
+#
+# 🔴 Those two matter, because they fail on the commit this replaces:
+#   pkg/hap/tlv8   - separator between repeated tags emitted as 0xff, must be 0x00
+#   pkg/hap/camera - the advertised HKSV recording configuration
+# `506cfa7` shipped both tests already failing.
+#
+# ⚠️ go.mod still requires `go 1.24.0`, so the toolchain pin above is unchanged,
+# and main.go is still the module-root build target (there is no ./cmd/go2rtc).
+# Both re-checked at this SHA, not assumed.
+ARG GO2RTC_REF=2464e5670accb715d94fa9c7fb7cc1d2107b466b
 RUN apk add --no-cache git && \
-    git clone https://github.com/skrashevich/go2rtc /src && \
+    git clone https://github.com/Mo3he/go2rtc /src && \
     git -C /src checkout "$GO2RTC_REF"
 
-# 🔴 Local patch, applied on top of the pinned commit. Without it native HomeKit
-# CANNOT pair while go2rtc's API authentication is enabled: HAP is served on the
-# API port and the Basic-auth middleware answers /pair-setup and /pair-verify
-# with 401, which HAP has no way to satisfy. Measured on this exact commit.
-# `git apply` (not `-3`/`--reject`) so a patch that no longer applies FAILS the
-# build loudly rather than silently producing an unpatched binary — the whole
-# point of pinning. Report upstream and drop this when it lands there.
-COPY patches/go2rtc-hap-auth-exempt.patch /tmp/
-RUN git -C /src apply --verbose /tmp/go2rtc-hap-auth-exempt.patch
+# 🔴 THE HAP AUTH EXEMPTION IS NOW IN THE PINNED SOURCE. Do not re-add a local
+# patch, and do not "tidy away" the exemption if you meet it upstream.
+# Without it native HomeKit CANNOT pair while go2rtc's API authentication is
+# enabled: HAP is served on the API listener and the Basic-auth middleware
+# answers /pair-setup and /pair-verify with 401, which HAP cannot satisfy. It
+# fails late and silently - the accessory registers, advertises over mDNS and
+# hands back a valid setup code first.
+# Reported by us on AlexxIT/go2rtc#2130 and implemented upstream in Mo3he's
+# `6f76ea9a`, which registers hap.PathPairSetup / PathPairVerify through a new
+# api.HandleFuncNoAuth. That supersedes patches/go2rtc-hap-auth-exempt.patch.
+# Full reasoning: docs/INVARIANTS.md.
 
 # This fork's module root (main.go) is the build target, not ./cmd/go2rtc —
 # that path doesn't exist at this commit.

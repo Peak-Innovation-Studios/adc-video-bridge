@@ -598,9 +598,11 @@ pinning. 🔴 Report this upstream on #2130 and delete the patch when it lands t
 on a branch that is our pin plus 25 commits and 0 behind. Verified 2026-08-25: this patch no
 longer applies against it, and his version is better (registers `hap.PathPairSetup` /
 `PathPairVerify` through a new `api.HandleFuncNoAuth` rather than hardcoding the strings).
-➡️ **Delete this patch if and when the build moves to that branch** — see the baton's Open
-decisions. It has NOT moved yet; the pin is still `skrashevich@506cfa7` and the patch is
-still load-bearing.
+✅ **DONE 2026-08-25: the build moved to `Mo3he/go2rtc@2464e567` and the patch is DELETED.**
+The exemption now lives in the pinned source, so there is nothing to apply.
+🔴 **Do not re-add a local patch, and do not "tidy away" the exemption if you meet it upstream** —
+the defect it fixes is silent and late, and this section exists so the reasoning survives the
+patch it used to describe.
 
 **Do not "fix" this by disabling go2rtc's API auth.** That would leave the snapshot/stream API
 unauthenticated to every device on the LAN — for a security camera — and it breaks the compose
