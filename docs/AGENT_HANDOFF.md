@@ -16,116 +16,83 @@ baton, the baton wins.
 ## Current handoff
 
 - **Last agent:** Claude Code (Opus 5)
-- **Updated:** 2026-08-11. ✅ **THE COMMUNITY BLOCKER IS CLOSED (item 3).** A live
-  `mobile.alarm.com` sign-in works and reproduces the hand-built production config field for field.
-  The cause of every earlier failure was one missing body field, `Haiku`.
-  Architecture unchanged since 2026-08-07: all three cameras in HomeKit over their **own local
-  RTSP**, go2rtc's native client, in-process HKSV, **zero ffmpeg in the media path**. Both
-  ADC-V515s worked when connected. Motion from go2rtc's own detector, so **Alarm.com is out
-  of the video path entirely**.
-  🔴 **AS OF 2026-08-25 ONLY THE ADC-V723 (front) IS STREAMING.** Both ADC-V515s are
-  **not connected to the network** (confirmed by David, and by `EHOSTUNREACH` on a TCP connect
-  to their configured endpoints from the NAS). This is NOT a config or code fault and NOT
-  caused by the go2rtc rebuild. Their HKSV recording has been dead for up to 17 days.
-  ➡️ Nothing to fix here until the cameras are back on the network. When they are,
-  re-check the endpoints: if the addresses moved, `config.yaml` is stale and `discover:local`
-  is what refreshes it. 📖 `Journal.md` 2026-08-08.
-  🔑 **Also closed since:** `npm run setup` (one command, preflight → sign-in → write → verify gate
-  → compose up → pairing codes), `discover:local -- --write`, a **blocking** pre-commit secret scan,
-  the media watchdog, the ICE-disconnect grace period, and allocated (not positional) `listenPort`.
-- 🔴 **Do NOT write push state here. Run the command:** `git fetch && git log --oneline origin/main..main`
-  ⚠️ **Twice in two days this line has been wrong in this repo, in both directions.** The 08-07 baton
-  said the branch was "pushed" when `origin/docs/community-onboarding` had stopped at `65fca25`; the
-  08-08 baton said `main` was "12 commits ahead and NOT pushed" and was overtaken by a real push
-  ~90 seconds after it was committed. A count is stale the moment anything happens; the command
-  never is. 🔑 Verify with `git ls-remote origin refs/heads/main`, not a local `origin/*` ref —
-  those are only as fresh as the last fetch.
-  📌 What git cannot tell you, so it belongs here: **`origin/docs/community-onboarding` is
-  abandoned at `65fca25`.** `main` contains everything that branch had; the stale ref is not a
-  missing push and needs no reconciling. Delete it when convenient.
-- 🔑 **The merge does NOT require a rebuild or a deploy, and the reason is narrower than "docs
-  only".** It adds `src/mobile/`, `src/discover-local-cli.ts` and a `package.json` *script* (no
-  dependency change, lockfile untouched). `COPY src/ src/` matches by prefix, so a rebuild WOULD
-  produce a different image — but **nothing `index.ts` imports transitively changed** (verified by
-  grep, not assumed), and both new entry points are hand-run CLIs. The deployed image stays correct.
-- **Branch / HEAD:** `git fetch && git status --short && git log --oneline -1`.
-  ⚠️ Pushing does NOT deploy. The NAS checkout at `/volume1/docker/adc-video-bridge` is a separate
-  clone, pulled and rebuilt BY HAND, and every `docker-compose` command needs David's sudo — an
-  agent cannot deploy. ⚠️ **Compose is v2.20.1** despite the hyphenated binary name.
-  💡 "Do I need a rebuild?" — derive it from the `COPY` lines, not a summary. The bridge image takes
-  `package.json`, `package-lock.json`, `tsconfig.json`, `src/`, `entrypoint.sh`. Match by PREFIX
-  (`^src/`), never `^src/$`.
-- **Deployed:** `main` @ `37d1236`, image rebuilt, `/pair` and `events` both live and verified.
-  ⚠️ **The NAS is DELIBERATELY behind `main`.** What it is behind by is a count; get it from
-  `git log --oneline 37d1236..main`.
-  🔴 **THE GAP IS NO LONGER DOCUMENTATION-ONLY. As of 2026-08-25 a rebuild CHANGES go2rtc's SOURCE.**
-  `main` now pins `Mo3he/go2rtc@2464e567` instead of `skrashevich/go2rtc@506cfa7`, and the local HAP
-  patch is deleted. That is verified and intended (see Open decisions) but it is **not what is
-  running**, so `docker compose up --build` is no longer a no-op dressed as a rebuild.
-  ➡️ **Before rebuilding go2rtc, tag the current image so rollback is one command**, and expect the
-  go2rtc container to restart on a paired, recording install.
-- **Validation:** run **2026-08-11 against `6e247a2`**, all three green: `npm run build` clean,
-  `npx vitest run` **26 files / 436 tests**, `npm run audit:prod` passes with the documented
-  GHSA-2p57-rm9w-gvfp exception. ⚠️ Re-run before trusting.
-  🔴 **A pre-commit secret scan now BLOCKS.** Enable it once per clone, it is not automatic:
-  `git config core.hooksPath .githooks`. Also `npm run scan:secrets`. It caught three real leaks on
-  its first day, including two in commits an agent was in the middle of making.
-  🔑 The relay's structural guards were **mutation-checked**. ⚠️ Calibration: the base64 bug passed
-  **8 of 12** tests including the whole handshake. A passing handshake test proves nothing here.
+- **Updated:** 2026-08-25. Architecture unchanged: cameras reach HomeKit over their **own local
+  RTSP**, go2rtc's native client, in-process HKSV, **zero ffmpeg in the media path**. Motion from
+  go2rtc's own detector, so Alarm.com is out of the video path entirely.
+  📖 `Journal.md` 2026-08-25 for the WHY of everything below.
+- 🔴 **ONLY THE ADC-V723 (front) IS STREAMING. Both ADC-V515s are OFF THE NETWORK.** Confirmed by
+  David and by `EHOSTUNREACH` on a TCP connect to their configured endpoints from the NAS. **Not a
+  config or code fault.** Their HKSV recording had been dead ~17 days before anything noticed.
+  ➡️ When they return they should recover on their own and log it. If they come back and stay
+  unhealthy, their addresses moved: `config.yaml` is stale and `discover:local` refreshes it.
+- 🔴 **Do NOT write push state here. Run the command:**
+  `git fetch && git log --oneline origin/main..main`. 🔑 Verify with
+  `git ls-remote origin refs/heads/main`, not a local `origin/*` ref — those are only as fresh as the
+  last fetch. ⚠️ This line has been wrong three times in this repo, in both directions.
+  📌 What git cannot say: `origin/docs/community-onboarding` is abandoned at `65fca25`, and the local
+  `agent/discover-local-write` (`df03624`) is merged and safe to delete.
+- **Deployed:** go2rtc **rebuilt 2026-08-25** and running `1.9.14+dev.2464e56`; the **bridge** was
+  rebuilt after it and carries the relay health check. ⚠️ Pushing does NOT deploy: the NAS checkout
+  at `/volume1/docker/adc-video-bridge` is a separate clone, pulled and rebuilt BY HAND, and every
+  `docker-compose` command needs David's sudo. ⚠️ Compose is v2.20.1 despite the hyphenated name.
+  🔑 Rollback image for go2rtc is tagged `go2rtc-rollback-506cfa7`.
+  💡 "Do I need a rebuild?" — derive it from the `COPY` lines, not a summary: `package.json`,
+  `package-lock.json`, `tsconfig.json`, `src/`, `entrypoint.sh`. Match by PREFIX (`^src/`).
+- 🔑 **go2rtc is built from `Mo3he/go2rtc@2464e567`, NOT skrashevich.** A different maintainer, so a
+  supply-chain change, recorded in `SECURITY_AUDIT.md`. It is the old pin plus 25 commits, 0 behind,
+  and it **fixes two packages that failed on the old one** (`pkg/hap/tlv8`, `pkg/hap/camera`).
+  ✅ `patches/go2rtc-hap-auth-exempt.patch` is **DELETED** — the HAP auth exemption we reported on
+  go2rtc#2130 is now in the pinned source. Do not re-add a patch.
+  🔴 **REVERT TRIGGER unchanged:** when #2130 ships officially, delete the whole build stage and
+  return to the digest-pinned `alexxit/go2rtc` image.
+- **Validation:** run **2026-08-25 against `e2eb144`**: `npm run build` clean, `npx vitest run`
+  **26 files / 446 tests**, `npm run audit:prod` passes with the documented GHSA-2p57-rm9w-gvfp
+  exception. ⚠️ Re-run before trusting.
+  🔴 **The pre-commit secret scan BLOCKS, and needs enabling once per clone:**
+  `git config core.hooksPath .githooks`. Also `npm run scan:secrets`. It caught four real leaks in
+  its first days, twice stopping a commit an agent was mid-way through making.
 - 🔑 **THREE SUDO-FREE TOOLS, in the order you will want them:**
   ```
   ssh kaikoura 'cd /volume1/docker/adc-video-bridge && export PATH=/usr/local/bin:$PATH && \
-    npm run verify:config --silent -- .'                       # config seams; 0 blocking today
+    npm run verify:config --silent -- .'                      # config seams; 0 blocking today
   ssh kaikoura 'cd /volume1/docker/adc-video-bridge && set -a && . ./.env && set +a && \
-    curl -s --user "$STATUS_USERNAME:$STATUS_PASSWORD" http://192.168.7.42:9090/'   # relays+events
-  curl .../9090/pair                                            # scannable HomeKit setup codes
+    curl -s --user "$STATUS_USERNAME:$STATUS_PASSWORD" \
+      "http://$ADC_BRIDGE_BIND_ADDRESS:9090/"'                # relays + health
+  # a TCP connect to localRtsp.host:port from the NAS: EHOSTUNREACH = nothing is there
   ```
-  🔑 **The NAS carries full devDependencies — every `tsx` CLI runs THERE.** ⚠️ `npm` and `node` are
-  NOT on a non-interactive ssh PATH; export `/usr/local/bin` or you get "command not found".
+  ⚠️ `npm`, `node` and `docker` are NOT on a non-interactive ssh PATH; export `/usr/local/bin`.
   ⚠️ No `jq` on the NAS — pipe output back to the Mac.
-- 🔴 **TRIAGE: port 9090 REFUSING means the BRIDGE is down — stop looking at relay ports.** A config
-  error and an unpublished port are indistinguishable from a client. ⚠️ The bridge can crash-loop
-  **after** logging three healthy relay lines and a successful login.
-- 🔑 **`events.messagesReceived` answers "is motion working?"** — it separates "Alarm.com sends
-  nothing" from "events arrive but none are motion". ⚠️ `events.connected: true` is NOT evidence
-  that events flow.
-- 🔴 **A HomeKit pairing that is not in `config/go2rtc.yaml` exists in MEMORY ONLY and dies on
-  restart.** One duplicate YAML key anywhere in that file disables **every** config write go2rtc
-  makes. That is what an accessory stuck on **"Connecting…"** means.
-  ([`INVARIANTS.md`](INVARIANTS.md))
-- 🔴 **NEVER commit** credentials, MACs, LAN/WAN IPs, tokens, camera **names** or IDs.
-  ⚠️ **A leak check that reports without BLOCKING is not a check** — a fixture carrying the real
-  camera username was committed this session while the scan printed the finding and the commit
-  proceeded anyway. Both that and earlier camera names remain in history.
-- ✅ **`log: { homekit: trace }` REMOVED 2026-08-08 (David).** `config/go2rtc.yaml` has just
-  `log:` → `level: info`.
-  ⚠️ **Consequence: there is NO motion visibility at all**, and it is currently blocking a real
-  question (see whose-turn). `motion: ON` is a **DBG** line, so at `info` no trigger is ever
-  logged. 🔑 To tune thresholds, set `log: { homekit: debug }` — **not `trace`**: DBG keeps
-  `motion: ON` and drops the 1-in-150 `motion: status` flood.
-- 🔑 **go2rtc logs in UTC; local is UTC-5. 3am local = `08Z`.** Its inline clock equals Docker's
-  `-t` stamp exactly. A `16:05` line is 11:05 local — already mis-read once as "afternoon".
-- 🔑 **Upstream (Omar-L): 2 merged, 7 open PRs, 3 issues.** Newest are **PR #34** (media watchdog)
-  and **issue #35** (the local RTSP finding, offered rather than PR'd). #32 was `CONFLICTING` and
-  was rebased 2026-08-08. Details and the rebase-verification recipe: [`UPSTREAM.md`](UPSTREAM.md).
-  ⚠️ We carry a **local go2rtc patch** for the HAP auth defect (`patches/`, applied in
-  `Dockerfile.go2rtc` over a pinned commit). Reported on go2rtc#2130. **Delete the patch when it
-  lands upstream** — until then it is a liability that rots when the pin moves.
-- **Whose turn:** **DAVID.** Nothing is broken and **the agent backlog is empty.** Items 2, 3, 5, 6,
-  9, 10, 12, 13, 14, 15 and half of 8 are closed; 4 is decided; 11 and 13 are moot rather than
-  pending. Everything written this cycle is LIVE: go2rtc restarted, Homebridge restarted, `main`
-  pushed.
-  🔴 **(1) The one item with a clock on it: is kitchen at 4.0 too sensitive?** Relay
-  `totalConnections` went 3 → 198 on kitchen after the threshold drop, roughly one HKSV recording
-  every 83 seconds. **One glance at the Home app timeline settles it.** Flooded ⇒ raise toward
-  4.5-5.5. See item 2. ⚠️ It cannot be confirmed from logs while `log:` is at `info`.
-  ⚠️ **(2) The mobile-API capture values may be GONE.** Only one file survives in `~/Downloads`
-  and it is not the login capture. If `ADC_MOBILE_HAIKU` / `DEVICE_UID` / `HASH_CODE` /
-  `TWO_FACTOR_ID` are not saved elsewhere, the next `discover:local` or `npm run setup` needs a
-  fresh proxied capture. Cheap to check now.
-  🔑 **(3) The remaining leverage is a QUESTION, not code:** is `Haiku` per-install or a client
-  constant? If constant, the proxy-and-CA-cert step disappears and onboarding really does become
-  username + password. Asked publicly in issue #35; one other person's capture answers it free.
+- 🔑 **Relay health is now reported, and `healthy` means TWO things:** not churning through failed
+  sessions, and not silent (`msSinceDelivery` past `stalledAfterMs`, 10 min). ⚠️ The silence half
+  assumes the stream is **continuously consumed**, which `motion: detect` guarantees; set
+  `stalledAfterMs: 0` for an on-demand deployment. 🔴 Counting failures ALONE was not enough and
+  shipped once: a relay nobody connects to has no failures to count, and reported dead cameras as
+  healthy.
+- 🔴 **TRIAGE: port 9090 REFUSING means the BRIDGE is down — stop looking at relay ports.** The
+  bridge can crash-loop **after** logging three healthy relay lines and a successful login.
+- 🔴 **A HomeKit pairing not in `config/go2rtc.yaml` exists in MEMORY ONLY and dies on restart.** One
+  duplicate YAML key anywhere disables **every** config write go2rtc makes. That is what an accessory
+  stuck on **"Connecting…"** means. ([`INVARIANTS.md`](INVARIANTS.md))
+- 🔴 **NEVER commit** credentials, MACs, LAN/WAN IPs, tokens, camera **names** or IDs. ⚠️ Redact with
+  an **allowlist** — name what to SHOW. Denylist filters leaked twice in one session.
+- ⚠️ **`log:` is at `level: info`, so there is NO motion visibility.** `motion: ON` is a **DBG** line.
+  To tune thresholds set `log: { homekit: debug }` — **not `trace`**, which floods with the
+  1-in-150 `motion: status` line.
+- 🔑 **go2rtc logs in UTC; local is UTC-5. 3am local = `08Z`.** A `16:05` line is 11:05 local.
+- 🔑 **Upstream (Omar-L): 2 merged, 7 open PRs, 3 issues** — all mergeable, all awaiting review.
+  Newest: **PR #34** (media watchdog), **issue #35** (local RTSP, offered not PR'd).
+  ⚠️ Do NOT report branch state from this clone; the fork's branches get rebased elsewhere. Details
+  and the rebase-verification recipe: [`UPSTREAM.md`](UPSTREAM.md).
+- **Whose turn:** **DAVID.** Nothing is broken and the agent backlog is empty.
+  **(1)** Bring the two ADC-V515s back onto the network. Everything else waits on that, and the
+  relay will now say so rather than failing silently.
+  **(2)** Check whether the `ADC_MOBILE_*` capture values still exist anywhere. Only one file
+  survives in `~/Downloads` and it is not the login capture. Without them `discover:local` and
+  `npm run setup` need a fresh proxied capture — which is exactly what is needed if the V515
+  addresses moved while they were away.
+  🔑 **The one open question with real leverage is not code:** is `Haiku` per-install or a client
+  constant? Asked publicly in issue #35. If constant, the proxy-and-CA-cert step disappears and
+  onboarding becomes username + password.
 
 ### What's left (priority order)
 
