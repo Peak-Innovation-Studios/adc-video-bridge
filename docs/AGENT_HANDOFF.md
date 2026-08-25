@@ -21,8 +21,15 @@ baton, the baton wins.
   The cause of every earlier failure was one missing body field, `Haiku`.
   Architecture unchanged since 2026-08-07: all three cameras in HomeKit over their **own local
   RTSP**, go2rtc's native client, in-process HKSV, **zero ffmpeg in the media path**. Both
-  ADC-V515s work. HKSV recording proven. Motion from go2rtc's own detector, so **Alarm.com is out
-  of the video path entirely**. 📖 `Journal.md` 2026-08-08.
+  ADC-V515s worked when connected. Motion from go2rtc's own detector, so **Alarm.com is out
+  of the video path entirely**.
+  🔴 **AS OF 2026-08-25 ONLY THE ADC-V723 (front) IS STREAMING.** Both ADC-V515s are
+  **not connected to the network** (confirmed by David, and by `EHOSTUNREACH` on a TCP connect
+  to their configured endpoints from the NAS). This is NOT a config or code fault and NOT
+  caused by the go2rtc rebuild. Their HKSV recording has been dead for up to 17 days.
+  ➡️ Nothing to fix here until the cameras are back on the network. When they are,
+  re-check the endpoints: if the addresses moved, `config.yaml` is stale and `discover:local`
+  is what refreshes it. 📖 `Journal.md` 2026-08-08.
   🔑 **Also closed since:** `npm run setup` (one command, preflight → sign-in → write → verify gate
   → compose up → pairing codes), `discover:local -- --write`, a **blocking** pre-commit secret scan,
   the media watchdog, the ICE-disconnect grace period, and allocated (not positional) `listenPort`.
@@ -146,18 +153,18 @@ baton, the baton wins.
    mtime in the SAME zone — go2rtc logs UTC, local is UTC-5.
    ⚠️ Whenever this file is edited again: **do not pair/unpair between edit and restart** — go2rtc
    persists its own config, so a write from memory silently reverts the edit.
-   🔴 **UNRESOLVED, and it points at kitchen being TOO SENSITIVE at 4.0.** Relay
-   `totalConnections` read 3 / 3 / 3 before the change and **19 (front) / 198 (kitchen) / 6
-   (sunroom)** ~4.5h after it. Each HKSV recording opens a relay session, so that is roughly one
-   kitchen recording every 83 seconds.
-   🔑 **It is a dose-response match:** kitchen dropped furthest (−1.5) and moved most; front dropped
-   0.5 and moved a little; sunroom was unchanged and barely moved. ⚠️ Three points is a correlation,
-   not proof — and it **cannot be confirmed** while `log:` is at `info`, because `motion: ON` is a
-   DBG line. This is exactly the visibility lost by REMOVING the log key instead of dropping it to
-   `debug`.
-   ➡️ **Ground truth is one glance: does the Home app show ~200 kitchen clips for 2026-08-08?**
-   Flooded ⇒ raise kitchen toward 4.5-5.5. That is the "false positives are visible as clips" bet
-   below coming due.
+   🔴 **WITHDRAWN 2026-08-25 — the 08-08 reconnect reading was WRONG. Do not act on it.**
+   On 08-08 relay `totalConnections` went 3/3/3 to 19 (front) / 198 (kitchen) / 6 (sunroom) after
+   the threshold change, and that was read as the lowered threshold causing constant HKSV
+   recordings, argued from a "dose-response" match: kitchen dropped furthest and moved most.
+   🔑 **The real cause was that kitchen and sunroom were going OFFLINE.** By 08-25 sunroom sat at
+   41,966 reconnects with its threshold **never changed**, and both failing cameras are ADC-V515
+   while the working one is the ADC-V723. The pattern is liveness-correlated, not
+   threshold-correlated. ⚠️ **The thresholds are FINE.** They stay at 4.0 / 4.0 / 3.5, and the
+   "is kitchen too sensitive" question is closed, not pending.
+   🔑 **Worth keeping, because the wrong answer stood for 17 days:** three data points plus a
+   plausible mechanism produced a confident dose-response story, and the confounder was sitting in
+   the same table being read.
    🔑 **Why 4.0:** both 4.5 and 5.5 sat ABOVE the weakest real trigger observed (4.46), so they
    risked missing real motion; 4.0 is inside the measured 2.89-4.46 gap. Sunroom left at 3.5 — it is
    the only threshold with direct evidence behind it. ⚠️ That 4.46 trigger MUST have been sunroom
@@ -450,6 +457,25 @@ baton, the baton wins.
     happened to return the cameras in the order the config was written. **That match validated the
     API parsing, NOT the port assignment.** 10 tests, including a case that reproduces the
     collision (a new camera sorting ahead of a configured one).
+
+17. 🔴 **(Agent — a REAL defect, found 2026-08-25) The local RTSP relay retries forever and
+    never escalates.** Kitchen and sunroom were unreachable for up to 17 days. In that time the
+    relay opened **~45,000 and ~42,000 connections** that delivered almost no bytes, and **nothing
+    said so**: no log line, no alert, no status flag, and `verify:config` reported 0 blocking
+    throughout, because it validates configuration and not liveness.
+    🔑 This is the trap `README.md` documents one layer up — *"did not produce a usable result"
+    is the failure, not *"threw"* — never applied to the relay. The WebRTC path has circuit
+    breakers; the relay has none.
+    🔑 **The signal is already collected and unused.** `TunnelRelay` tracks `totalConnections`
+    and `bytesDown` per camera. A working camera holds ONE long connection and moves a lot of data
+    (front: 991 connections, 266 GB). A dead one churns and moves almost none (kitchen: 45k
+    connections, 3.5 GB). That ratio IS the health check.
+    ➡️ **Fix shape:** count consecutive connections that close having delivered under N bytes;
+    at a threshold log once at `error` and expose it on the status endpoint. Do NOT stop retrying,
+    the camera may come back — stop failing *silently*.
+    ⚠️ **Diagnosis worth reusing:** a TCP connect to `localRtsp.host:port` from the NAS.
+    `EHOSTUNREACH` means nothing is at that address, separating "camera moved or is off" from
+    "camera up but stream broken" in one second, with no login and no logs.
 
 ### Do not touch / gotchas
 
