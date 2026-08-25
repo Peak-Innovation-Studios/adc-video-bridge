@@ -61,8 +61,16 @@ const RULES = [
     id: 'long-hex-secret',
     re: /\b[0-9A-Fa-f]{16,}\b/g,
     // Digests and test fixtures are fine; a bare 16-64 hex run in prose is not.
-    ok: (m, line) => /sha256|sha512|integrity|digest|@sha|commit|revision|[0-9a-f]{64,}/i.test(line)
-      || /^(?:0+|1+|a+|f+|deadbeef|AAAA1111BBBB2222|CCCC3333DDDD4444)$/i.test(m),
+    ok: (m, line) =>
+      /sha256|sha512|integrity|digest|@sha|commit|revision|[0-9a-f]{64,}/i.test(line)
+      || /^(?:0+|1+|a+|f+|deadbeef|AAAA1111BBBB2222|CCCC3333DDDD4444)$/i.test(m)
+      // A git SHA pinned to a *_REF / *_SHA / *_COMMIT variable. Deliberately
+      // narrow: EXACTLY 40 lowercase hex, and only on a line that assigns a ref.
+      // Pin bumps recur, and if this fired every time, the habit would become
+      // `leak-scan-ok` on every bump — which erodes the scanner far more than
+      // this exemption does. A camera password (16 uppercase hex) still trips,
+      // even on a *_REF line.
+      || (/^[0-9a-f]{40}$/.test(m) && /\b[A-Z0-9_]*(_REF|_SHA|_COMMIT)\s*=/.test(line)),
     why: 'long hex value — camera RTSP passwords and session tokens look exactly like this',
   },
   {
