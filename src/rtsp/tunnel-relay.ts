@@ -70,6 +70,22 @@ export interface TunnelRelayOptions {
    */
   unhealthyAfter?: number;
   /**
+   * How long the relay may carry NO media at all before reporting unhealthy,
+   * measured from start-up or the last byte received, whichever is later.
+   *
+   * 🔴 Counting failed sessions is NOT enough, and assuming it was is the bug
+   * this closes. A camera nobody connects to produces no failed sessions, so it
+   * reported `healthy: true` while being definitively dead. Measured live
+   * 2026-08-25: two offline cameras sat at `totalConnections: 0` because go2rtc
+   * had stopped retrying them, and the relay called that healthy.
+   *
+   * ⚠️ **This assumes the stream is CONTINUOUSLY consumed**, which `motion: detect`
+   * guarantees because go2rtc must pull video to analyse it. Under `motion: api`
+   * or with no consumer, an idle-but-fine camera could trip this. Raise it or
+   * disable it (0) for such a deployment.
+   */
+  stalledAfterMs?: number;
+  /**
    * Test seam. Defaults to TLS with certificate verification disabled (see
    * `openTunnel` for why that is required rather than lazy). Tests substitute a
    * plain TCP connection so the framing — header boundary, base64 encoding,
@@ -92,6 +108,12 @@ export interface TunnelRelayDiagnostics {
   bytesUp: number;
   /** Sessions in a row that closed having carried nothing usable from the camera. */
   consecutiveFailures: number;
+  /**
+   * Since the last byte from the camera, or since start-up if there has never
+   * been one. 🔑 A relay nobody connects to has NO failed sessions, so this is
+   * the field that makes a dead-but-unused camera visible.
+   */
+  msSinceDelivery: number;
   /**
    * False once `consecutiveFailures` reaches `unhealthyAfter`.
    * ⚠️ `healthy: false` does NOT mean the relay stopped: it keeps retrying,
@@ -134,6 +156,9 @@ const DEFAULTS = {
   // At the observed churn of ~2 sessions/minute this reports within ~5 minutes,
   // while riding out a brief blip rather than crying wolf on one bad session.
   unhealthyAfter: 10,
+  // Generous: a continuously-pulled stream delivers every ~100ms, so ten
+  // minutes of complete silence is not a gap, it is a stopped camera.
+  stalledAfterMs: 600_000,
   connect: tlsConnectInsecure,
 };
 
@@ -194,6 +219,12 @@ export class TunnelRelay {
    */
   private consecutiveFailures = 0;
   private unhealthyReported = false;
+  /**
+   * When media was last seen, or when the relay started if never.
+   * 🔑 This is what makes "nobody even tried" visible. `consecutiveFailures`
+   * alone cannot distinguish a dead camera from an unused one.
+   */
+  private lastDeliveryAt = Date.now();
 
   constructor(options: TunnelRelayOptions) {
     this.opts = { ...DEFAULTS, ...options };
@@ -216,12 +247,14 @@ export class TunnelRelay {
       bytesDown: this.bytesDown,
       bytesUp: this.bytesUp,
       consecutiveFailures: this.consecutiveFailures,
-      healthy: this.consecutiveFailures < this.opts.unhealthyAfter,
+      msSinceDelivery: Date.now() - this.lastDeliveryAt,
+      healthy: this.isHealthy(),
       ...(this.lastError ? { lastError: this.lastError } : {}),
     };
   }
 
   start(): Promise<void> {
+    this.lastDeliveryAt = Date.now();
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.handleClient(socket));
       server.on('error', (err) => {
@@ -376,6 +409,44 @@ export class TunnelRelay {
   }
 
   /**
+   * Healthy means BOTH: not churning through failed sessions, and not silent.
+   *
+   * 🔴 The second half is the one that was missing. Failed-session counting
+   * alone reported two dead cameras as healthy, because go2rtc had stopped
+   * connecting to them and a relay with no sessions has no failures.
+   */
+  private isHealthy(): boolean {
+    if (this.consecutiveFailures >= this.opts.unhealthyAfter) return false;
+    if (this.opts.stalledAfterMs > 0 && Date.now() - this.lastDeliveryAt > this.opts.stalledAfterMs) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Report a stall once, the same way a run of failures is reported once.
+   * Called from the periodic check so a relay nobody connects to still speaks.
+   */
+  checkStalled(): void {
+    if (this.isHealthy() || this.unhealthyReported) return;
+    this.unhealthyReported = true;
+    log.error(
+      {
+        camera: this.opts.name,
+        msSinceDelivery: Date.now() - this.lastDeliveryAt,
+        consecutiveFailures: this.consecutiveFailures,
+        target: `${this.opts.host}:${this.opts.port}`,
+        connections: this.sessions.size,
+        lastError: this.lastError,
+      },
+      'Relay has carried no media for %ds. Still serving. If connections is 0 the consumer has ' +
+        'stopped asking, which a failed-session count cannot see; check the camera is on the ' +
+        'network (EHOSTUNREACH on a TCP connect to the target means nothing is there).',
+      Math.round((Date.now() - this.lastDeliveryAt) / 1000),
+    );
+  }
+
+  /**
    * Decide whether a finished session worked, and say so ONCE when a run of
    * them has not.
    *
@@ -421,6 +492,7 @@ export class TunnelRelay {
   private writeDown(client: Socket, get: Socket, chunk: Buffer): void {
     if (client.destroyed) return;
     this.bytesDown += chunk.length;
+    this.lastDeliveryAt = Date.now();
     if (!client.write(chunk)) {
       get.pause();
       client.once('drain', () => get.resume());

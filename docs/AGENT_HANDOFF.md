@@ -467,6 +467,14 @@ baton, the baton wins.
     It means stop believing the silence. A working session resets the run and logs recovery once.
     🔑 **Logs ONCE per episode, deliberately.** A line per failed session would reproduce the
     original problem from the other side: ~45,000 lines nobody reads is as good as silence.
+    🔴 **AND a stall check, because failure-counting ALONE was not enough.** Its first live
+    deploy reported two definitively dead cameras as `healthy: true`: go2rtc had stopped
+    connecting to them, and a relay with **no sessions has no failures to count**. That is the
+    same blind spot the fix existed to remove, reproduced inside the fix.
+    `healthy` is now churn-free AND not silent: `msSinceDelivery` past `stalledAfterMs`
+    (10 min) is unhealthy on its own, reported once from the 60s status tick so a relay nobody
+    connects to still speaks. ⚠️ It assumes the stream is **continuously consumed**, which
+    `motion: detect` guarantees; set `stalledAfterMs: 0` for an on-demand deployment.
     🔑 Mutation-tested four ways. ⚠️ **One mutation initially SURVIVED** — removing the byte
     accumulation from `get.on('data')` broke nothing, because every healthy-path test delivered
     its bytes via `trailing`, which arrives with the tunnel header and is counted through

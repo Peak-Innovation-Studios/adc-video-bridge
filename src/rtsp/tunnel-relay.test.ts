@@ -1,5 +1,16 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createServer, connect as netConnect, type Server, type Socket } from 'node:net';
+
+// Held so the once-only reporting can be asserted: a relay that logged every
+// failure would reproduce the original problem from the other side.
+const { logSpy } = vi.hoisted(() => ({
+  logSpy: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+vi.mock('../utils/logger.js', async () => {
+  const actual = await vi.importActual<typeof import('../utils/logger.js')>('../utils/logger.js');
+  return { ...actual, createChildLogger: () => logSpy };
+});
+
 import { TunnelRelay } from './tunnel-relay.js';
 
 /**
@@ -441,6 +452,69 @@ describe('TunnelRelay', () => {
       const d = relay!.getDiagnostics();
       expect(d.consecutiveFailures, 'streamed bytes must count as a working session').toBe(0);
       expect(d.healthy).toBe(true);
+    });
+
+    /**
+     * 🔴 THE REGRESSION. Counting failed sessions is not enough: a camera
+     * nobody connects to produces NO failed sessions, so a failure-count-only
+     * check reported two definitively dead cameras as healthy. Measured live
+     * 2026-08-25, on the very first deploy of that check.
+     */
+    it('reports unhealthy after silence even with ZERO sessions', async () => {
+      const port = await start({}, { stalledAfterMs: 100 });
+      expect(port).toBeGreaterThan(0);
+
+      // Nothing ever connects. consecutiveFailures stays 0 the whole time.
+      expect(relay!.getDiagnostics().healthy).toBe(true);
+      await new Promise((r) => setTimeout(r, 160));
+
+      const d = relay!.getDiagnostics();
+      expect(d.consecutiveFailures, 'no sessions means no failures to count').toBe(0);
+      expect(d.healthy, 'silence alone must be enough to report unhealthy').toBe(false);
+      expect(d.msSinceDelivery).toBeGreaterThanOrEqual(100);
+    });
+
+    it('checkStalled logs once per episode, not on every tick', async () => {
+      logSpy.error.mockClear();
+      await start({}, { stalledAfterMs: 100 });
+      await new Promise((r) => setTimeout(r, 160));
+
+      relay!.checkStalled();
+      relay!.checkStalled();
+      relay!.checkStalled();
+      expect(logSpy.error).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * Positive control, and it has to outlast the threshold to mean anything.
+     * ⚠️ A first version ran 240ms against a 400ms window, so it could never
+     * have detected a frozen delivery clock: the stall would not have fired
+     * either way. That mutation survived. This keeps media flowing for LONGER
+     * than `stalledAfterMs`, so only a clock that actually updates keeps it
+     * healthy.
+     */
+    it('stays healthy while media keeps arriving, past the stall window', async () => {
+      const port = await start({}, { stalledAfterMs: 200 });
+      const client = await connectClient(port);
+      await new Promise((r) => setTimeout(r, 120));
+      expect(camera!.getSocket, 'tunnel never opened').not.toBeNull();
+
+      // ~400ms of traffic against a 200ms window.
+      for (let i = 0; i < 5; i++) {
+        camera!.getSocket!.write('x'.repeat(2048));
+        await new Promise((r) => setTimeout(r, 80));
+      }
+
+      const d = relay!.getDiagnostics();
+      expect(d.msSinceDelivery, 'the delivery clock must be moving').toBeLessThan(200);
+      expect(d.healthy).toBe(true);
+      client.destroy();
+    });
+
+    it('stalledAfterMs: 0 disables the stall check, for on-demand deployments', async () => {
+      await start({}, { stalledAfterMs: 0 });
+      await new Promise((r) => setTimeout(r, 120));
+      expect(relay!.getDiagnostics().healthy).toBe(true);
     });
 
     it('a short session that carried nothing counts as a failure, not a success', async () => {

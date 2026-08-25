@@ -278,6 +278,12 @@ async function main(): Promise<void> {
 
   // Periodic status logging
   statusTimer = setInterval(() => {
+    // 🔴 A relay nobody connects to has no failed sessions to count, so it can
+    // only report a dead camera on a timer. Measured 2026-08-25: two offline
+    // cameras sat at `totalConnections: 0` because go2rtc had stopped retrying,
+    // and a failure-count-only check called that healthy.
+    for (const relay of relays) relay.checkStalled();
+
     const streams = cameraManager.getStatus();
     // The event circuit is only worth a field when it is open; a healthy one
     // would be noise on every line.
