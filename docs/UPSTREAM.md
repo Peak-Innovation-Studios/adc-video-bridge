@@ -106,6 +106,22 @@ has and we do not — they are the only places their tree carries something ours
 
 ## Open issues and other contributions
 
+- 🔑 **go2rtc [#2130](https://github.com/AlexxIT/go2rtc/pull/2130) — the HAP auth loop is CLOSED.**
+  Reported 2026-08-08, implemented independently by Mo3he in `6f76ea9a` (credited to the report),
+  adopted here 2026-08-25, and `patches/go2rtc-hap-auth-exempt.patch` is **deleted**. That is the
+  whole arc `INVARIANTS.md` asked for.
+  ✅ **Posted a verification comment 2026-08-25** with the one fact nobody else in the thread had:
+  `pkg/hap/tlv8` and `pkg/hap/camera` **fail on the current PR head** and pass on Mo3he's branch,
+  measured by diffing failing-package lists across both commits. Zero regressions the other way.
+  ⚠️ **Deliberately understated the production claim.** Only one of three cameras was online that
+  day, so "running across three cameras" would have been false. On a thread trading validation
+  reports, an overclaim that needs walking back later costs more than a narrow honest one.
+  ⚠️ Did **not** `@`-mention the maintainer. Pinging them to advocate for a third party's fork reads
+  as pressure; the merge-strategy question stands on its own.
+  ➡️ **Watch for an answer to:** whether those fixes get folded into #2130 or land as separate PRs.
+  Either way, when #2130 ships officially the whole `Dockerfile.go2rtc` build stage goes away and we
+  return to the digest-pinned `alexxit/go2rtc` image.
+
 - 🔑 [#35](https://github.com/Omar-L/adc-video-bridge/issues/35) — **filed 2026-08-08: cameras
   publish a local RTSP endpoint on the LAN.** The finding that overturns this project's founding
   premise, offered upstream rather than kept in the fork. Explains what it makes moot (#7, #10),
