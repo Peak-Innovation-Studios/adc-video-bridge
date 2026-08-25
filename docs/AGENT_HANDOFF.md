@@ -49,9 +49,14 @@ baton, the baton wins.
   `package.json`, `package-lock.json`, `tsconfig.json`, `src/`, `entrypoint.sh`. Match by PREFIX
   (`^src/`), never `^src/$`.
 - **Deployed:** `main` @ `37d1236`, image rebuilt, `/pair` and `events` both live and verified.
-  ⚠️ **The NAS is DELIBERATELY behind `main`** — see the rebuild note above. What it is behind by is
-  a count; get it from `git log --oneline 37d1236..main`. It is a documentation/CLI gap, not drift;
-  do not "fix" it with a rebuild nobody asked for.
+  ⚠️ **The NAS is DELIBERATELY behind `main`.** What it is behind by is a count; get it from
+  `git log --oneline 37d1236..main`.
+  🔴 **THE GAP IS NO LONGER DOCUMENTATION-ONLY. As of 2026-08-25 a rebuild CHANGES go2rtc's SOURCE.**
+  `main` now pins `Mo3he/go2rtc@2464e567` instead of `skrashevich/go2rtc@506cfa7`, and the local HAP
+  patch is deleted. That is verified and intended (see Open decisions) but it is **not what is
+  running**, so `docker compose up --build` is no longer a no-op dressed as a rebuild.
+  ➡️ **Before rebuilding go2rtc, tag the current image so rollback is one command**, and expect the
+  go2rtc container to restart on a paired, recording install.
 - **Validation:** run **2026-08-11 against `6e247a2`**, all three green: `npm run build` clean,
   `npx vitest run` **26 files / 436 tests**, `npm run audit:prod` passes with the documented
   GHSA-2p57-rm9w-gvfp exception. ⚠️ Re-run before trusting.
@@ -466,11 +471,14 @@ baton, the baton wins.
 ### Open decisions
 
 - 🔑 **(DAVID) Move the go2rtc build from `skrashevich@506cfa7` to `Mo3he/go2rtc@2464e567`?**
-  ✅ **PREPARED ON BRANCH `agent/go2rtc-mo3he-pin`, NOT merged and NOT deployed.** `main` still
-  builds the current working image, so nothing changes until this is merged AND the NAS is
-  rebuilt. The branch repoints `Dockerfile.go2rtc`, deletes
-  `patches/go2rtc-hap-auth-exempt.patch`, and updates `SECURITY_AUDIT.md` provenance and
-  `INVARIANTS.md`.
+  ✅ **MERGED to `main` 2026-08-25 (`35c4e77`) and pushed. ⏳ NOT DEPLOYED.** `main` now builds
+  the new source; the NAS still runs the old image. Nothing changes until someone rebuilds there.
+  The change repoints `Dockerfile.go2rtc`, deletes `patches/go2rtc-hap-auth-exempt.patch`, and
+  updates `SECURITY_AUDIT.md` provenance and `INVARIANTS.md`.
+  ⚠️ **NOT verified: the docker build itself.** The daemon was not running on the Mac, and an
+  arm64 build would not have proven the linux/amd64 NAS build anyway. The Go build WAS verified
+  natively with the exact command the Dockerfile runs. **The NAS rebuild is the first real test of
+  the container build**, so do it when you can watch it, not unattended.
   **Verified 2026-08-25, locally, touching nothing on the NAS.** His `hksv` branch is our exact pin
   plus 25 commits, **0 behind**, so nothing is lost.
   ✅ Builds clean (`CGO_ENABLED=0 go build ./...`), `go vet` clean, HKSV + HAP suites pass.
