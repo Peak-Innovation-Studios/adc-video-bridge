@@ -458,8 +458,24 @@ baton, the baton wins.
     API parsing, NOT the port assignment.** 10 tests, including a case that reproduces the
     collision (a new camera sorting ahead of a configured one).
 
-17. 🔴 **(Agent — a REAL defect, found 2026-08-25) The local RTSP relay retries forever and
-    never escalates.** Kitchen and sunroom were unreachable for up to 17 days. In that time the
+17. ✅ **FIXED 2026-08-25 — the relay now reports a camera that stops delivering.**
+    `TunnelRelay` counts consecutive sessions that close having carried under `healthyBytes`
+    (4 KiB) from the camera. At `unhealthyAfter` (10) it logs **once** at `error` naming the
+    target and what to check, and `getDiagnostics()` gains `consecutiveFailures` and `healthy`,
+    which the status endpoint already passes through verbatim.
+    🔑 **It keeps retrying.** `healthy: false` does not mean stopped — the camera may come back.
+    It means stop believing the silence. A working session resets the run and logs recovery once.
+    🔑 **Logs ONCE per episode, deliberately.** A line per failed session would reproduce the
+    original problem from the other side: ~45,000 lines nobody reads is as good as silence.
+    🔑 Mutation-tested four ways. ⚠️ **One mutation initially SURVIVED** — removing the byte
+    accumulation from `get.on('data')` broke nothing, because every healthy-path test delivered
+    its bytes via `trailing`, which arrives with the tunnel header and is counted through
+    `leftover`. That gap mattered more than it looks: had the streaming path stopped counting, a
+    WORKING camera would be declared unhealthy. Covered now by a test that writes to the camera
+    socket after the tunnel opens.
+
+    *(the defect, kept because the reasoning is the reusable part)* **The relay used to retry
+    forever and never escalate.** Kitchen and sunroom were unreachable for up to 17 days. In that time the
     relay opened **~45,000 and ~42,000 connections** that delivered almost no bytes, and **nothing
     said so**: no log line, no alert, no status flag, and `verify:config` reported 0 blocking
     throughout, because it validates configuration and not liveness.

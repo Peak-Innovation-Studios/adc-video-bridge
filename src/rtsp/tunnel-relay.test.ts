@@ -352,4 +352,106 @@ describe('TunnelRelay', () => {
       return d.bytesUp > 0 && d.bytesDown > 0;
     });
   });
+
+  /**
+   * 🔴 The defect these cover: two cameras were unreachable for up to 17 days
+   * while the relay opened ~45,000 connections that carried almost nothing, and
+   * NOTHING reported it. `verify:config` said 0 blocking throughout, because it
+   * validates configuration and not liveness.
+   */
+  describe('TunnelRelay health escalation', () => {
+    const failOnce = async (port: number) => {
+      const client = await connectClient(port);
+      await new Promise<void>((resolve) => client.on('close', () => resolve()));
+    };
+
+    it('counts sessions that carry nothing from the camera', async () => {
+      const port = await start({ silent: true }, { openTimeoutMs: 60, unhealthyAfter: 3 });
+      await failOnce(port);
+      expect(relay!.getDiagnostics().consecutiveFailures).toBe(1);
+      await failOnce(port);
+      expect(relay!.getDiagnostics().consecutiveFailures).toBe(2);
+    });
+
+    it('reports unhealthy once the run reaches the threshold, and keeps listening', async () => {
+      const port = await start({ silent: true }, { openTimeoutMs: 60, unhealthyAfter: 3 });
+      for (let i = 0; i < 2; i++) await failOnce(port);
+      expect(relay!.getDiagnostics().healthy, 'must not cry wolf before the threshold').toBe(true);
+
+      await failOnce(port);
+      expect(relay!.getDiagnostics().healthy).toBe(false);
+      // 🔴 Unhealthy must NOT mean "stopped". The camera may come back.
+      expect(relay!.listening).toBe(true);
+    });
+
+    /**
+     * Positive control. Without it, an implementation that reported unhealthy
+     * unconditionally would pass every test above.
+     */
+    it('stays healthy when the camera actually delivers', async () => {
+      const port = await start({ trailing: 'x'.repeat(8192) }, { unhealthyAfter: 3, healthyBytes: 4096 });
+      const client = await connectClient(port);
+      await new Promise((r) => setTimeout(r, 120));
+      client.destroy();
+      await new Promise((r) => setTimeout(r, 60));
+
+      const d = relay!.getDiagnostics();
+      expect(d.consecutiveFailures).toBe(0);
+      expect(d.healthy).toBe(true);
+    });
+
+    it('resets the run after a session that works, so a blip does not accumulate', async () => {
+      const port = await start({ silent: true }, { openTimeoutMs: 60, unhealthyAfter: 5 });
+      await failOnce(port);
+      await failOnce(port);
+      expect(relay!.getDiagnostics().consecutiveFailures).toBe(2);
+
+      // The camera starts answering.
+      camera!.silent = false;
+      camera!.trailing = 'x'.repeat(8192);
+      const client = await connectClient(port);
+      await new Promise((r) => setTimeout(r, 120));
+      client.destroy();
+      await new Promise((r) => setTimeout(r, 60));
+
+      expect(relay!.getDiagnostics().consecutiveFailures).toBe(0);
+      expect(relay!.getDiagnostics().healthy).toBe(true);
+    });
+
+    /**
+     * 🔴 Covers the STREAMING path specifically. The tests above deliver their
+     * bytes via `trailing`, which arrives in the tunnel-header packet and is
+     * counted through `leftover` — so removing the accumulation in
+     * `get.on('data')` broke none of them. That mutation survived once.
+     * It matters more than it looks: if the streaming path stopped counting,
+     * a HEALTHY camera would be declared unhealthy after N sessions.
+     */
+    it('counts bytes that arrive AFTER the tunnel opens, not just with the header', async () => {
+      const port = await start({}, { unhealthyAfter: 2, healthyBytes: 4096 });
+      const client = await connectClient(port);
+      await new Promise((r) => setTimeout(r, 120));
+
+      expect(camera!.getSocket, 'tunnel never opened').not.toBeNull();
+      camera!.getSocket!.write('x'.repeat(8192));
+      await new Promise((r) => setTimeout(r, 120));
+
+      client.destroy();
+      await new Promise((r) => setTimeout(r, 80));
+
+      const d = relay!.getDiagnostics();
+      expect(d.consecutiveFailures, 'streamed bytes must count as a working session').toBe(0);
+      expect(d.healthy).toBe(true);
+    });
+
+    it('a short session that carried nothing counts as a failure, not a success', async () => {
+      // ⚠️ The distinction that matters: "closed quickly" is not the signal,
+      // "closed having delivered nothing" is. A reachable camera answers RTSP
+      // immediately; an unreachable one returns nothing however long you wait.
+      const port = await start({ silent: true }, { openTimeoutMs: 60, unhealthyAfter: 10 });
+      await failOnce(port);
+      expect(relay!.getDiagnostics().consecutiveFailures).toBe(1);
+      expect(relay!.getDiagnostics().healthy).toBe(true);
+    });
+  });
+
 });

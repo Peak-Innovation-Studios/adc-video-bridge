@@ -53,6 +53,23 @@ export interface TunnelRelayOptions {
    */
   idleTimeoutMs?: number;
   /**
+   * Bytes a session must carry FROM the camera before it counts as having
+   * worked. A session that closes under this delivered nothing usable.
+   *
+   * 🔑 Small on purpose. This separates "never reached the camera at all"
+   * from "streamed video", not "streamed a lot" from "streamed a little" — a
+   * reachable camera returns RTSP responses immediately, an unreachable one
+   * returns nothing.
+   */
+  healthyBytes?: number;
+  /**
+   * Consecutive failed sessions before the relay reports itself unhealthy.
+   *
+   * 🔴 Consecutive, and never fatal. The camera may come back, so the relay
+   * keeps retrying forever; this only decides when it stops doing so SILENTLY.
+   */
+  unhealthyAfter?: number;
+  /**
    * Test seam. Defaults to TLS with certificate verification disabled (see
    * `openTunnel` for why that is required rather than lazy). Tests substitute a
    * plain TCP connection so the framing — header boundary, base64 encoding,
@@ -73,6 +90,14 @@ export interface TunnelRelayDiagnostics {
   rejectedConnections: number;
   bytesDown: number;
   bytesUp: number;
+  /** Sessions in a row that closed having carried nothing usable from the camera. */
+  consecutiveFailures: number;
+  /**
+   * False once `consecutiveFailures` reaches `unhealthyAfter`.
+   * ⚠️ `healthy: false` does NOT mean the relay stopped: it keeps retrying,
+   * because the camera may come back. It means stop believing the silence.
+   */
+  healthy: boolean;
   lastError?: string;
 }
 
@@ -104,6 +129,11 @@ const DEFAULTS = {
   maxConnections: 8,
   openTimeoutMs: 10_000,
   idleTimeoutMs: 120_000,
+  // 4 KiB: more than an RTSP response exchange, far less than any real video.
+  healthyBytes: 4096,
+  // At the observed churn of ~2 sessions/minute this reports within ~5 minutes,
+  // while riding out a brief blip rather than crying wolf on one bad session.
+  unhealthyAfter: 10,
   connect: tlsConnectInsecure,
 };
 
@@ -153,6 +183,17 @@ export class TunnelRelay {
   private bytesDown = 0;
   private bytesUp = 0;
   private lastError: string | undefined;
+  /**
+   * 🔴 The defect this exists for: two cameras were unreachable for up to 17
+   * days while this relay opened ~45,000 connections that delivered almost
+   * nothing, and NOTHING reported it. `verify:config` said 0 blocking the whole
+   * time, because it validates configuration and not liveness.
+   * 🔑 The signal was already being collected and thrown away: a working
+   * camera holds ONE long connection and moves a lot of data; a dead one churns
+   * and moves almost none. That ratio is the health check.
+   */
+  private consecutiveFailures = 0;
+  private unhealthyReported = false;
 
   constructor(options: TunnelRelayOptions) {
     this.opts = { ...DEFAULTS, ...options };
@@ -174,6 +215,8 @@ export class TunnelRelay {
       rejectedConnections: this.rejectedConnections,
       bytesDown: this.bytesDown,
       bytesUp: this.bytesUp,
+      consecutiveFailures: this.consecutiveFailures,
+      healthy: this.consecutiveFailures < this.opts.unhealthyAfter,
       ...(this.lastError ? { lastError: this.lastError } : {}),
     };
   }
@@ -236,6 +279,10 @@ export class TunnelRelay {
     let closed = false;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // Per-session, NOT the cumulative counter: the question is whether THIS
+    // session carried anything, and a lifetime total answers a different one.
+    let sessionBytesDown = 0;
+
     const close = (why?: string) => {
       if (closed) return;
       closed = true;
@@ -243,6 +290,7 @@ export class TunnelRelay {
       this.sessions.delete(close);
       for (const s of [client, getSock, postSock]) s?.destroy();
       if (why) log.debug({ camera: this.opts.name }, 'Relay session closed: %s', why);
+      this.recordSessionOutcome(sessionBytesDown, why);
     };
     this.sessions.add(close);
 
@@ -286,10 +334,14 @@ export class TunnelRelay {
 
         // Bytes the camera already sent past the HTTP header boundary. Usually
         // none, but dropping them would silently eat the first RTSP response.
-        if (leftover.length > 0) this.writeDown(client, get, leftover);
+        if (leftover.length > 0) {
+          sessionBytesDown += leftover.length;
+          this.writeDown(client, get, leftover);
+        }
 
         get.on('data', (chunk) => {
           touch();
+          sessionBytesDown += chunk.length;
           this.writeDown(client, get, chunk);
         });
 
@@ -320,6 +372,48 @@ export class TunnelRelay {
     if (!post.write(chunk.toString('base64'))) {
       client.pause();
       post.once('drain', () => client.resume());
+    }
+  }
+
+  /**
+   * Decide whether a finished session worked, and say so ONCE when a run of
+   * them has not.
+   *
+   * 🔴 Logs at `error` exactly once per unhealthy episode, and once more on
+   * recovery. Logging every failed session would reproduce the original problem
+   * from the other side: ~45,000 lines nobody reads is as good as silence.
+   * 🔑 The relay keeps retrying either way. A camera that is off today may be
+   * back tomorrow, and the fix here is to stop failing quietly, not to give up.
+   */
+  private recordSessionOutcome(sessionBytesDown: number, why?: string): void {
+    if (sessionBytesDown >= this.opts.healthyBytes) {
+      if (this.unhealthyReported) {
+        log.info(
+          { camera: this.opts.name, afterFailures: this.consecutiveFailures },
+          'Relay recovered: the camera is delivering media again',
+        );
+      }
+      this.consecutiveFailures = 0;
+      this.unhealthyReported = false;
+      return;
+    }
+
+    this.consecutiveFailures++;
+    if (this.consecutiveFailures >= this.opts.unhealthyAfter && !this.unhealthyReported) {
+      this.unhealthyReported = true;
+      log.error(
+        {
+          camera: this.opts.name,
+          consecutiveFailures: this.consecutiveFailures,
+          target: `${this.opts.host}:${this.opts.port}`,
+          lastClose: why,
+          lastError: this.lastError,
+        },
+        'Relay has opened %d consecutive sessions that carried no media — the camera is not ' +
+          'reachable or is not streaming. Still retrying. Check it is on the network, then whether ' +
+          'its address changed (EHOSTUNREACH on a TCP connect to the target means nothing is there).',
+        this.consecutiveFailures,
+      );
     }
   }
 
