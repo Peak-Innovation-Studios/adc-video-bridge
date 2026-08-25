@@ -594,6 +594,13 @@ that mux. Verified: applies cleanly to a fresh checkout at `506cfa7d` and `go bu
 ⚠️ The build uses plain `git apply` — **not** `-3` or `--reject` — so a patch that stops applying
 FAILS the build loudly instead of silently producing an unpatched binary. That is the whole point of
 pinning. 🔴 Report this upstream on #2130 and delete the patch when it lands there.
+✅ **REPORTED 2026-08-08, and INDEPENDENTLY IMPLEMENTED 2026-08-23** in `Mo3he/go2rtc@6f76ea9a`
+on a branch that is our pin plus 25 commits and 0 behind. Verified 2026-08-25: this patch no
+longer applies against it, and his version is better (registers `hap.PathPairSetup` /
+`PathPairVerify` through a new `api.HandleFuncNoAuth` rather than hardcoding the strings).
+➡️ **Delete this patch if and when the build moves to that branch** — see the baton's Open
+decisions. It has NOT moved yet; the pin is still `skrashevich@506cfa7` and the patch is
+still load-bearing.
 
 **Do not "fix" this by disabling go2rtc's API auth.** That would leave the snapshot/stream API
 unauthenticated to every device on the LAN — for a security camera — and it breaks the compose

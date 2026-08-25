@@ -465,6 +465,29 @@ baton, the baton wins.
 
 ### Open decisions
 
+- 🔑 **(DAVID) Move the go2rtc build from `skrashevich@506cfa7` to `Mo3he/go2rtc@2464e567`?**
+  **Verified 2026-08-25, locally, touching nothing on the NAS.** His `hksv` branch is our exact pin
+  plus 25 commits, **0 behind**, so nothing is lost.
+  ✅ Builds clean (`CGO_ENABLED=0 go build ./...`), `go vet` clean, HKSV + HAP suites pass.
+  ✅ **Breaks nothing:** zero packages that pass on our pin and fail on his.
+  ✅ **Fixes two packages that FAIL ON OUR PRODUCTION PIN TODAY** — `pkg/hap/tlv8` and
+  `pkg/hap/camera`. The tlv8 one is real: the separator between repeated tags is emitted as `0xff`
+  where it must be `0x00`, and `506cfa7` ships that test already failing.
+  ✅ **`patches/go2rtc-hap-auth-exempt.patch` becomes REDUNDANT** — it no longer applies, and his
+  `6f76ea9a` implements the same fix better, registering `hap.PathPairSetup`/`PathPairVerify` via a
+  new `api.HandleFuncNoAuth` instead of hardcoding the strings in the middleware. It credits the
+  report: *"Reported by dppeak on AlexxIT/go2rtc#2130."*
+  💡 Also gains `94cea2d1`, which derives the mDNS config number from the accessory database, so
+  changing `hksv` config on an already-paired camera no longer forces a re-pair.
+  🔴 **What makes this a decision and not a chore:** it is a **different maintainer**.
+  `SECURITY_AUDIT.md` documents the provenance as `skrashevich/go2rtc`, so moving is a
+  supply-chain change that must be recorded there, not a quiet pin bump. ⚠️ Not all 25 commits are
+  HKSV work — one is a merge from upstream `master` bringing unrelated changes (PCMA/PCMU probe
+  fixes, a README link).
+  ⚠️ Deploying needs David's sudo and restarts a **paired, working, recording** install. The eight
+  other full-suite failures are identical on both commits, so they are environmental, not his.
+
+
 - 🔴 **DAVID: decide whether to rotate a camera's RTSP password.** On 2026-08-08 an agent printed
   `config/go2rtc.yaml` lines 17-22 to check the `log:` edit; line 22 begins `streams:`, so **one
   camera's RTSP username and password went into a session transcript in clear text.** Nothing was
