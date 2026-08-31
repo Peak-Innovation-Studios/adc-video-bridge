@@ -27,6 +27,21 @@ baton, the baton wins.
   config or code fault.** Their HKSV recording had been dead ~17 days before anything noticed.
   ➡️ When they return they should recover on their own and log it. If they come back and stay
   unhealthy, their addresses moved: `config.yaml` is stale and `discover:local` refreshes it.
+  ✅ **RE-CONFIRMED 2026-08-31, still off.** Status endpoint: relay 1 healthy, 1 live connection,
+  89G down, 0m since delivery. Relays 2 and 3 `healthy: false`, 0 connections, 0 bytes, and a TCP
+  connect to both configured endpoints from the NAS still returns `EHOSTUNREACH`.
+  ⚠️ **EHOSTUNREACH cannot tell "off" from "moved".** It rules out "up but stream broken" and
+  nothing more, so actions (1) and (2) are coupled: if they moved, fixing them NEEDS the
+  `ADC_MOBILE_*` values to re-run `discover:local`.
+  🔑 **The counters RESET at the 08-25 rebuild, so the ~45,000-connection churn is gone from the
+  numbers.** Both dead relays now read `totalConnections: 0` and `consecutiveFailures: 0`:
+  go2rtc has stopped attempting them entirely. `msSinceDelivery` is ~8,653 min (~6.0 days), which
+  dates the counters to the 08-25 rebuild, not to the cameras' last delivery. Total time off is
+  ~23 days, from the baton's 17 as of 08-25 plus 6.
+  🔑 **This is live production proof that item 17's stall check was necessary.** Both relays are
+  unhealthy on the stall check ALONE, with `consecutiveFailures: 0`. Failure-counting on its own
+  would report two dead cameras as healthy RIGHT NOW, which is exactly the blind spot it shipped
+  with once.
 - 🔴 **Do NOT write push state here. Run the command:**
   `git fetch && git log --oneline origin/main..main`. 🔑 Verify with
   `git ls-remote origin refs/heads/main`, not a local `origin/*` ref — those are only as fresh as the
