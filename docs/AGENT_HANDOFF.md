@@ -77,6 +77,12 @@ baton, the baton wins.
   stuck on **"Connecting…"** means. ([`INVARIANTS.md`](INVARIANTS.md))
 - 🔴 **NEVER commit** credentials, MACs, LAN/WAN IPs, tokens, camera **names** or IDs. ⚠️ Redact with
   an **allowlist** — name what to SHOW. Denylist filters leaked twice in one session.
+- 🔴 **UNRESOLVED 2026-08-31: the bullet below and item 2 disagree about the log level.** This
+  bullet says `level: info` with no motion visibility; item 2 says `log: { homekit: trace }` is still
+  enabled. A global `info` with a `homekit: trace` override is a valid config, so the settings can
+  coexist, but the conclusions cannot. Nobody has read the file on the NAS since. Resolve it before
+  acting on either: `grep -A4 "^log:" /volume1/docker/adc-video-bridge/config/go2rtc.yaml` reads
+  only the log block, which is safe. ⚠️ Never print a line RANGE from that file.
 - ⚠️ **`log:` is at `level: info`, so there is NO motion visibility.** `motion: ON` is a **DBG** line.
   To tune thresholds set `log: { homekit: debug }` — **not `trace`**, which floods with the
   1-in-150 `motion: status` line.
